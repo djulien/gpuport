@@ -1,0 +1,35 @@
+{
+  "name": "ws281x-gpu",
+  "description": "WS281X output using GPU",
+  "keywords": [
+    "gpu",
+    "ws2811",
+    "ws281x",
+    "yalp"
+  ],
+  "license": "MIT",
+  "version": "0.1.0",
+  "author": "djulien@thejuliens.net",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/djulien/ws281x-gpu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/djulien/ws281x-gpu/issues"
+  },
+  "homepage": "https://github.com/djulien/ws281x-gpu",
+  "main": "./index.js",
+  "scripts": {
+    "test": "node-gyp rebuild && mocha --reporter spec"
+  },
+  "dependencies": {
+    "bindings": "^1.2.1",
+    "colors": "git+https://github.com/djulien/colors.js.git",
+    "debug": "^2.2.0",
+    "nan": "^2.2.0",
+    "readable-stream": "^2.0.5"
+  },
+  "devDependencies": {
+    "mocha": "^2.1.0"
+  }
+}
