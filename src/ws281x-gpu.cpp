@@ -2139,6 +2139,8 @@ printf("cbret %d @%d +%f\n", retval, elapsed(), hr_elapsed(wreq.started));
 }
 
 
+#define FBLEN  (4 * (NUM_UNIV * UNIV_LEN + 4))
+
 //apply pixel updates to texture buffer:
 void render(my_timer_t& wreq)
 {
@@ -2455,6 +2457,7 @@ void entpt_init(v8::Local<v8::Object> exports)
 
 //misc consts:
     CONST_INT("FBUFST", FBUFST); //0x59414c50); //"YALP" start of frame marker; checks stream integrity, as well as byte order
+    CONST_INT("FBLEN", FBLEN); //frame buffer size (header + data)
 
 //define ARGB primary colors:
     CONST_INT("RED", RED); //0xffff0000);

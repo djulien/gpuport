@@ -24,6 +24,7 @@ exports.module_name = binding.name;
 
 exports.width = binding.width;
 exports.height = binding.height;
+exports.FBLEN = binding.FBLEN; //frame buffer size (header + data)
 exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
 exports.swap32 = binding.swap32;
 exports.shmatt = binding.shmatt;
