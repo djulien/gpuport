@@ -1,5 +1,5 @@
 ws281x-gpu
-=========
+==========
 ### Node.js add-on module to drive WS281X nodes using RPi GPU
 (write-up still in progress)
 
@@ -9,9 +9,9 @@ The inspiration for this work came from the following brilliant work by Steve Ha
 
 https://stevehardyblog.wordpress.com/2016/01/02/ws2811-christmas-lighting-using-vga
 
-He figured out that the GPU was basically a parallel output port with precision timing, so it could control WS281X LED nodes.
+He figured out that the GPU could be used as an output port with precision timing, and used an OpenGL shader to generate timing to control WS281X LED nodes.
 
-This module adapts that technique and applies it to the RPi GPU to control up to 24 strings of WS281X nodes in parallel using Node.js.  (each scan line drives 1 WS281X node instead of 2 scan lines per node as in the original article)
+This module adapts that technique and builds on it to allow the RPi GPU to control up to 24 strings of WS281X nodes in parallel using Node.js.  (each scan line drives 1 WS281X node instead of 2 scan lines per node as in the original article)
 
 Critical design factors
 -----------------------
@@ -20,12 +20,12 @@ Critical design factors
 
 Other significant design factors
 --------------------------------
-* screen scan height (#scan rows) * 30 usec determines refresh rate (FPS)
-* an external mux can be used with the GPIO pins to allow *multiples* of 24 strings of WS281X;
+* screen scan height (#scan rows, or #WS281X nodes) determines refresh rate (FPS)
+* an external mux can be used with the GPIO pins to control *multiples* of 24 strings of WS281X;
 
-for example, a horizontal resolution of 1536 pixels would give 64 * 24 = 1536 parallel strings of WS281X nodes;
+for example, a horizontal resolution of 1536 pixels would give up to 64 * 24 = 1536 parallel strings of WS281X nodes;
 
-at 60 FPS, that would be 1536 * 550 nodes;
+at 60 FPS, that would be 1536 * 550 nodes ~= 3/4 M WS281X nodes
 
 at 30 FPS, that would be 1536 * 1100 nodes ~= 1.5 M WS281X nodes
 
@@ -62,5 +62,11 @@ TODO:
 http://harizanov.com/2013/08/putting-raspberry-pis-hardware-watchdog-to-work/
 
 http://pi.gadgetoid.com/article/who-watches-the-watcher
+
+License:
+--------
+CC-BY-NC-SA-4.0
+
+https://spdx.org/licenses/CC-BY-SA-4.0.html
 
 eof

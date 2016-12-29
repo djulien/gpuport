@@ -7,7 +7,7 @@
     "ws281x",
     "yalp"
   ],
-  "license": "MIT",
+  "license": "CC-BY-NC-SA-4.0",
   "version": "0.1.0",
   "author": "djulien@thejuliens.net",
   "repository": {
