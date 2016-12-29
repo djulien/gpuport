@@ -314,6 +314,8 @@ typedef struct
 	struct timeval started, latest;
 	struct timezone tz;
 	float totaltime;
+    int want_ws281x;
+    float group_ws281x;
 //	unsigned int frames, draws;
 } MyState;
 MyState state; //= {0};
@@ -324,6 +326,8 @@ inline void state_init()
 	memset(&state, 0, sizeof(state));
 	gettimeofday(&state.started, &state.tz);
 	state.latest = state.started;
+    state.want_ws281x = WS281X_SHADER; //1;
+    state.group_ws281x = 1.0;
 }
 #undef init
 #define init()  state_init()
@@ -550,9 +554,9 @@ class MyTexture
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // GL_REPEAT);
 //        want_ws281x(true);
 #ifdef WS281X_SHADER  //tell GPU to render WS281X protocol (node.js can override)
-        want_ws281x(WS281X_SHADER);
+        want_ws281x(state.want_ws281x); //WS281X_SHADER);
 //        glUniform1i(state.wantWS281Xloc, onoff); ERRCHK("wantWS281X");
-        group_ws281x(1.0);
+        group_ws281x(state.group_ws281x); //1.0);
 #endif
 //		glBindTexture(GL_TEXTURE_2D, 0);
 		ERRCHK("setup");
@@ -1753,7 +1757,8 @@ void want_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	int onoff = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
 //printf("wantWS281X: %d\n", onoff);
-    if (LEDs) LEDs->want_ws281x(onoff);
+//    if (LEDs) LEDs->want_ws281x(onoff);
+    state.want_ws281x = onoff; //allow it to be set before LEDs instantiated
 	args.GetReturnValue().Set(true);
 }
 
@@ -1807,7 +1812,8 @@ void group_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	float grp = GetOptionalFloat(args, 0, 1); //Number(args, 0, 1);
 //printf("groupWS281X: %f\n", grp);
-    if (LEDs) LEDs->group_ws281x(grp);
+//    if (LEDs) LEDs->group_ws281x(grp);
+    state.group_ws281x = grp; //allow it to be set before LEDs instantiated
 	args.GetReturnValue().Set(grp);
 }
 
