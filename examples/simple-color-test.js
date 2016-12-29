@@ -59,7 +59,7 @@ setImmediate(function() //avoid hoist errors
 {
     console.log("memory -> GPU".cyan_light);
     var src = new FrameWriter(playback);
-    var dest = new WS281X(); //{ lowWaterMark: 1, highWaterMark: 4});
+    var dest = new WS281X({title: "memory -> GPU"}); //{ lowWaterMark: 1, highWaterMark: 4});
     src.pipe(dest);
 });
 
@@ -79,7 +79,7 @@ setImmediate(function() //avoid hoist errors
 {
     console.log("file -> GPU".cyan_light);
     var src = fs.createReadStream("test.stream");
-    var dest = new WS281X();
+    var dest = new WS281X({title: "file -> GPU"});
     src.pipe(new FrameReader()).pipe(dest);
 });
 

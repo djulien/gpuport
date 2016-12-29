@@ -72,6 +72,7 @@
 #include <stdlib.h>
 #include <unistd.h> //usleep
 #include <string.h>
+//#include <cstring>
 #include <stdarg.h> //var arg defs
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -262,9 +263,6 @@
 
 //fwd refs:
 void init_chain(void);
-bool userint(void);
-void draw(void);
-void quit(void);
 int why(int, const char*);
 GLuint limit(GLuint);
 //uint32_t ARGB2ABGR(uint32_t);
@@ -272,7 +270,7 @@ void blend(uint32_t&, int, int, int, int);
 void blend(uint32_t&, uint32_t);
 
 bool eglcre(void); //EGLNativeWindowType hWnd, EGLDisplay* eglDisplay, EGLContext* eglContext, EGLSurface* eglSurface, EGLint attribList[]);
-bool wincre(void); //const char* title, GLint width, GLint height);
+bool wincre(const char*, GLint, GLint);
 GLuint progcre(const char *vertShaderSrc, const char *fragShaderSrc);
 GLuint shadecre(GLenum type, const char *shaderSrc);
 GLuint texcre(void);
@@ -898,37 +896,49 @@ template <int W1, int H>
 bool MyTexture<W1, H>::initgl = false;
 
 //MyTexture<3, 4> LEDs;
-MyTexture<NUM_UNIV, UNIV_LEN> LEDs;
+//MyTexture<NUM_UNIV, UNIV_LEN> LEDs;
 //#pragma message "Compiled for #univ x maxlen = " STRING(NUM_UNIV) " x " STRING(UNIV_LEN)
 
 
 ///////////////////////////////////////////////////////////////////////////////
 ////
-/// main line
+/// main line (if compiled as stand-alone test program)
 //
 
-//#ifndef NODEJS_ADDON
-void init_all(); //fwd ref
+#ifndef NODEJS_ADDON
+//fwd refs:
+bool userint(void);
+void draw(void);
+void quit(void);
+
+//XWindows testing only:
+//live RPi uses full screen
+#define TITLE  "WS281X-GPU Test"
+#define WIDTH  640 //320
+#define HEIGHT  480 //240
+MyTexture<NUM_UNIV, UNIV_LEN> LEDs;
+
 int main(int argc, char *argv[])
 {
-	static bool done = false; //in case called 2x by node.js
-	if (done) return 1;
-	done = true;
+//	static bool done = false; //in case called 2x by node.js
+//	if (done) return 1;
+//	done = true;
 
 //	for(int i = 0; i < argc; ++i)
 //		printf("arg[%d/%d]: '%s'\n", i, argc, argv[i]);
 	init_chain();
-	bool ok = wincre();
+	bool ok = wincre(TITLE, WIDTH, HEIGHT);
 	if (ok) ok = eglcre();
 //TODO?	glewInit(); //must occur after context created; BROKEN
 	if (ok) ok = LEDs.setup();
 	if (!ok) { printf("failed\n"); return 1; }
-#ifndef NODEJS_ADDON
+//#ifndef NODEJS_ADDON
 	while (!userint()) draw();
 	quit();
-#endif
+//#endif
 	return 0;
 }
+#endif
 
 
 /*
@@ -943,15 +953,18 @@ void init()
 */
 
 
+#ifndef NODEJS_ADDON
 void quit()
 {
 //	glDeleteTextures(1, &state.textureId);
 	glDeleteProgram(state.programObject);
 }
+#endif
 
 
 //check for user interrupt(keyboard):
 //reads X11 event loop
+#ifndef NODEJS_ADDON
 bool userint()
 {
 	XEvent evt;
@@ -974,10 +987,12 @@ bool userint()
 	}
 	return cancel;
 }
+#endif
 
 
 //repaint:
 //maintains FPS stats
+#ifndef NODEJS_ADDON
 void draw()
 {
 	struct timeval now;
@@ -995,7 +1010,7 @@ void draw()
 //		for (int x = 0; x < UNIV_LEN; ++x)
 //			pixels[x][y] = colors[(x + y) & 3];
 //	LEDs.render(&pixels[0][0]);
-#ifndef NODEJS_ADDON //display a test pattern
+//#ifndef NODEJS_ADDON //display a test pattern
 	if (count / 60 != (count - 1) / 60) //1 sec @60 FPS
     {
 		LEDs.testPattern(count / 60);
@@ -1020,7 +1035,7 @@ void draw()
 //	render();
 //	++state.frames;
 	LEDs.flush();
-#endif
+//#endif
 	state.totaltime += deltatime;
 	if (state.totaltime <= 2.0f) return; //show stats every 2 sec
 
@@ -1028,6 +1043,7 @@ void draw()
 	state.totaltime -= 2.0f;
 	LEDs.render_count = LEDs.flush_count = 0;
 }
+#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1040,17 +1056,18 @@ void draw()
 // http://lobotony.tumblr.com/post/49936884122/minimal-raspberry-pi-opengl-application-without-x
 
 
-#define TITLE  "djtest"
+//#define TITLE  "WS281X-GPU"
 //XWindows testing only:
 //live RPi uses full screen
-#define WIDTH  640 //320
-#define HEIGHT  480 //240
+//#define WIDTH  640 //320
+//#define HEIGHT  480 //240
 
-bool wincre() //const char* title, GLint width, GLint height)
+bool wincre(const char* title, GLint width, GLint height) //const char* title, GLint width, GLint height)
 {
-	state.width = WIDTH;
-	state.height = HEIGHT;
-	state.title = TITLE;
+    if (!width || !height) { width = 640; height = 480; }
+	state.width = width; //|| 640;
+	state.height = height; //|| 480;
+	state.title = (title && *title)? title: "WS281X-gpu test";
 #ifdef RPI_NO_X
 // create an EGL window surface, passing context width/height
 	uint32_t display_width, display_height;
@@ -1600,6 +1617,8 @@ GLuint shadecre(GLenum type, const char *shaderSrc)
 // using namespace v8;
 // using namespace std;
 
+MyTexture<NUM_UNIV, UNIV_LEN>* LEDs = 0; //don't create until needed
+
 namespace //anonymous namespace wrapper for Node.js functions
 {
 
@@ -1734,7 +1753,7 @@ void want_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	int onoff = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
 //printf("wantWS281X: %d\n", onoff);
-    LEDs.want_ws281x(onoff);
+    if (LEDs) LEDs->want_ws281x(onoff);
 	args.GetReturnValue().Set(true);
 }
 
@@ -1788,7 +1807,7 @@ void group_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	float grp = GetOptionalFloat(args, 0, 1); //Number(args, 0, 1);
 //printf("groupWS281X: %f\n", grp);
-    LEDs.group_ws281x(grp);
+    if (LEDs) LEDs->group_ws281x(grp);
 	args.GetReturnValue().Set(grp);
 }
 
@@ -1858,6 +1877,8 @@ void fill_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //	if (!args[0]->IsNumber()) Nan::ThrowTypeError("SetAll: argument should be number");
 //	        return;
 
+//    if (!LEDs) LEDs = new MyTexture<NUM_UNIV, UNIV_LEN>;
+    if (!LEDs) { noderr("LED buffer must be opened first"); return; }
 	GLuint color = args.Length()? ARGB2ABGR(args[0]->Uint32Value()): BLACK; //NumberValue();
 //	bool
 //	v8::Local<v8::Number> num = Nan::New(color + 3);
@@ -1866,14 +1887,17 @@ void fill_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 	bool flush = GetOptionalBool(args, 1);
 
 //printf("fill: color 0x%x, flush? %d\n", color, flush);
-	LEDs.fill(color);
-	args.GetReturnValue().Set(flush && LEDs.render() && LEDs.flush());
+	LEDs->fill(color);
+	args.GetReturnValue().Set(flush && LEDs->render() && LEDs->flush());
 }
 
 
 //set colors for all LEDs:
 void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
+//    if (!LEDs) LEDs = new MyTexture<NUM_UNIV, UNIV_LEN>;
+    if (!LEDs) { noderr("LED buffer must be opened first"); return; }
+
     static int prev_outlen = 0, prev_inlen = 0;
 	int outlen = 0, inlen = 0;
 	if (args.Length()) //copy data to buffer before sending
@@ -1896,10 +1920,10 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 				val = inner->Get(y);
 //				v8::Local<v8::Value> element = v8::Local<v8::Number>::Cast(val);
 				uint32_t color = ARGB2ABGR(val->Uint32Value());
-//if (!x && !y) printf("render[%d, %d]: blend 0x%x with 0x%x,", x, y, LEDs.mpixels[XY(x, y)], limit(color));
-				blend(LEDs.mpixels[XY(x, y)], limit(color));
-//if (!x && !y) printf(" got 0x%x\n", LEDs.mpixels[XY(x, y)]);
-                LEDs.dirty_pivot[x / NUM_GPIO][y] = true;
+//if (!x && !y) printf("render[%d, %d]: blend 0x%x with 0x%x,", x, y, LEDs->mpixels[XY(x, y)], limit(color));
+				blend(LEDs->mpixels[XY(x, y)], limit(color));
+//if (!x && !y) printf(" got 0x%x\n", LEDs->mpixels[XY(x, y)]);
+                LEDs->dirty_pivot[x / NUM_GPIO][y] = true;
 //printf("got ary[%d/%d][%d/%d] = 0x%x\n", x, UNIV_LEN, y, NUM_UNIV, color);
 			}
 		}
@@ -1908,7 +1932,7 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //    	printf("render got ary %d x %d\n", outlen, inlen);
     prev_outlen = outlen;
     prev_inlen = inlen;
-	args.GetReturnValue().Set(LEDs.render() && LEDs.flush());
+	args.GetReturnValue().Set(LEDs->render() && LEDs->flush());
 }
 
 
@@ -1917,6 +1941,9 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //returns current color if none specified
 void pixel_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
+//    if (!LEDs) LEDs = new MyTexture<NUM_UNIV, UNIV_LEN>;
+    if (!LEDs) { noderr("LED buffer must be opened first"); return; }
+
 	if (args.Length() < 2) { noderr("Pixel: missing x/y index"); return; }
 //	if (!args[0]->IsNumber()) Nan::ThrowTypeError("Pixel: 1st arg should be number");
 	int x = args[0]->Uint32Value(); //NumberValue();
@@ -1931,10 +1958,10 @@ void pixel_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 		GLuint color = ARGB2ABGR(args[2]->Uint32Value()); //NumberValue();
 		bool flush = GetOptionalBool(args, 3);
 //        printf("set pixel[%d,%d]: 0x%x, flush? %d\n", x, y, color, flush);
-		blend(LEDs.mpixels[XY(x, y)], limit(color));
-		args.GetReturnValue().Set(flush && LEDs.render() && LEDs.flush());
+		blend(LEDs->mpixels[XY(x, y)], limit(color));
+		args.GetReturnValue().Set(flush && LEDs->render() && LEDs->flush());
 	}
-	else args.GetReturnValue().Set(ARGB2ABGR(LEDs.mpixels[XY(x, y)])); //& 0xffffff); //caller doesn't care about alpha?
+	else args.GetReturnValue().Set(ARGB2ABGR(LEDs->mpixels[XY(x, y)])); //& 0xffffff); //caller doesn't care about alpha?
 }
 
 
@@ -1965,6 +1992,60 @@ template <typename Type>
 inline static Type UnwrapPointer(v8::Local<v8::Value> buffer)
 {
   return reinterpret_cast<Type>(UnwrapPointer(buffer));
+}
+
+//from http://stackoverflow.com/questions/34356686/how-to-convert-v8string-to-const-char
+const char* cstr(const v8::String::Utf8Value& value)
+{
+    return *value? *value: "<string conversion failed>";
+}
+
+NAN_METHOD(Open_entpt)
+//void Open_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
+{
+#define args  info //kludge: NaN hard-coded names
+//    Nan::HandleScope scope;
+    v8::Isolate* isolate = v8::Isolate::GetCurrent();
+//    v8::HandleScope scope(isolate);
+//    NanScope();
+
+//https://github.com/pkrumins/node-png/blob/master/src/png.cpp
+//http://stackoverflow.com/questions/30927707/node-js-addon-how-to-pass-a-string-parameter-to-nan-c
+//https://github.com/nodejs/node-addon-examples/blob/master/original_docs_source.md
+//    String::Utf8Value title;
+//    if (args.Length() < 1) title = "WS281X-gpu test";
+//    else if (args[0]->IsString()) title = str(args[0]->ToString());
+//    else { sprintf(buf, "%d", args[0]->Uint32Value()); title = buf; } //NumberValue();
+//    v8::String /*::AsciiValue*/ title((args.Length() < 1)? v8::String::NewFromUtf8(isolate, "WS281X-gpu test"): args[0]->ToString();
+//    v8::String /*::AsciiValue*/ title((args.Length() < 1)? Nan::New<v8::String>("WS281X-gpu test"): args[0]->ToString());
+//    v8::Local<v8::String> title = (args.Length() < 1)? Nan::New<v8::String>("WS281X-gpu test"): args[0]->ToString();
+//    v8::String defval = Nan::New<v8::String>(*"WS281X-gpu test");
+//    v8::String defval = v8::String::New("WS281X-gpu test", 15); //int length ).
+//https://groups.google.com/forum/#!topic/v8-users/2RF1QksZ_QQ
+//    v8::String defval = v8::String::NewFromUTF8(v8::Isolate::GetCurrent(), "foo");
+
+//http://stackoverflow.com/questions/16613828/how-to-convert-stdstring-to-v8s-localstring?rq=1
+    v8::Local<v8::String> defval = v8::String::NewFromUtf8(isolate, ""); //"WS281X-gpu test");
+
+    v8::String::Utf8Value title((args.Length() < 1)? defval: args[0]->ToString());
+    GLint width = (args.Length() < 2)? 0: args[1]->Uint32Value(); //NumberValue();
+    GLint height = (args.Length() < 3)? 0: args[2]->Uint32Value(); //NumberValue();
+printf("open stream: title '%s', w %d, h %d\n", cstr(title), width, height);
+//    if (!width || !height) { width = 640; height = 480; }
+
+    LEDs = new MyTexture<NUM_UNIV, UNIV_LEN>;
+	bool ok = wincre(cstr(title), width, height);
+	if (ok) ok = eglcre();
+//TODO?	glewInit(); //must occur after context created; BROKEN
+	if (ok) ok = LEDs->setup();
+	if (!ok) { printf("failed\n"); args.GetReturnValue().Set(false); return; }
+
+//    mydata* ptr = UnwrapPointer<mydata*>(info[0]);
+    /* TODO: async */
+//    ao->flush(ao);
+//    send(); //flush last (partial) buffer
+    args.GetReturnValue().Set(true);
+#undef args
 }
 
 
@@ -2163,16 +2244,16 @@ printf("blend x %d, y %d, w %d, h %d @%d +%f\n", xofs, yofs, w, h, elapsed(), hr
 	        color = ARGB2ABGR(color); //xlate to internal color format
             color = limit(color); //limit power to 85%
 //TODO: use 1D indexing?
-    	    blend(LEDs.mpixels[XY(x, y)], color); //use alpha to mix
-//sprintf(bp, ", 0x%x", LEDs.mpixels[XY(x,y)]); bp += strlen(bp);
+    	    blend(LEDs->mpixels[XY(x, y)], color); //use alpha to mix
+//sprintf(bp, ", 0x%x", LEDs->mpixels[XY(x,y)]); bp += strlen(bp);
         }
 //strcpy(bp, "\n");
 //printf(buf+2);
     for (int x = xofs; x < xlimit; x += NUM_GPIO)
         for (int y = yofs; y < ylimit; ++y)
-            LEDs.dirty_pivot[x / NUM_GPIO][y] = true;
+            LEDs->dirty_pivot[x / NUM_GPIO][y] = true;
 printf("render to texture @%d +%f\n", elapsed(), hr_elapsed(wreq.started));
-    LEDs.render(); //copy to texture; allows next frame to be rendered in parallel
+    LEDs->render(); //copy to texture; allows next frame to be rendered in parallel
 }
 
 
@@ -2191,7 +2272,7 @@ void dequeue(uv_timer_t* timer)
     {
         my_timer_t& wreq = *(my_timer_t*)timer->data;
 printf("\ndequeue, flush to gpu @%d +%f\n", elapsed(), hr_elapsed(wreq.started));
-        LEDs.flush();
+        LEDs->flush();
         cbret(wreq, wreq.buflen, true);
 //    if (pend_head != &wreq) error;
         pend_head = wreq.nextp;
@@ -2274,6 +2355,8 @@ NAN_METHOD(Write_entpt)
 //    Nan::Callback* callback = new Nan::Callback(args[3].As<v8::Function>());
     int rcvtime = uv_now(uv_default_loop()); //save in case this buf defines new time base
  
+//    if (!LEDs) LEDs = new MyTexture<NUM_UNIV, UNIV_LEN>;
+    if (!LEDs) { noderr("LED buffer must be opened first"); return; }
 //start setting up async info in case needed:
 //use a new timer each time (allows next render to start):
 //    my_timer_t wreq;
@@ -2318,7 +2401,7 @@ printf("immed buf, cancel? %d @%d +%f\n", pend_head, elapsed(), hr_elapsed(wreq.
         }
         render(wreq);
 printf("flush to GPU @%d +%f\n", elapsed(), hr_elapsed(wreq.started));
-        LEDs.flush(); //send texture to GPU
+        LEDs->flush(); //send texture to GPU
         cbret(wreq, wreq.buflen);
         return;
     }
@@ -2528,7 +2611,7 @@ void entpt_init(v8::Local<v8::Object> exports)
                  Nan::New<v8::FunctionTemplate>(swap32_entpt)->GetFunction());
 
 //streaming api:
-//    Nan::SetMethod(exports, "open", Open);
+    Nan::SetMethod(exports, "open", Open_entpt);
     Nan::SetMethod(exports, "write", Write_entpt);
     Nan::SetMethod(exports, "flush", Flush_entpt);
 //    Nan::SetMethod(exports, "close", Close);
@@ -2543,7 +2626,8 @@ void entpt_init(v8::Local<v8::Object> exports)
 //printf("limit(0x%x) = 0x%x\n", 0xffff70, LIMIT(0xffff70));
 //printf("limit(0x%x) = 0x%x\n", 0xaaffff, limit(0xaaffff));
 
-	main(0, NULL);
+//	main(0, NULL);
+	init_chain(); //once only
 }
 
 

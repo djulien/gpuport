@@ -72,9 +72,15 @@ function WS281X(opts)
 {
     if (!(this instanceof WS281X)) return new WS281X(opts);
     if (!opts) opts = {};
-    if (null == opts.lowWaterMark) opts.lowWaterMark = 0;
-    if (null == opts.highWaterMark) opts.highWaterMark = 0;
+    if (!opts.lowWaterMark) opts.lowWaterMark = 0;
+    if (!opts.highWaterMark) opts.highWaterMark = 0;
     Writable.call(this, opts); //super
+//    this.title = opts.title || "WS281X-GPU test";
+//    this.wndw = opts.wndw || 640;
+//    this.wndh = opts.wndh || 480;
+//console.log("opts", opts);
+    if (!binding.open(opts.title, opts.wndw, opts.wndh)) //"WS281X-GPU test", 640, 480))
+        throw "WS281X open failed";
 
     this.state = States.NEW;
 //console.log("state = new");
@@ -89,13 +95,15 @@ inherits(WS281X, Writable);
 
 
 //dummy method to look like real streams:
-WS281X.prototype._open = function()
+WS281X.prototype._open = function() //title, width, height)
 {
     debug('open()');
     if (this.state >= States.OPEN)
         throw new Error('_open() called more than once!');
     this.state = States.OPEN; //isopen = true; //new Buffer(binding.sizeof_audio_output_t);
-//console.log("state = open");
+//    binding.open.apply(null, arguments);
+//    if (!binding.open(this.title, this.wndw, this.wndh); //"WS281X-GPU test", 640, 480))
+console.log("state = open");
     this.emit('open');
     return true; 
 };

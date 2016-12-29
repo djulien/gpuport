@@ -11,7 +11,8 @@ https://stevehardyblog.wordpress.com/2016/01/02/ws2811-christmas-lighting-using-
 
 He figured out that the GPU could be used as an output port with precision timing, and used an OpenGL shader to generate timing to control WS281X LED nodes.
 
-This module adapts that technique and builds on it to allow the RPi GPU to control up to 24 strings of WS281X nodes in parallel using Node.js.  (each scan line drives 1 WS281X node instead of 2 scan lines per node as in the original article)
+This module adapts and builds on that technique to allow the RPi GPU to control up to 24 strings of WS281X nodes in parallel using Node.js.
+Each scan line drives 1 WS281X node per string instead of 2 scan lines per node as in the original article.
 
 Critical design factors
 -----------------------
