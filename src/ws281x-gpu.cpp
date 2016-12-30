@@ -2226,14 +2226,15 @@ printf("cbret %d @%d +%f\n", retval, elapsed(), hr_elapsed(wreq.started));
 }
 
 
-#define FBLEN  (4 * (NUM_UNIV * UNIV_LEN + 4))
+//#define FBLEN  (4 * (NUM_UNIV * UNIV_LEN + 4))
+#define FBLEN(w, h)  (4 * ((w) * (h) + 4))
 
 //apply pixel updates to texture buffer:
 void render(my_timer_t& wreq)
 {
-    uint32_t valbuf = wreq.swap32(wreq.buffer[1]);
+    uint32_t valbuf = wreq.swap32(wreq.buffer[2]);
     int xofs = valbuf >> 16, yofs = valbuf & 0xffff;
-    valbuf = wreq.swap32(wreq.buffer[2]);
+    valbuf = wreq.swap32(wreq.buffer[3]);
     int w = valbuf >> 16, h = valbuf & 0xffff;
     CLAMP_RECT(xofs, yofs, w, h, NUM_UNIV, UNIV_LEN);
     int xlimit = xofs + w, ylimit = yofs + h;
@@ -2290,7 +2291,7 @@ printf("more? %d @%d +%f\n", !!pend_head, elapsed(), hr_elapsed(wreq.started));
 printf("render next @%d +%f\n", elapsed(), hr_elapsed(pending.started));
     render(pending); //render now so data is ready without delay when timer expires
 //schedule texture output to GPU:
-    uint32_t delay = time_base + pending.swap32(pending.buffer[3]) - uv_now(uv_default_loop()); //make relative to now; TODO: call uv_update_time(loop)?
+    uint32_t delay = time_base + pending.swap32(pending.buffer[1]) - uv_now(uv_default_loop()); //make relative to now; TODO: call uv_update_time(loop)?
 //delay *= 10;
 printf("delay flush %d, has next? %d, @%d +%f\n", delay, !!pending.nextp, elapsed(), hr_elapsed(pending.started));
 //NO        uv_queue_work(uv_default_loop(), &req->req, write_async, write_after); //use timer for aync work queue
@@ -2378,10 +2379,10 @@ NAN_METHOD(Write_entpt)
     wreq.started = uv_hrtime(); //only for debug
     wreq.nextp = 0; //end of delay chain
     int wrlen = wreq.buflen >> 2;
-printf("wr req, pending? %d, delay? %x, buflen %d\n", !!pend_head, wreq.buffer[3], wreq.buflen);
+printf("wr req, pending? %d, delay? %x, buflen %d\n", !!pend_head, wreq.buffer[1], wreq.buflen);
 int depth = 0;
 for (my_timer_t* ptr = pend_head; ptr; ptr = ptr->nextp, ++depth)
-  printf("queue[%d]: delay %d\n", depth, ptr->swap32(ptr->buffer[3]));
+  printf("queue[%d]: delay %d\n", depth, ptr->swap32(ptr->buffer[1]));
 
 //validate buffer:
     if (wreq.buflen & 3) { cbret(wreq, -1); return; } //should be multiple of 4 (uint32_t)
@@ -2393,7 +2394,7 @@ for (my_timer_t* ptr = pend_head; ptr; ptr = ptr->nextp, ++depth)
 //TODO: add checksum?
 
 //decide whether to do it now or later:
-    if (!wreq.buffer[3]) //no delay
+    if (!wreq.buffer[1]) //no delay
     {
 printf("immed buf, cancel? %d @%d +%f\n", pend_head, elapsed(), hr_elapsed(wreq.started));
         time_base = rcvtime; //make other delays relative to now
@@ -2448,6 +2449,7 @@ printf("flush stream\n");
 
 //based on https://github.com/vpj/node_shm/blob/master/shm_addon.cpp
 //to see shm segs:  ipcs -a
+//to delete:  ipcrm -M key
 void shmatt_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
     v8::Isolate* isolate = v8::Isolate::GetCurrent();
@@ -2470,6 +2472,17 @@ void shmatt_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //Create ArrayBuffer:
     v8::Local<v8::ArrayBuffer> buffer = v8::ArrayBuffer::New(isolate, (void *)data, size);
     args.GetReturnValue().Set(buffer);
+}
+
+
+void fblen_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
+{
+    Nan::HandleScope scope;
+
+	int w = (args.Length() > 0)? args[0]->Uint32Value(): NUM_UNIV; //NumberValue();
+	int h = (args.Length() > 1)? args[1]->Uint32Value(): UNIV_LEN; //NumberValue();
+
+	args.GetReturnValue().Set(FBLEN(w, h));
 }
 
 
@@ -2546,7 +2559,7 @@ void entpt_init(v8::Local<v8::Object> exports)
 
 //misc consts:
     CONST_INT("FBUFST", FBUFST); //0x59414c50); //"YALP" start of frame marker; checks stream integrity, as well as byte order
-    CONST_INT("FBLEN", FBLEN); //frame buffer size (header + data)
+    CONST_INT("FBLEN", FBLEN(NUM_UNIV, UNIV_LEN)); //frame buffer size (header + data)
 
 //define ARGB primary colors:
     CONST_INT("RED", RED); //0xffff0000);
@@ -2611,6 +2624,8 @@ void entpt_init(v8::Local<v8::Object> exports)
 //	exports->Set(Nan::New("group").ToLocalChecked(),
 //                 Nan::New<v8::FunctionTemplate>(group_entpt)->GetFunction());
 
+	exports->Set(Nan::New("fblen").ToLocalChecked(),
+                 Nan::New<v8::FunctionTemplate>(fblen_entpt)->GetFunction());
 	exports->Set(Nan::New("shmatt").ToLocalChecked(),
                  Nan::New<v8::FunctionTemplate>(shmatt_entpt)->GetFunction());
 	exports->Set(Nan::New("swap32").ToLocalChecked(),

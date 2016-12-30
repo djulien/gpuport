@@ -28,6 +28,7 @@ exports.FBLEN = binding.FBLEN; //frame buffer size (header + data)
 exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
 exports.swap32 = binding.swap32;
 exports.shmatt = binding.shmatt;
+exports.fblen = binding.fblen;
 
 //TODO: change to getters/setters; for now, make it look that way
 //exports.want = binding.want;
