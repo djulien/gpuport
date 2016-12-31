@@ -20,7 +20,7 @@ const WS281X = require('../');
 const DEBUG = true; //false;
 console.log("%s ver %s\n%s".blue_light, WS281X.module_name, WS281X.api_version, WS281X.description);
 console.log("canvas %d x %d".blue_light, WS281X.width, WS281X.height);
-WS281X.want = DEBUG? -1: true;
+WS281X.want = true; //DEBUG? -1: true;
 WS281X.group = DEBUG? WS281X.height / 25: 1;
 
 const NUM_UNIV = DEBUG? 4: WS281X.width;
@@ -115,15 +115,20 @@ function read(n)
     if (!this.latest) this.latest = 0;
     if (this.latest >= this.playback.length) { this.push(null); return; } //eof
     var {when, color} = this.playback[this.latest++];
+    var lastarg = process.argv.slice(-1)[0];
+var svw = when;
+    if (lastarg.match(/^x[0-9]+$/)) when *= lastarg.substr(1); //slow down for easier debug
+console.log("when %d => %d  %s", svw, when, lastarg);
+    if (process.argv.slice(-1)[0].match(/^x[0-9]+$/)) when *= 10; //easier debug
 //console.log(typeof when, typeof color);
     var buf = Buffer.alloc(4 * NUM_UNIV * UNIV_LEN + 16);
 //console.log("alloc buf %s x %s = %s", WS281X.width, WS281X.height, buf.length);
 
     var ofs = -4;
     buf.writeUInt32BE(WS281X.FBUFST, ofs += 4); //mark start of frame buffer
+    buf.writeUInt32BE((1000 * when) >>> 0, ofs += 4); //frame delay time
     buf.writeUInt32BE(0, ofs += 4); //frame offset (x, y)
     buf.writeUInt32BE((NUM_UNIV << 16) | UNIV_LEN, ofs += 4); //frame size (w, h)
-    buf.writeUInt32BE((1000 * when) >>> 0, ofs += 4); //frame delay time
 //TODO: use fill opcode, flush flag
     for (var x = 0; x < NUM_UNIV; ++x)
         for (var y = 0; y < UNIV_LEN; ++y)

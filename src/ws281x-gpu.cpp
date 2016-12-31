@@ -23,7 +23,7 @@
 // sudo apt-get install libgles2-mesa-dev
 //maybe also mesa-utils-extra ??
 
-//TODO: use SDL2 to cut down on init code
+//TODO: use SDL2 to cut down on init code?
 //TODO: push more work onto GPU, espsecially pivots, then fx
 //TODO: consider one of:
 //  VESA 1280 x 1024 @60 Hz (pixel clock 108.0 MHz)
@@ -37,8 +37,8 @@
 //pixel clock determines max mux for output signals and max #universes
 //theoretical limit for RPi is ~ 1.5M nodes @30 FPS (~1500 univ * 1K univ len)
 
-#define SCREEN_SCAN_WIDTH  1536 //set to *exact* RPi screen width (pixels) *including* hsync time; must be a multiple of NODE_BITS
-#define SCREEN_DISP_WIDTH  1488 //set to *exact* RPi displayable screen width (pixels)
+#define SCREEN_SCAN_WIDTH  1320 //(SCREEN_DISP_WIDTH / 23.25 * 24) //1536 //set to *exact* RPi screen width (pixels) *including* hsync time; must be a multiple of NODE_BITS
+#define SCREEN_DISP_WIDTH  1488-208 //set to *exact* RPi displayable screen width (pixels)
 #define NODE_BITS  24 //#bits to send to each WS281X node; determined by protocol
 #define NUM_GPIO  24 //#pins to use for WS281X control; up to 24 available for VGA usage
 #define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
@@ -55,9 +55,16 @@
 //#endif
 
 #define WS281X_SHADER  true //tell GPU to render WS281X protocol (node.js can override); value determines default mode in fragment shader; must be TRUE for live show
-//#define SHADER_DEBUG //show debug info on screen
-//#define SHOW_CONFIG //show display surface config on console (mainly for debug)
+#define SHADER_DEBUG //show debug info on screen
+//#define CPU_PIVOT //RPi GPU won't access > 1 texture per pixel, so pivot on CPU instead
+//#define HWMUX //use GPIO to drive external mux SR; gives up to ~ 800K nodes @30 FPS
+//#define SHOW_CONFIG //show display surface config, shaders on console (mainly for debug)
 //#define SHOW_VERT //show vertex info on console (only for debug)
+
+#if defined(RPI_NO_X) && WS281X_SHADER && !defined(HWMUX) && !defined(CPU_PIVOT)
+ #pragma message("Turning on CPU pivot")
+// #define CPU_PIVOT
+#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -152,7 +159,7 @@
 #endif
 
 
-#ifdef SHADER_DEBUG //SHOW_CONFIG //always show it for sanity check?
+#ifdef SHOW_CONFIG //always show it for sanity check?
  #undef SHOW_CONFIG
  #define SHOW_CONFIG(stmt)  stmt
 #else
@@ -308,6 +315,9 @@ typedef struct
     GLint grpWS281Xloc;
 // Sampler location
 	GLint samplerLoc;
+//	GLint samplerLoc2;
+//	GLint samplerLoc3;
+//	GLint samplerLoc4;
 // Texture handle
 //	GLuint textureId;
 //runtime stats:
@@ -362,8 +372,16 @@ class MyTexture
 	GLushort minx[2][3]; //2 triangles to draw a quad
 //NOPE; NOTE: one extra row used as lookup table to help shader run faster
 //NOPE//lookup table should be excluded from displayable vertices; however, it's included in order to make debug easier
-#define PIVOT(x)  (WW + (x))
-#define WW  rdup(W1, NUM_GPIO)
+#ifdef CPU_PIVOT
+ #define PIVOT(x)  (WW + (x))
+ #define WW  rdup(W1, NUM_GPIO)
+ #define TXTW  (2 * WW) //true copy + pivot copy
+ #define IFPIVOT(stmt)  stmt
+#else //hardware or GPU pivot
+ #define WW  W1
+ #define TXTW  W1 //just one (true) copy
+ #define IFPIVOT(stmt)
+#endif
 	struct { GLfloat x, y, z, s, t/*, spivot*/; } mverts[WW * H]; //use 1D array to allow more flexible order + mapping
 //only vertex colors change, never coordinates, so use a 2D texture to store them
 //pixels are sent to GPU all together as one 2D texture
@@ -371,13 +389,13 @@ class MyTexture
 //Y is inner dimension for locality of reference (related nodes stored together)
 //first W columns are actual pixel colors, remainder are pivoted to compensate for slow memory access by RPi GPU
 #define XY(x, y) y][x //x][y //TODO: BROKEN
-	GLuint mpixels[XY(2 * WW, H)]; //[W][H]; //x is universe#, y is node#
+	GLuint mpixels[XY(TXTW, H)]; //[W][H]; //x is universe#, y is node#
 
     int latest_want = true;
     float latest_group = 1.0;
 	unsigned int render_count, flush_count;
 	bool dirty; //texture needs to be resent to GPU
-    bool dirty_pivot[divup(W1, NUM_GPIO)][H]; //blocks of pixels need to be re-pivoted
+    IFPIVOT(bool dirty_pivot[divup(W1, NUM_GPIO)][H]); //blocks of pixels need to be re-pivoted
 	static bool initgl;
 
 	public:
@@ -486,10 +504,12 @@ class MyTexture
 //??NOTE: (U,V) pivot for locality of reference on texture *and* vertex arrays in memory
 				mpixels[XY(x, y)] = BLACK;
 			}
+#ifdef CPU_PIVOT
         need_pivot(false);
 		for (int x = WW; x < 2 * WW; ++x)
 			for (int y = 0; y < H; ++y)
 				mpixels[XY(x, y)] = BLACK; //also set pivot values all to black
+#endif
 #if 0
 //kludge: add a bitmask lookup table as the last row in the texture
 //this helps shader run a little faster (RPi GLSL lacks some useful features)
@@ -524,7 +544,7 @@ class MyTexture
 		if (!mTextureID) return why(0, "no txt");
 		glBindTexture(GL_TEXTURE_2D, mTextureID);
 //??		glActiveTexture(GL_TEXTURE0);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA /*broken GL_RGBA8*/, 2 * WW, H, 0, GL_RGBA /*broken GL_BGRA*/, GL_UNSIGNED_BYTE, &mpixels[0][0]); //load texture from pixel colors
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA /*broken GL_RGBA8*/, TXTW, H, 0, GL_RGBA /*broken GL_BGRA*/, GL_UNSIGNED_BYTE, &mpixels[0][0]); //load texture from pixel colors
 //consider:    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height); //https://www.opengl.org/wiki/Common_Mistakes
 //NOPE: one extra row for lookup table; no mipmaps
 //another (pivoted) copy of pixels is used to compensate for slow texture access by RPi GPU
@@ -578,8 +598,8 @@ class MyTexture
 //	    glGenTextures(1, &mTextureID);
 		glBindTexture(GL_TEXTURE_2D, mTextureID); ERRCHK("render");
 //	    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        pivot();
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 2 * WW, H, GL_RGBA /*broken GL_BGRA*/, GL_UNSIGNED_BYTE, &mpixels[0][0]); ERRCHK("render"); //NO-NOTE: excludes lookup table (assumes never overwritten)
+        IFPIVOT(pivot());
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TXTW, H, GL_RGBA /*broken GL_BGRA*/, GL_UNSIGNED_BYTE, &mpixels[0][0]); ERRCHK("render"); //NO-NOTE: excludes lookup table (assumes never overwritten)
 //		GLuint* pix1d = &mpixels[0][0];
 //		char buf[W * H * 8 + 2], *bp = buf;
 //		for (int i = 0; i < W * H; ++i) { sprintf(bp, ",%x", pix1d[i] & 0xffffff); bp += strlen(bp); }
@@ -614,6 +634,7 @@ class MyTexture
 #endif
     }
 
+#ifdef CPU_PIVOT
 //invalidate entire pivot cache:
     void need_pivot(bool yesno = true)
     {
@@ -667,6 +688,7 @@ class MyTexture
         }
         need_pivot(false);
     }
+#endif //def CPU_PIVOT
 
 	bool flush() //whenever texture changes
 	{
@@ -690,6 +712,9 @@ class MyTexture
 		glEnableVertexAttribArray(state.positionLoc); ERRCHK("flush");
 		glEnableVertexAttribArray(state.texCoordLoc); ERRCHK("flush");
 		glUniform1i(state.samplerLoc, 0); ERRCHK("flush"); //set sampler texture unit to 0
+//		glUniform1i(state.samplerLoc2, 0); ERRCHK("flush"); //set sampler texture unit to 0
+//		glUniform1i(state.samplerLoc3, 0); ERRCHK("flush"); //set sampler texture unit to 0
+//		glUniform1i(state.samplerLoc4, 0); ERRCHK("flush"); //set sampler texture unit to 0
 #endif
 		glActiveTexture(GL_TEXTURE0); ERRCHK("flush");
 		glBindTexture(GL_TEXTURE_2D, mTextureID); ERRCHK("flush"); //state.textureId);
@@ -755,7 +780,7 @@ class MyTexture
 	    for (int x = 0; x < W1; ++x)
 		    for (int y = 0; y < H; ++y)
 			    blend(mpixels[XY(x, y)], color);
-        need_pivot(true);
+        IFPIVOT(need_pivot(true));
 //        dirty = true; //no; wait for caller to call render()
 	}
 
@@ -784,9 +809,11 @@ class MyTexture
 	    for (int x = x1; x < x2; ++x)
 		    for (int y = y1; y < y2; ++y)
 			    blend(mpixels[XY(x, y)], color);
+#ifdef CPU_PIVOT
 	    for (int x = x1; x < x2; x += NUM_GPIO)
 	        for (int y = y1, x = x1; y < y2; ++y)
                 dirty_pivot[x / NUM_GPIO][y] = true;
+#endif //def CPU_PIVOT
 	}
 
 	void fillcol(GLuint color, int x)
@@ -811,7 +838,7 @@ class MyTexture
 	    for (int y = 0; y < H; ++y)
         {
 		    blend(mpixels[XY(x, y)], color);
-            dirty_pivot[x / NUM_GPIO][y] = true;
+            IFPIVOT(dirty_pivot[x / NUM_GPIO][y] = true);
         }
 //        dirty = true; //no; wait for caller to call render()
 	}
@@ -838,8 +865,10 @@ class MyTexture
 */
 	    for (int x = 0; x < W1; ++x)
 		    blend(mpixels[XY(x, y)], color);
+#ifdef CPU_PIVOT
 	    for (int x = 0; x < W1; x += NUM_GPIO)
             dirty_pivot[x / NUM_GPIO][y] = true;
+#endif
 //        dirty = true; //no; wait for caller to call render()
 	}
 
@@ -853,7 +882,7 @@ class MyTexture
 //		for (int i = 0; i < W * H; ++i) { sprintf(bp, ",%x", mpixels[XY(x, y)] & 0xffffff); bp += strlen(bp); }
 //		printf("pixel[%d, %d] => [%d]\n", x, y, &mpixels[XY(x, y)] - &mpixels[0][0]);
             blend(mpixels[XY(x, y)], color);
-            dirty_pivot[x / NUM_GPIO][y] = true; //assume caller will change it
+            IFPIVOT(dirty_pivot[x / NUM_GPIO][y] = true);
 //        dirty = true; //no; wait for caller to call render()
         }
 		return mpixels[XY(x, y)];
@@ -888,7 +917,7 @@ class MyTexture
 		for (int x = 0; x < WW; ++x)
 			for (int y = 0; y < H; ++y)
 				mpixels[XY(x, y)] = colors[(x + y + seed) % 4]; //((x >> 4) + (y >> 4) + seed) % 4];
-        need_pivot(true);
+        IFPIVOT(need_pivot(true));
 		return &mpixels[0][0];
 	}
 
@@ -918,7 +947,7 @@ void quit(void);
 //XWindows testing only:
 //live RPi uses full screen
 #define TITLE  "WS281X-GPU Test"
-#define WIDTH  640 //320
+#define WIDTH  640 //320 //SCREEN_SCAN_WIDTH //NOTE: must be same as RPi in order to simulate accurately
 #define HEIGHT  480 //240
 MyTexture<NUM_UNIV, UNIV_LEN> LEDs;
 
@@ -1087,8 +1116,9 @@ bool wincre(const char* title, GLint width, GLint height) //const char* title, G
 	src_rect.x = src_rect.y = 0;
 	src_rect.width = display_width << 16; //why? maybe just >>> screen size?
 	src_rect.height = display_height << 16;
-	state.width = display_width;
+	state.width = display_width; //fixed screen size; override
 	state.height = display_height;
+    if (state.width != SCREEN_DISP_WIDTH) return why(FALSE, "screen width mismatch");
 
 //set dest to full screen:
 	dst_rect.x = dst_rect.y = 0;
@@ -1119,6 +1149,8 @@ bool wincre(const char* title, GLint width, GLint height) //const char* title, G
 
 	Window root = DefaultRootWindow(state.xDisplay);
 	swa.event_mask  =  ExposureMask | PointerMotionMask | KeyPressMask;
+    state.width = SCREEN_DISP_WIDTH; //override; use compiled size at run-time
+    if (state.width != SCREEN_DISP_WIDTH) return why(FALSE, "screen width mismatch");
 	Window win = XCreateWindow(state.xDisplay, root, 0, 0, state.width, state.height, 0, CopyFromParent, InputOutput, CopyFromParent, CWEventMask, &swa);
 //printf("root 0x%x, win 0x%x, xcre(disp 0x%x, w %d, h %d)\n", root, win, state.xDisplay, state.width, state.height);
 	xattr.override_redirect = FALSE;
@@ -1290,17 +1322,23 @@ const char* vShaderStr =
     "const float HSCALE = " STRING(HSCALE) ";\n"
     "const float TXTW = " STRING(float(rdup(NUM_UNIV, NUM_GPIO))) ";\n"
     "uniform float group_ws281x;\n"
-	"attribute vec4 a_position;   \n"
-	"attribute vec2 a_texCoord;   \n"
-	"varying vec4 v_texCoord;     \n"
-	"void main()                  \n"
-	"{                            \n"
-	"	gl_Position = a_position; \n"
+//    "uniform int screenw, screenh;\n"
+	"attribute vec4 a_position;\n"
+	"attribute vec2 a_texCoord;\n"
+	"varying vec4 v_texCoord;\n"
+
+	"uniform sampler2D s_texture;\n"
+	"varying vec4 pivbits0;\n"
+	"void main()\n"
+	"{\n"
+	"	gl_Position = a_position;\n"
     "   vec4 unpack;\n"
     "   unpack.stpq = a_texCoord.stss;\n"
+#ifdef CPU_PIVOT
     "   unpack.q /= 2.0;\n" //seems backwards??
     "   unpack.p /= 2.0;\n" //seems backwards??
     "   unpack.p += 0.5 + .017;\n" //shift over; //TODO: fix this ~= +1/60
+#endif //def CPU_PIVOT
     "   unpack.t /= group_ws281x;\n" //scale it up to cover multiple output pixels
 //    "   unpack.p += (TXTW - 1.0) / (2.0 * TXTW - 1.0);\n" //shift over
 //    "   unpack.q *= (2.0 * TXTW - 1.0) / (TXTW - 1.0);\n" //show original texture, hide pivot data
@@ -1308,9 +1346,10 @@ const char* vShaderStr =
 //compensate for last node bit partially off-screen:
 //    "   remap.x *= HSCALE;\n"
 //    "   remap.z *= HSCALE;\n"
-	"	v_texCoord = unpack;  \n"
-//	"	v_texCoord = a_texCoord;  \n"
-	"}                            \n";
+	"	v_texCoord = unpack;\n"
+//	"	v_texCoord = a_texCoord;\n"
+    "           pivbits0 = texture2D(s_texture, vec2(0.0 / 23.0, v_texCoord.t));\n" //should call fx()
+	"}\n";
 
 
 //https://www.khronos.org/opengles/sdk/docs/reference_cards/OpenGL-ES-2_0-Reference-card.pdf
@@ -1361,21 +1400,29 @@ const char* fShaderStr_asis = //show texture as-is
 const char* fShaderStr_ws281x =
     "#version 100 //130 //150\n" //NOTE: GLES GLSL versions != GL GLSL versions; GLES 2.0 only supports GLSL 1.0
 	"precision mediump float;\n" //suitable for texture coordinates, colors
+//    "#define TRUE  1\n"
+//    "#define FALSE  0\n"
 //    "uniform float HSCALE;\n" //compensate for partially off-screen last node bit
 //    "const float HSCALE = " STRING(HSCALE) ";\n" //horizontal squeeze factor
-    "const vec2 OVERSCAN = vec2(" STRING(HSCALE) ", 1.0);\n"
+    "const vec2 UNDERSCAN = vec2(" STRING(HSCALE) ", 1.0);\n"
     "const float DWSTART = " STRING(BIT_DATA_BEGIN) ";\n" //real data window start
     "const float DWEND = " STRING(BIT_DATA_END) ";\n" //real data window end
 //    "const float TXTW = " STRING(float(2 * NUM_UNIV)) ";\n"
 //    "#define NUM_GPIO " STRING(float(NUM_GPIO)) "\n" //#GPIO pins assigned to WS281X signals; cannot exceed 24
-//    "#define NUM_UNIV  " STRING(float(NUM_UNIV)) "\n" //total #LED strings; use external hw mux when > NUMPINS
+    "const float NUM_UNIV = " STRING(float(NUM_UNIV)) ";\n" //total #LED strings; use external hw mux when > NUMPINS
     "const float NODE_BITS = " STRING(float(NODE_BITS)) ";\n" //#bits per node to send
-	"uniform sampler2D s_texture;                        \n"
+	"uniform sampler2D s_texture;\n"
+//	"uniform sampler2D s_texture2;\n"
+//	"uniform sampler2D s_texture3;\n"
+//	"uniform sampler2D s_texture4;\n"
     "uniform int want_ws281x;\n"
+    "uniform float group_ws281x;\n"
+//    "uniform int screenw, screenh;\n"
     "#define ISDEBUG  (want_ws281x < 0)\n"
     "#define ENABLED  (want_ws281x != 0)\n"
 //    "#define want_ws281x  " STRING(WS281X_SHADER) "\n" //true
 	"varying vec4 v_texCoord;\n"
+	"varying vec4 pivbits0;\n"
 //    "const float PERNODE = " STRING(SCREEN_WIDTH) ".0 / " STRING(BIT_WIDTH) ".0;\n" //#bits that will fit on display area of screen
 //    "const float HSCALE = PERNODE / float(ceil(PERNODE));\n" //compensate for partially hidden last node bit for more accurage view when debugging on screen
 //Bitmask table: MASK[0] = 0x800000, MASK[1] = 0x400000, ..., MASK[23] = 1
@@ -1399,13 +1446,17 @@ const char* fShaderStr_ws281x =
     "#define OVLY  0.9\n"
     "#define OVERLAY(coord)  ((coord.s >= OVLX) && (coord.y >= OVLY))\n"
     "vec4 overlay(vec2 xy);\n" //for DEBUG only
-    "#define LSB(val)  (floor((val) / 2.0) != (val) / 2.0)\n"
     "#define rgb2scalar(val)  dot(val, vec4(256.0 * 256.0, 256.0, 1.0, 0.0))\n" //strip alpha
     "#define ALLON  RGB(1.0)\n" //DEBUG ONLY: show R/G/B color
     "bool chkcolor(vec4 color);\n"
     "vec4 gray(float val);\n"
-    "vec4 fx(vec4 color);\n"
+    "vec4 hwmux_debug(vec2 coord);\n"
 #endif
+    "vec4 fx(vec4 color);\n"
+//    "#define LSB(val)  (floor((val) / 2.0) != (val) / 2.0)\n"
+    "bool LSB(float val);\n"
+    "bool AND(vec4 bits, float mask);\n"
+    "vec4 OR(vec4 bits, float mask);\n"
     "#define FUD  0.001\n" //compensate for slight rounding error on RPi
     "#define RGB(val)  _RGB(val, floor((nodebit + FUD) / 8.0))\n"
     "vec4 _RGB(float val, float which);\n" //for DEBUG only
@@ -1414,9 +1465,36 @@ const char* fShaderStr_ws281x =
 //map scan beam location ([0..1], [0..1]) back to screen (x, y)
 //x determines which bit within the 24 bit node to send out next
 //y determines which node within the LED string (universe) to send
-    "   vec4 outcolor;\n" //= texture2D(s_texture, v_texCoord); //original rendering
+    "   vec4 outcolor = vec4(0.0, 0.0, 0.0, 1.0);\n" //= texture2D(s_texture, v_texCoord); //original rendering
 //    "   vec3 remap = v_texCoord;\n"
     "   vec2 rawimg = v_texCoord.st;\n"
+#if 0
+    "           vec4 pivbits0 = texture2D(s_texture, vec2(0.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits1 = texture2D(s_texture2, vec2(1.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits2 = texture2D(s_texture3, vec2(2.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits3 = texture2D(s_texture4, vec2(3.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits4 = texture2D(s_texture, vec2(4.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits5 = texture2D(s_texture, vec2(5.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits6 = texture2D(s_texture, vec2(6.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits7 = texture2D(s_texture, vec2(7.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits8 = texture2D(s_texture, vec2(8.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits9 = texture2D(s_texture, vec2(9.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits10 = texture2D(s_texture, vec2(10.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits11 = texture2D(s_texture, vec2(11.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits12 = texture2D(s_texture, vec2(12.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits13 = texture2D(s_texture, vec2(13.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits14 = texture2D(s_texture, vec2(14.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits15 = texture2D(s_texture, vec2(15.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits16 = texture2D(s_texture, vec2(16.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits17 = texture2D(s_texture, vec2(17.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits18 = texture2D(s_texture, vec2(18.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits19 = texture2D(s_texture, vec2(19.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits20 = texture2D(s_texture, vec2(20.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits21 = texture2D(s_texture, vec2(21.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits22 = texture2D(s_texture, vec2(22.0 / 23.0, v_texCoord.t));\n" //should call fx()
+    "           vec4 pivbits23 = texture2D(s_texture, vec2(23.0 / 23.0, v_texCoord.t));\n" //should call fx()
+#endif
+    "   rawimg.y *= group_ws281x;\n" //restore original t coord for screen location checking
     "   vec2 trueimg = v_texCoord.qt;\n"
     "   vec2 pivotimg = v_texCoord.pt;\n"
 //    "   remap.x *= 2.0;\n" //show original texture, hide pivot data
@@ -1425,13 +1503,19 @@ const char* fShaderStr_ws281x =
 //    "   remap.x *= HSCALE;\n"
 //    "   remap.z *= HSCALE;\n"
 //    "   vec3 nodemask = texture2D(s_texture, vec2(v_texCoord.x, MASKROW)).rgb;\n"
-    "   float nodebit = floor(rawimg.s * OVERSCAN.s * NODE_BITS);\n" //* PERNODE);\n" //bit# within node; last bit is mostly off-screen (during h sync period); use floor to control rounding (RPi was rounding UP sometimes)
-    "   float bitangle = rawimg.s * OVERSCAN.s * NODE_BITS - nodebit;\n" //position within current bit timeslot
+//    "   float nodebit = floor(rawimg.s * UNDERSCAN.s * NODE_BITS);\n" //* PERNODE);\n" //bit# within node; last bit is mostly off-screen (during h sync period); use floor to control rounding (RPi was rounding UP sometimes)
+    "   float nodebit = floor(rawimg.s * UNDERSCAN.s * NODE_BITS);\n" //* PERNODE);\n" //bit# within node; last bit is mostly off-screen (during h sync period); use floor to control rounding (RPi was rounding UP sometimes)
+    "   float bitangle = rawimg.s * UNDERSCAN.s * NODE_BITS - nodebit;\n" //position within current bit timeslot
     "   float nodemask = pow(0.5, mod(nodebit, 8.0) + 1.0); \n" //BITMASK(nodebit);
+    "   if ((nodebit == 0.0) || (nodebit == 8.0) || (nodebit == 16.0)) nodemask = 0.5;\n" //kludge: arithmetic bad on RPi
 //send non-WS281X data:
     "   if (!ENABLED) outcolor = texture2D(s_texture, v_texCoord.st);\n" //show texture as-is
+//paranoid checking:
     "   else if ((nodebit < 0.0) || (nodebit > 23.0)) outcolor = ERROR(1);\n" //logic error; shouldn't happen
     "   else if ((bitangle < 0.0) || (bitangle > 1.0)) outcolor = ERROR(1);\n" //logic error; shouldn't happen
+    "   else if ((nodemask < 0.0039) || (nodemask > 0.5)) outcolor = ERROR(1);\n"
+    "   else if ((nodebit < 8.0) && (pow(0.5, nodebit + 1.0) < 0.003)) outcolor = ERROR(1);\n"
+//    "   else if ((nodemask < 1.0/64.0) || (nodemask > 0.5 + FUD)) outcolor = ERROR(1);\n"
 #ifdef SHADER_DEBUG
 //show useful debug info (horizontal areas):
 //    "   else if (outcolor.a != 1.0) outcolor = ERROR(2);\n" //caller should set full alpha
@@ -1444,21 +1528,105 @@ const char* fShaderStr_ws281x =
     "   else if ((rawimg.y >= 0.58) && (rawimg.y < 0.6)) outcolor = RGB(1.0);\n"
     "   else if ((rawimg.y >= 0.6) && (rawimg.y < 0.65)) outcolor = RGB(bitangle);\n"
     "   else if ((rawimg.y >= 0.65) && (rawimg.y < 0.7)) outcolor = RGB(nodemask);\n" //scalar2rgb(nodemask);\n"
+//    "   else if ((rawimg.y >= 0.7) && (rawimg.y < 0.75) && (mod(nodebit, 8.0) == 0.0)) outcolor = ERROR(1);\n"
+#if 0
+    "#define EVAL  nodemask\n"
+    "   else if ((rawimg.y >= 0.7) && (rawimg.y < 0.71) && (EVAL < 0.0001)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.71) && (rawimg.y < 0.72) && (EVAL < 0.0005)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.72) && (rawimg.y < 0.73) && (EVAL < 0.001)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.73) && (rawimg.y < 0.74) && (EVAL < 0.005)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.74) && (rawimg.y < 0.75) && (EVAL < 0.01)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.75) && (rawimg.y < 0.76) && (EVAL < 0.05)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.76) && (rawimg.y < 0.77) && (EVAL < 0.1)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.77) && (rawimg.y < 0.78) && (EVAL < 0.5)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.78) && (rawimg.y < 0.79) && (EVAL >= 0.5)) outcolor = ERROR(1);\n"
+    "   else if ((rawimg.y >= 0.79) && (rawimg.y < 0.8) && (EVAL >= 1.0)) outcolor = ERROR(1);\n"
+#endif
+#ifdef HWMUX //RPI_NO_X //drive external mux SR (SN74HC595) using RPi GPIO or non-Pi ADC
+    "   else if ((rawimg.y >= 0.7) && (rawimg.y < 0.8)) outcolor = hwmux_debug(rawimg);\n"
+#endif
 #endif //def SHADER_DEBUG
 //generate timing signals (vertical areas):
 //leader (on), encoded data, trailer (off), original color (debug only)
-//    "   else if (want_ws281x < 0) outcolor = texture2D(s_texture, trueimg * OVERSCAN);\n" //original rendering; (S, T) swizzle
-//    "   else if (!want_ws281x) outcolor = texture2D(s_texture, pivotimg * OVERSCAN);\n" //original rendering; (S, T) swizzle
-    "   else if (bitangle < DWSTART) outcolor = (want_ws281x < 0)? RGB(1.0): ALLON;\n" //bits start high
+//    "   else if (ISDEBUG) outcolor = texture2D(s_texture, trueimg * UNDERSCAN);\n" //original rendering; (S, T) swizzle
+//    "   else if (!ENABLED) outcolor = texture2D(s_texture, pivotimg * UNDERSCAN);\n" //original rendering; (S, T) swizzle
+    "   else if (bitangle < DWSTART) outcolor = ISDEBUG? RGB(1.0): ALLON;\n" //WS281X bits start high
 //#ifdef SHADER_DEBUG
-//    "   else if (bitangle > 0.75) outcolor = texture2D(s_texture, trueimg * OVERSCAN);\n" //show pixel (DEBUG)
+//    "   else if (bitangle > 0.75) outcolor = texture2D(s_texture, trueimg * UNDERSCAN);\n" //show pixel (DEBUG)
 //    "   else if (bitangle > DWEND) outcolor = gray(0.2);\n" //off (DEBUG)
 //#endif //def SHADER_DEBUG
-    "   else if (ISDEBUG && (bitangle >= 0.65)) outcolor = ((bitangle >= 0.7) && (bitangle <= 0.95))? texture2D(s_texture, trueimg * OVERSCAN): ALLOFF;\n" //original rendering; (S, T) swizzle
-    "   else if (bitangle > DWEND) outcolor = ALLOFF;\n" //bits end low
-//    "   else if (!want_ws281x) outcolor.rgb = texture2D(s_texture, v_texCoord).rgb;\n" //normal rendering overlayed with start/stop bars (for debug)
+    "   else if (ISDEBUG && (bitangle >= 0.65)) outcolor = ((bitangle >= 0.7) && (bitangle <= 0.95))? texture2D(s_texture, trueimg * UNDERSCAN): ALLOFF;\n" //original rendering; (S, T) swizzle
+    "   else if (bitangle > DWEND) outcolor = ALLOFF;\n" //WS281X bits end low
+//    "   else if (!ENABLED) outcolor.rgb = texture2D(s_texture, v_texCoord).rgb;\n" //normal rendering overlayed with start/stop bars (for debug)
 //build output bit buffer to send real data:
-    "   else outcolor = texture2D(s_texture, pivotimg * OVERSCAN);\n" //send real node bit values (pivoted); pivoted (S, T) swizzle
+#ifdef CPU_PIVOT //Pi GPU can't perform multiple texture lookups, so pivot must be done on CPU
+    "   else outcolor = texture2D(s_texture, pivotimg * UNDERSCAN);\n" //send real node bit values (pivoted); pivoted (S, T) swizzle
+#else
+    "   else\n" //GPU pivot or hardware demux
+    "   {\n"
+#ifdef HWMUX //RPI_NO_X //experimental; drive external mux SR (SN74HC595) using RPi VGA GPIO or non-Pi ADC
+    "       float x = round(1536.0 * UNDERSCAN.s * coord.x);\n" //[0..1488)
+//TODO: finish this code
+    "       if (x < 2.0*8.0)\n" //only do 8 bits (1 SR) for now
+    "       {\n"
+    "           if (LSB(x))\n" //clock
+    "               outcolor = (y < floor(x / 2.0) / 8.0)? vec4(1.0, 1.0, 0.0, 1.0): ALLOFF;\n"
+    "           else\n" //data
+    "               outcolor = (y < floor(x / 2.0) / 8.0)? vec4(0.0, 1.0, 1.0, 1.0): ALLOFF;\n"
+    "       }\n"
+    "       else if (x == 2.0*8.0) outcolor = vec4(1.0, 1.0, 1.0, 1.0);\n"
+    "       else outcolor = ERROR(1);\n"
+#else
+//    "       nodemask = pow(2.0, 23.0 - nodebit); \n" //BITMASK(nodebit);
+    "       rawimg.y /= group_ws281x;\n" //switch back to stretched (grouped) location
+//    "       outcolor = vec4(0.0, 0.0, 0.0, 0.0);\n"
+//    "       vec3 nodemaskbits = vec3((nodebit < 8.0)? nodemask: 0.0, (nodebit bitmask(nodebit);\n"
+//NOTE: this isn't quite right yet
+#if 0
+    "       for (float pivbit = 0.0; pivbit < 24.0; ++pivbit)\n"
+    "       {\n"
+//    "   float nodemask = pow(0.5, mod(nodebit, 8.0) + 1.0); \n" //BITMASK(nodebit);
+//    "           float bitmask = pow(2.0, 23.0 - bit); \n" //BITMASK(nodebit);
+    "           vec2 pivot_coord = vec2(pivbit / 23.0, rawimg.y);\n"
+    "           vec4 pivbits = texture2D(s_texture, pivot_coord);\n" //should call fx()
+//    "           vec4 pivbits = vec4(pivot_coord.x, pivot_coord.y, pivot_coord.x + pivot_coord.y, 1.0);\n" //texture2D(s_texture, pivot_coord);\n"
+//    "           if (and(bits, nodemask)) outcolor = or(outcolor, bitmask);\n"
+    "           if (AND(pivbits, nodebit)) outcolor = OR(outcolor, pivbit);\n"
+//    "           outcolor = bits;\n"
+"if (pivbit > 0.0) break;\n"
+    "       }\n"
+#else
+        "   outcolor = ERROR(1);\n"
+"           if (AND(pivbits0, nodebit)) outcolor = OR(outcolor, 0.0);\n"
+#if 0
+"           if (AND(pivbits1, nodebit)) outcolor = OR(outcolor, 1.0);\n"
+"           if (AND(pivbits2, nodebit)) outcolor = OR(outcolor, 2.0);\n"
+"           if (AND(pivbits3, nodebit)) outcolor = OR(outcolor, 3.0);\n"
+"           if (AND(pivbits4, nodebit)) outcolor = OR(outcolor, 4.0);\n"
+"           if (AND(pivbits5, nodebit)) outcolor = OR(outcolor, 5.0);\n"
+"           if (AND(pivbits6, nodebit)) outcolor = OR(outcolor, 6.0);\n"
+"           if (AND(pivbits7, nodebit)) outcolor = OR(outcolor, 7.0);\n"
+"           if (AND(pivbits8, nodebit)) outcolor = OR(outcolor, 8.0);\n"
+"           if (AND(pivbits9, nodebit)) outcolor = OR(outcolor, 9.0);\n"
+"           if (AND(pivbits10, nodebit)) outcolor = OR(outcolor, 10.0);\n"
+"           if (AND(pivbits11, nodebit)) outcolor = OR(outcolor, 11.0);\n"
+"           if (AND(pivbits12, nodebit)) outcolor = OR(outcolor, 12.0);\n"
+"           if (AND(pivbits13, nodebit)) outcolor = OR(outcolor, 13.0);\n"
+"           if (AND(pivbits14, nodebit)) outcolor = OR(outcolor, 14.0);\n"
+"           if (AND(pivbits15, nodebit)) outcolor = OR(outcolor, 15.0);\n"
+"           if (AND(pivbits16, nodebit)) outcolor = OR(outcolor, 16.0);\n"
+"           if (AND(pivbits17, nodebit)) outcolor = OR(outcolor, 17.0);\n"
+"           if (AND(pivbits18, nodebit)) outcolor = OR(outcolor, 18.0);\n"
+"           if (AND(pivbits19, nodebit)) outcolor = OR(outcolor, 19.0);\n"
+"           if (AND(pivbits20, nodebit)) outcolor = OR(outcolor, 20.0);\n"
+"           if (AND(pivbits21, nodebit)) outcolor = OR(outcolor, 21.0);\n"
+"           if (AND(pivbits22, nodebit)) outcolor = OR(outcolor, 22.0);\n"
+"           if (AND(pivbits23, nodebit)) outcolor = OR(outcolor, 23.0);\n"
+#endif
+#endif
+#endif //def RPI_NO_X
+    "   }\n"
+#endif //def CPU_PIVOT
 //    "   outcolor = texture2D(s_texture, v_texCoord.xy);\n" //original multi-rendering
 //    "   outcolor = texture2D(s_texture, remap.xy);\n" //pivot data
 //    "   outcolor = texture2D(s_texture, remap.zy);\n" //pivot data
@@ -1473,14 +1641,70 @@ const char* fShaderStr_ws281x =
 //NOTE: must operate on non-pivoted values
     "   return color;\n"
     "}\n"
-    "vec4 _RGB(float val, float which)\n"
+    "bool AND(vec4 bits, float bit) //mask)\n" //bit-wise AND; NOTE: only checks lsb of mask
     "{\n"
-    "   if (which == 3.0) return vec4(0.0, 1.0, 1.0, 1.0);\n"
+//    "   if (mask < 256.0) return LSB(255.0 * bits.b / mask);\n"
+//    "   mask = floor(mask / 256.0);\n"
+//    "   if (mask < 256.0) return LSB(255.0 * bits.g / mask);\n"
+//    "   mask = floor(mask / 256.0);\n"
+//    "   if (mask < 256.0) return LSB(255.0 * bits.r / mask);\n"
+//    "   return true;\n"
+    "   if (bit < 0.0) return true;\n" //bug: should not happen
+    "   if (bit < 8.0) return LSB(255.0 * bits.r / pow(2.0, 7.0 - bit));\n"
+    "   if (bit < 16.0) return LSB(255.0 * bits.g / pow(2.0, 15.0 - bit));\n"
+    "   if (bit < 24.0) return LSB(255.0 * bits.b / pow(2.0, 23.0 - bit));\n"
+    "   return true;\n" //bug: should not happen
+    "}\n"
+    "vec4 OR(vec4 bits, float bit) //mask)\n" //bit-wise OR; NOTE: assumes target bit is off to start
+    "{\n"
+//    "   if (mask < 256.0) return bits + vec4(0.0, 0.0, mask / 256.0, 0.0);\n"
+//    "   mask = floor(mask / 256.0);\n"
+//    "   if (mask < 256.0) return bits + vec4(0.0, mask / 256.0, 0.0, 0.0);\n"
+//    "   mask = floor(mask / 256.0);\n"
+//    "   if (mask < 256.0) return bits + vec4(mask / 256.0, 0.0, 0.0, 0.0);\n"
+    "   if (bit < 0.0) bits = ERROR(1);\n" //bug: should not happen
+    "   else if (bit < 8.0) bits += pow(0.5, bit + 1.0);\n"
+    "   else if (bit < 16.0) bits += pow(0.5, bit - 7.0);\n"
+    "   else if (bit < 24.0) bits += pow(0.5, bit - 15.0);\n"
+    "   else bits = ERROR(1);\n" //bug: should not happen
+    "   return bits;\n"
+    "}\n"
+    "vec4 _RGB(float val, float which)\n" //this is for debug, but leave it in so debug can be turned on/off at run-time
+    "{\n"
+//    "   if (which == 3.0) return vec4(0.0, 1.0, 1.0, 1.0);\n"
     "   if ((which != 0.0) && (which != 1.0) && (which != 2.0)) return ERROR(4);\n"
     "   return vec4((which == 0.0)? val: 0.0, (which == 1.0)? val: 0.0, (which == 2.0)? val: 0.0, 1.0);\n" //show R/G/B for debug
+    "}\n"
+    "bool LSB(float val)\n"
+    "{\n"
+    "   val = floor(val);\n"
+    "   return (floor((val) / 2.0) != (val) / 2.0);\n"
 #ifdef SHADER_DEBUG
     "}\n"
 //DEBUG stuff:
+    "vec4 hwmux_debug(vec2 coord)\n"
+    "{\n"
+    "   float y = 10.0 * (coord.y - 0.7);\n" //[0..1)
+    "   float x = 66.0; //round(1536.0 * UNDERSCAN.s * coord.x);\n" //[0..1488)
+//    "   return vec4(0.0, coord.x, 0.0, 1.0);\n"
+//    "   return vec4(0.0, y, 0.0, 1.0);\n"
+//    "   return (y < coord.x)? vec4(0.0, 1.0, 1.0, 1.0): ALLOFF;\n"
+//    "   float univ = floor(NUM_UNIV * coord.x);\n"
+//    "   if (mod(x, 4.0) == 0.0) return vec4(1.0, 0.0, 0.0, 1.0);\n" //r
+//    "   if (mod(x, 4.0) == 1.0) return vec4(0.0, 1.0, 0.0, 1.0);\n" //g
+//    "   if (mod(x, 4.0) == 2.0) return vec4(0.0, 0.0, 1.0, 1.0);\n" //b
+//    "   if (mod(x, 4.0) == 3.0) return vec4(1.0, 1.0, 0.0, 1.0);\n" //y
+//    "   return ERROR(1);\n"
+    "   if (x < 2.0*8.0)\n" //only do 8 bits (1 SR) for now
+    "   {\n"
+    "       if (LSB(x))\n" //clock
+    "           return (y < floor(x / 2.0) / 8.0)? vec4(1.0, 1.0, 0.0, 1.0): ALLOFF;\n"
+    "       else\n" //data
+    "           return (y < floor(x / 2.0) / 8.0)? vec4(0.0, 1.0, 1.0, 1.0): ALLOFF;\n"
+    "   }\n"
+    "   else if (x == 2.0*8.0) return ERROR(1);\n"
+    "   else return ALLOFF;\n"
+    "}\n"
     "bool chkcolor(vec4 color)\n"
     "{\n"
     "   float bits = 0.0;\n"
@@ -1493,6 +1717,7 @@ const char* fShaderStr_ws281x =
     "{\n"
     "   return vec4(val, val, val, 1.0);\n"
     "}\n"
+//ERROR code legend:
 //  1 | 3
 // ---+---
 //  2 | 4
@@ -1507,13 +1732,16 @@ const char* fShaderStr_ws281x =
 
     SHOW_CONFIG(printf("compiling shaders:\n"));
     SHOW_CONFIG(printf("-----\n%s\n", linenums(vShaderStr)));
-    SHOW_CONFIG(printf("-----\n%s\n-----", linenums(fShaderStr)));
+    SHOW_CONFIG(printf("-----\n%s\n-----\n", linenums(fShaderStr)));
 	state.programObject = progcre(vShaderStr, fShaderStr);
 	if (!state.programObject) return why(FALSE, "!prog");
 //get attribute, sampler locations:
 	state.positionLoc = glGetAttribLocation(state.programObject, "a_position"); ERRCHK("positin");
 	state.texCoordLoc = glGetAttribLocation(state.programObject, "a_texCoord"); ERRCHK("txcoord");
 	state.samplerLoc = glGetUniformLocation(state.programObject, "s_texture"); ERRCHK("txtr");
+//	state.samplerLoc2 = glGetUniformLocation(state.programObject, "s_texture2"); ERRCHK("txtr2");
+//	state.samplerLoc3 = glGetUniformLocation(state.programObject, "s_texture3"); ERRCHK("txtr3");
+//	state.samplerLoc4 = glGetUniformLocation(state.programObject, "s_texture4"); ERRCHK("txtr4");
 //    state.hscaleLoc = glGetUniformLocation(state.programObject, "HSCALE");
 	state.wantWS281Xloc = glGetUniformLocation(state.programObject, "want_ws281x"); ERRCHK("want");
 	state.grpWS281Xloc = glGetUniformLocation(state.programObject, "group_ws281x"); ERRCHK("group");
@@ -1929,7 +2157,7 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //if (!x && !y) printf("render[%d, %d]: blend 0x%x with 0x%x,", x, y, LEDs->mpixels[XY(x, y)], limit(color));
 				blend(LEDs->mpixels[XY(x, y)], limit(color));
 //if (!x && !y) printf(" got 0x%x\n", LEDs->mpixels[XY(x, y)]);
-                LEDs->dirty_pivot[x / NUM_GPIO][y] = true;
+                IFPIVOT(LEDs->dirty_pivot[x / NUM_GPIO][y] = true);
 //printf("got ary[%d/%d][%d/%d] = 0x%x\n", x, UNIV_LEN, y, NUM_UNIV, color);
 			}
 		}
@@ -2256,9 +2484,11 @@ printf("blend x %d, y %d, w %d, h %d @%d +%f\n", xofs, yofs, w, h, elapsed(), hr
         }
 //strcpy(bp, "\n");
 //printf(buf+2);
+#ifdef CPU_PIVOT
     for (int x = xofs; x < xlimit; x += NUM_GPIO)
         for (int y = yofs; y < ylimit; ++y)
             LEDs->dirty_pivot[x / NUM_GPIO][y] = true;
+#endif
 printf("render to texture @%d +%f\n", elapsed(), hr_elapsed(wreq.started));
     LEDs->render(); //copy to texture; allows next frame to be rendered in parallel
 }
@@ -2291,15 +2521,15 @@ printf("more? %d @%d +%f\n", !!pend_head, elapsed(), hr_elapsed(wreq.started));
 printf("render next @%d +%f\n", elapsed(), hr_elapsed(pending.started));
     render(pending); //render now so data is ready without delay when timer expires
 //schedule texture output to GPU:
-    uint32_t delay = time_base + pending.swap32(pending.buffer[1]) - uv_now(uv_default_loop()); //make relative to now; TODO: call uv_update_time(loop)?
+    int delay = time_base + pending.swap32(pending.buffer[1]) - uv_now(uv_default_loop()); //make relative to now; TODO: call uv_update_time(loop)?
 //delay *= 10;
-printf("delay flush %d, has next? %d, @%d +%f\n", delay, !!pending.nextp, elapsed(), hr_elapsed(pending.started));
+printf("delay flush %d, overdue? %d, has next? %d, @%d +%f\n", delay, (delay < 1), !!pending.nextp, elapsed(), hr_elapsed(pending.started));
 //NO        uv_queue_work(uv_default_loop(), &req->req, write_async, write_after); //use timer for aync work queue
 //NO    sleep(delay); //this is blocking; need to use uv_loop instead
 //use a new timer each time (allows next render to start):
 //    uv_timer_t frbuf_delay;
     uv_timer_init(uv_default_loop(), &pending.timer);
-    uv_timer_start(&pending.timer, dequeue, delay, 0);
+    uv_timer_start(&pending.timer, dequeue, (delay > 0)? delay: 1, 0);
 }
 
 

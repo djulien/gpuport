@@ -15,49 +15,77 @@ var Writable = require('readable-stream/writable');
 //                 'LE'; // assume little-endian for older versions of node.js
 
 
-//exports:
+///////////////////////////////////////////////////////////////////////////////
+////
+/// entry points:
+//
+
 exports = module.exports = WS281X;
 
-exports.api_version = binding.api_version;
-exports.description = binding.description;
-exports.module_name = binding.name;
 
-exports.width = binding.width;
-exports.height = binding.height;
-exports.FBLEN = binding.FBLEN; //frame buffer size (header + data)
-exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
-exports.swap32 = binding.swap32;
-exports.shmatt = binding.shmatt;
-exports.fblen = binding.fblen;
+//general:
+WS281X.api_version = binding.api_version;
+WS281X.description = binding.description;
+WS281X.module_name = binding.name;
 
-//TODO: change to getters/setters; for now, make it look that way
+
+//define ARGB primary colors:
+WS281X.RED = binding.RED;
+WS281X.GREEN = binding.GREEN;
+WS281X.BLUE = binding.BLUE;
+WS281X.YELLOW = binding.YELLOW;
+WS281X.CYAN = binding.CYAN;
+WS281X.MAGENTA = binding.MAGENTA;
+WS281X.WHITE = binding.WHITE;
+WS281X.BLACK = binding.BLACK;
+WS281X.XPARENT = binding.XPARENT;
+
+
+//config settings:
+WS281X.width = binding.width;
+WS281X.height = binding.height;
+
+//TODO: change to getters/setters; for now, just make it look that way
 //exports.want = binding.want;
 var want_latest;
-Object.defineProperty(exports, "want",
+Object.defineProperty(WS281X, "want",
 {
     get: function() { return want_latest; },
     set: function(newval) { binding.want(want_latest = newval); },
 });
 //exports.group = binding.group;
 var group_latest;
-Object.defineProperty(exports, "group",
+Object.defineProperty(WS281X, "group",
 {
     get: function() { return group_latest; },
     set: function(newval) { binding.group(group_latest = newval); },
 });
 //exports.debug = binding.debug;
 
-//define ARGB primary colors:
-exports.RED = binding.RED;
-exports.GREEN = binding.GREEN;
-exports.BLUE = binding.BLUE;
-exports.YELLOW = binding.YELLOW;
-exports.CYAN = binding.CYAN;
-exports.MAGENTA = binding.MAGENTA;
-exports.WHITE = binding.WHITE;
-exports.BLACK = binding.BLACK;
-exports.XPARENT = binding.XPARENT;
 
+//buffer mgmt:
+WS281X.fblen = binding.fblen;
+WS281X.FBLEN = binding.FBLEN; //frame buffer size (header + data)
+WS281X.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
+WS281X.shmatt = binding.shmatt;
+WS281X.swap32 = binding.swap32;
+
+
+//interactive (non-stream) api:
+WS281X.pixel = binding.pixel;
+WS281X.fill = binding.fill;
+WS281X.render = binding.render;
+
+//streaming api:
+WS281X.open = binding.open;
+WS281X.write = binding.write;
+WS281X.flush = binding.flush;
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// stream object class:
+//
 
 const States =
 {
