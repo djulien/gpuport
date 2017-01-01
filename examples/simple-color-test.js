@@ -17,12 +17,14 @@ const Transform = require('stream').Transform;
 const inherits = require('util').inherits;
 const WS281X = require('../');
 
+const WHICH = 1; //(process.argv.length > 2)? 1; //which test to run
 const DEBUG = true; //false;
 console.log("%s ver %s\n%s".blue_light, WS281X.module_name, WS281X.api_version, WS281X.description);
-console.log("canvas %d x %d".blue_light, WS281X.width, WS281X.height);
-WS281X.want = true; //DEBUG? -1: true;
+console.log("canvas %d x %d, Pi? %d".blue_light, WS281X.width, WS281X.height, WS281X.IsPI);
+WS281X.wsout = DEBUG? -1: true;
 WS281X.group = DEBUG? WS281X.height / 25: 1;
 
+//use smaller #univ and univ len for test/debug:
 const NUM_UNIV = DEBUG? 4: WS281X.width;
 const UNIV_LEN = DEBUG? 10: WS281X.height;
 
@@ -51,10 +53,17 @@ const playback =
     {when: 6.5, color: BLACK, },
 ];
 
+const lastarg = process.argv.slice(-1)[0];
+const SPEED_ADJUST = //slow down for easier debug
+{
+    mult: lastarg.match(/^x?[0-9]+x?$/)? lastarg.replace(/x/, ""): 1,
+    add: lastarg.match(/^[+-][0-9]+$/)? lastarg.substr(1): 0,
+};
+
 
 //various tests:
 //send in-memory patterns directly to GPU (no file):
-//if (false)
+if (WHICH == 1) //false)
 setImmediate(function() //avoid hoist errors
 {
     console.log("memory -> GPU".cyan_light);
@@ -64,7 +73,7 @@ setImmediate(function() //avoid hoist errors
 });
 
 //write patterns to file:
-if (false)
+if (WHICH == 2) //false)
 setImmediate(function() //avoid hoist errors
 {
     console.log("memory -> file".cyan_light);
@@ -74,7 +83,7 @@ setImmediate(function() //avoid hoist errors
 });
 
 //send patterns from file to GPU:
-if (false)
+if (WHICH == 3) //false)
 setImmediate(function() //avoid hoist errors
 {
     console.log("file -> GPU".cyan_light);
@@ -115,11 +124,8 @@ function read(n)
     if (!this.latest) this.latest = 0;
     if (this.latest >= this.playback.length) { this.push(null); return; } //eof
     var {when, color} = this.playback[this.latest++];
-    var lastarg = process.argv.slice(-1)[0];
-var svw = when;
-    if (lastarg.match(/^x[0-9]+$/)) when *= lastarg.substr(1); //slow down for easier debug
-console.log("when %d => %d  %s", svw, when, lastarg);
-    if (process.argv.slice(-1)[0].match(/^x[0-9]+$/)) when *= 10; //easier debug
+    when *= SPEED_ADJUST.mult; //easier debug
+    when += SPEED_ADJUST.add; //easier debug
 //console.log(typeof when, typeof color);
     var buf = Buffer.alloc(4 * NUM_UNIV * UNIV_LEN + 16);
 //console.log("alloc buf %s x %s = %s", WS281X.width, WS281X.height, buf.length);
@@ -134,7 +140,7 @@ console.log("when %d => %d  %s", svw, when, lastarg);
         for (var y = 0; y < UNIV_LEN; ++y)
             buf.writeUInt32BE(((x + y) & 1)? color >>> 0: BLACK >>> 0, ofs += 4);
     this.push(buf);
-console.log("push buf#%d, color 0x%s, delay %s sec".blue_light, this.latest, color.toString(16), when);
+console.log("push buf#%d, color 0x%s, delay %s sec (* %d + %d)".blue_light, this.latest, color.toString(16), when, SPEED_ADJUST.mult, SPEED_ADJUST.add);
 }
 
 

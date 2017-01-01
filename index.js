@@ -47,38 +47,47 @@ exports.height = binding.height;
 exports.IsPI = binding.IsPI;
 
 //TODO: change to getters/setters; for now, just make it look that way
+
 var fps_latest = 30;
+//exports.fps = binding.fps;
 Object.defineProperty(exports, "fps",
 {
     get: function() { return fps_latest; },
     set: function(newval) { fps_latest = newval; }, //TODO: add to bindings
 });
-//exports.fps = binding.fps;
 
-//exports.want = binding.want;
-var want_latest;
-Object.defineProperty(exports, "want",
+var wsout_latest;
+//exports.wsout = binding.wsout;
+Object.defineProperty(exports, "wsout",
 {
-    get: function() { return want_latest; },
-    set: function(newval) { binding.want(want_latest = newval); },
+    get: function() { return wsout_latest; },
+    set: function(newval) { binding.wsout(wsout_latest = newval); },
 });
-//exports.group = binding.group;
 
 var group_latest;
+//exports.group = binding.group;
 Object.defineProperty(exports, "group",
 {
     get: function() { return group_latest; },
     set: function(newval) { binding.group(group_latest = newval); },
 });
-//exports.debug = binding.debug;
+
 
 var autoclip_latest;
+//exports.autoclip = binding.auticlip;
 Object.defineProperty(exports, "autoclip",
 {
     get: function() { return autoclip_latest; },
     set: function(newval) { binding.autoclip(autoclip_latest = newval); },
 });
+
+var debug_latest = false;
 //exports.debug = binding.debug;
+Object.defineProperty(exports, "debug",
+{
+    get: function() { return debug_latest; },
+    set: function(newval) { debug_latest = newval; }, //TODO: add to bindings and/or hook up to other debug()
+});
 
 
 //buffer mgmt:
@@ -150,7 +159,7 @@ WS281X.prototype._open = function() //title, width, height)
     this.state = States.OPEN; //isopen = true; //new Buffer(binding.sizeof_audio_output_t);
 //    binding.open.apply(null, arguments);
 //    if (!binding.open(this.title, this.wndw, this.wndh); //"WS281X-GPU test", 640, 480))
-console.log("state = open");
+    if (this.debug) console.log("state = open".blue_light);
     this.emit('open');
     return true; 
 };
@@ -250,7 +259,7 @@ WS281X.prototype.close = function(flush)
     binding.flush(); //this.audio_handle);
 
     this.state = States.CLOSED; //_closed = true;
-console.log("state = closed");
+    if (this.debug) console.log("state = closed".blue_light);
     this.emit('close');
 };
 

@@ -37,17 +37,17 @@
 //pixel clock determines max mux for output signals and max #universes
 //theoretical limit for RPi is ~ 1.5M nodes @30 FPS (~1500 univ * 1K univ len)
 
-#define SCREEN_SCAN_WIDTH  1320 //(SCREEN_DISP_WIDTH / 23.25 * 24) //1536 //set to *exact* RPi screen width (pixels) *including* hsync time; must be a multiple of NODE_BITS
-#define SCREEN_DISP_WIDTH  1488-208 //set to *exact* RPi displayable screen width (pixels)
+#define SCREEN_SCAN_WIDTH  (1536-216) //set to *exact* RPi screen width (pixels) *including* hsync time; must be a multiple of NODE_BITS
+#define SCREEN_DISP_WIDTH  (1488-208) //set to *exact* RPi displayable screen width (pixels)
 #define NODE_BITS  24 //#bits to send to each WS281X node; determined by protocol
 #define NUM_GPIO  24 //#pins to use for WS281X control; up to 24 available for VGA usage
 #define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 
 //select max "universe" size and count:
 #define NUM_UNIV  24 //max #universes; one "universe" per screen column; > NUM_GPIO requires external hardware mux up to 1-to-(SCREEN_SCAN_WIDTH/24) * NUM_GPIO (1536 max)
-//universe size can be any number up to displayable screen height (pixels)
+//universe size can be any number up to displayable screen height excluding v sync (pixels)
 //for debug, smaller is better (makes nodes easier to seen on screen)
-//can also be used to group (repeat) each node
+//caller can also group (repeat) each node to cut down on #nodes
 //#ifndef UNIV_LEN //allow set from Makefile or binding.gyp
 #define UNIV_LEN  1140 //1104 //for real; gives ~ 30 FPS
  //#define UNIV_LEN  220 //groups of 5 nodes
@@ -63,7 +63,7 @@
 
 #if defined(RPI_NO_X) && WS281X_SHADER && !defined(HWMUX) && !defined(CPU_PIVOT)
  #pragma message("Turning on CPU pivot")
-// #define CPU_PIVOT
+ #define CPU_PIVOT
 #endif
 
 
@@ -312,8 +312,8 @@ typedef struct
 	GLint positionLoc;
 	GLint texCoordLoc;
 //    GLint hscaleLoc;
-    GLboolean wantWS281Xloc;
-    GLint grpWS281Xloc;
+    GLboolean wsoutLoc;
+    GLint grpLoc;
 // Sampler location
 	GLint samplerLoc;
 //	GLint samplerLoc2;
@@ -325,8 +325,8 @@ typedef struct
 	struct timeval started, latest;
 	struct timezone tz;
 	float totaltime;
-    int want_ws281x, autoclip; //tri-state
-    float group_ws281x;
+    int wsout, autoclip; //tri-state
+    float group;
 //	unsigned int frames, draws;
 } MyState;
 MyState state; //= {0};
@@ -337,8 +337,8 @@ inline void state_init()
 	memset(&state, 0, sizeof(state));
 	gettimeofday(&state.started, &state.tz);
 	state.latest = state.started;
-//    state.want_ws281x = WS281X_SHADER; //1;
-//    state.group_ws281x = 1.0;
+//    state.wsout = WS281X_SHADER; //1;
+//    state.group = 1.0;
 //    state.autoclip = -1; //warn but allow
 }
 #undef init
@@ -393,7 +393,7 @@ class MyTexture
 #define XY(x, y) y][x //x][y //TODO: BROKEN
 	GLuint mpixels[XY(TXTW, H)]; //[W][H]; //x is universe#, y is node#
 
-    int latest_want = true;
+    int latest_wsout = true;
     float latest_group = 1.0;
 	unsigned int render_count, flush_count;
 	bool dirty; //texture needs to be resent to GPU
@@ -574,11 +574,11 @@ class MyTexture
 //there might be rounding errors on coordinates, so don't wrap or mirror
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // GL_REPEAT);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); // GL_REPEAT);
-//        want_ws281x(true);
+//        wsout(true);
 #ifdef WS281X_SHADER  //tell GPU to render WS281X protocol (node.js can override)
-        want_ws281x(state.want_ws281x); //WS281X_SHADER);
-//        glUniform1i(state.wantWS281Xloc, onoff); ERRCHK("wantWS281X");
-        group_ws281x(state.group_ws281x); //1.0);
+        wsout(state.wsout); //WS281X_SHADER);
+//        glUniform1i(state.wsoutloc, onoff); ERRCHK("wsoutWS281X");
+        group(state.group); //1.0);
 #endif
 //		glBindTexture(GL_TEXTURE_2D, 0);
 		ERRCHK("setup");
@@ -614,25 +614,25 @@ class MyTexture
 		return ok;
 	}
 
-    void want_ws281x(int onoff)
+    void wsout(int tristate)
     {
 #ifdef WS281X_SHADER  //tell GPU to render WS281X protocol (node.js can override)
-        printf("wantWS281X: %d\n", onoff);
-        glUniform1i(state.wantWS281Xloc, onoff); ERRCHK("wantWS281X");
-        latest_want = onoff;
+        printf("wsout: %d (%s)\n", tristate, !tristate? "texture as-is": (tristate < 0)? "original + WS281X render overlayed": "real WS281X output");
+        glUniform1i(state.wsoutLoc, tristate); ERRCHK("wsout");
+        latest_wsout = tristate;
 #else
-        if (onoff) printf("ignoring want_ws281x: %d\n", onoff);
+        if (tristate) printf("ignoring wsout: %d\n", tristate);
 #endif
     }
 
-    void group_ws281x(float grp)
+    void group(float grp)
     {
 #ifdef WS281X_SHADER  //tell GPU to render WS281X protocol (node.js can override)
-        printf("groupWS281X: %f\n", grp);
-        glUniform1f(state.grpWS281Xloc, grp); ERRCHK("grpWS281X");
+        printf("group: %f\n", grp);
+        glUniform1f(state.grpLoc, grp); ERRCHK("group");
         latest_group = grp;
 #else
-        if (grp != 1.0) printf("ignoring group_ws281x %f\n", grp);
+        if (grp != 1.0) printf("ignoring group %f\n", grp);
 #endif
     }
 
@@ -1584,7 +1584,7 @@ const char* fShaderStr_ws281x =
 //    "       outcolor = vec4(0.0, 0.0, 0.0, 0.0);\n"
 //    "       vec3 nodemaskbits = vec3((nodebit < 8.0)? nodemask: 0.0, (nodebit bitmask(nodebit);\n"
 //NOTE: this isn't quite right yet
-#if 0
+#if 1
     "       for (float pivbit = 0.0; pivbit < 24.0; ++pivbit)\n"
     "       {\n"
 //    "   float nodemask = pow(0.5, mod(nodebit, 8.0) + 1.0); \n" //BITMASK(nodebit);
@@ -1595,12 +1595,12 @@ const char* fShaderStr_ws281x =
 //    "           if (and(bits, nodemask)) outcolor = or(outcolor, bitmask);\n"
     "           if (AND(pivbits, nodebit)) outcolor = OR(outcolor, pivbit);\n"
 //    "           outcolor = bits;\n"
-"if (pivbit > 0.0) break;\n"
+//"if (pivbit > 0.0) break;\n"
     "       }\n"
 #else
         "   outcolor = ERROR(1);\n"
-"           if (AND(pivbits0, nodebit)) outcolor = OR(outcolor, 0.0);\n"
 #if 0
+"           if (AND(pivbits0, nodebit)) outcolor = OR(outcolor, 0.0);\n"
 "           if (AND(pivbits1, nodebit)) outcolor = OR(outcolor, 1.0);\n"
 "           if (AND(pivbits2, nodebit)) outcolor = OR(outcolor, 2.0);\n"
 "           if (AND(pivbits3, nodebit)) outcolor = OR(outcolor, 3.0);\n"
@@ -1745,8 +1745,8 @@ const char* fShaderStr_ws281x =
 //	state.samplerLoc3 = glGetUniformLocation(state.programObject, "s_texture3"); ERRCHK("txtr3");
 //	state.samplerLoc4 = glGetUniformLocation(state.programObject, "s_texture4"); ERRCHK("txtr4");
 //    state.hscaleLoc = glGetUniformLocation(state.programObject, "HSCALE");
-	state.wantWS281Xloc = glGetUniformLocation(state.programObject, "want_ws281x"); ERRCHK("want");
-	state.grpWS281Xloc = glGetUniformLocation(state.programObject, "group_ws281x"); ERRCHK("group");
+	state.wsoutLoc = glGetUniformLocation(state.programObject, "want_ws281x"); ERRCHK("want");
+	state.grpLoc = glGetUniformLocation(state.programObject, "group_ws281x"); ERRCHK("group");
 	glUseProgram(state.programObject); //now use shaders
 //load the texture:
 //	state.textureId = texcre();
@@ -2005,8 +2005,8 @@ int warn(const char* errmsg, ...)
 inline void morestate_init()
 {
     init();
-    state.want_ws281x = WS281X_SHADER; //1;
-    state.group_ws281x = 1.0;
+    state.wsout = WS281X_SHADER; //1;
+    state.group = 1.0;
     state.autoclip = false; //don't allow
     clip_warn = noderr;
 }
@@ -2015,56 +2015,56 @@ inline void morestate_init()
 
 
 //enable WS281X formatting in shader:
-void want_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
+void wsout_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
-	int onoff = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
-//printf("wantWS281X: %d\n", onoff);
-//    if (LEDs) LEDs->want_ws281x(onoff);
-    state.want_ws281x = onoff; //allow it to be set before LEDs instantiated
-	args.GetReturnValue().Set(true);
+	int tristate = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
+//printf("wsoutWS281X: %d\n", tristate);
+//    if (LEDs) LEDs->wsout(tristate);
+    state.wsout = tristate; //allow it to be set before LEDs instantiated
+	args.GetReturnValue().Set(state.wsout);
 }
 
 //Handle<v8::Value> Getter( Local<v8::String> property, const AccessorInfo& info ) 
 /*
-NAN_GETTER(want_getter)
+NAN_GETTER(wsout_getter)
 {
 //    auto person = Nan::ObjectWrap::Unwrap<NanPerson>(info.Holder());
 //    auto name = Nan::New(person->name).ToLocalChecked();
-    info.GetReturnValue().Set(LEDs.latest_want);
+    info.GetReturnValue().Set(LEDs.latest_wsout);
 //    HandleScope scope;
-//    v8::Local<v8::Value> retval = Nan::New(LEDs.latest_want);
+//    v8::Local<v8::Value> retval = Nan::New(LEDs.latest_wsout);
 //    return retval; //handle_scope.Close(obj); 
 }
 
-NAN_SETTER(want_setter)
+NAN_SETTER(wsout_setter)
 {
 //    auto person = Nan::ObjectWrap::Unwrap<NanPerson>(info.Holder());
 //    // [NOTE] `value` is defined argument in `NAN_SETTER`
 //    auto name = Nan::To<v8::String>(value).ToLocalChecked();
 //    person->name = *Nan::Utf8String(name);
-	int onoff = 1; //GetOptionalInt(info, 0, true); //Bool(args, 0, true);
-//printf("wantWS281X: %d\n", onoff);
-    LEDs.want_ws281x(onoff);
-	info.GetReturnValue().Set(onoff);
+	int tristate = 1; //GetOptionalInt(info, 0, true); //Bool(args, 0, true);
+//printf("wsoutWS281X: %d\n", tristate);
+    LEDs.wsout(tristate);
+	info.GetReturnValue().Set(tristate);
 }
 
-v8::Handle<v8::Value> want_getter(v8::Local<v8::Number> property, const v8::AccessorInfo& info)
+v8::Handle<v8::Value> wsout_getter(v8::Local<v8::Number> property, const v8::AccessorInfo& info)
 {
 //    Box* boxInstance = ObjectWrap::Unwrap<Box>(info.Holder());
 //    Local<Object> size = Object::New();
 //    size->Set(String::New("width"), Integer::New(boxInstance->width));
 //    size->Set(String::New("height"), Integer::New(boxInstance->height));
-    v8::Local<v8::Number> retval = Nan::New(LEDs.latest_want);
+    v8::Local<v8::Number> retval = Nan::New(LEDs.latest_wsout);
     return retval;
 }
 
-v8::Handle<v8::Value> want_setter(v8::Local<v8::Number> property, 
+v8::Handle<v8::Value> wsout_setter(v8::Local<v8::Number> property, 
     v8::Local<v8::Value> value, const v8::AccessorInfo& info)
 {
 //	if (!args[0]->IsNumber()) Nan::ThrowTypeError("Pixel: 1st arg should be number");
-	int onoff = value->Int32Value(); //NumberValue();
-//printf("wantWS281X: %d\n", onoff);
-    LEDs.want_ws281x(onoff);
+	int tristate = value->Int32Value(); //NumberValue();
+//printf("wsoutWS281X: %d\n", tristate);
+    LEDs.wsout(tristate);
 }
 */
 
@@ -2074,8 +2074,8 @@ void group_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	float grp = GetOptionalFloat(args, 0, 1); //Number(args, 0, 1);
 //printf("groupWS281X: %f\n", grp);
-//    if (LEDs) LEDs->group_ws281x(grp);
-    state.group_ws281x = grp; //allow it to be set before LEDs instantiated
+//    if (LEDs) LEDs->group(grp);
+    state.group = grp; //allow it to be set before LEDs instantiated
 	args.GetReturnValue().Set(grp);
 }
 
@@ -2083,8 +2083,6 @@ void group_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 void autoclip_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
 	int onoff = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
-//printf("wantWS281X: %d\n", onoff);
-//    if (LEDs) LEDs->want_ws281x(onoff);
     state.autoclip = onoff; //allow it to be set before LEDs instantiated
     clip_warn = !onoff? noderr: (onoff < 0)? warn: silent;
 	args.GetReturnValue().Set(onoff);
@@ -2835,21 +2833,21 @@ void entpt_init(v8::Local<v8::Object> exports)
     CONST_INT("height", UNIV_LEN);
 
 //config:
-	exports->Set(Nan::New("want").ToLocalChecked(),
-                 Nan::New<v8::FunctionTemplate>(want_entpt)->GetFunction());
+	exports->Set(Nan::New("wsout").ToLocalChecked(),
+                 Nan::New<v8::FunctionTemplate>(wsout_entpt)->GetFunction());
 	exports->Set(Nan::New("group").ToLocalChecked(),
                  Nan::New<v8::FunctionTemplate>(group_entpt)->GetFunction());
 	exports->Set(Nan::New("autoclip").ToLocalChecked(),
                  Nan::New<v8::FunctionTemplate>(autoclip_entpt)->GetFunction());
-//    VAR_INT("want", set_want_entpt);
+//    VAR_INT("wsout", set_wsout_entpt);
 //    VAR_INT("group", set_group_entpt);
-//	exports->Set(Nan::New("want").ToLocalChecked(),
-//                 Nan::New<v8::FunctionTemplate>(want_getter)->GetFunction());
-//	exports->Set(Nan::New("want").ToLocalChecked(),
-//                 Nan::New<v8::FunctionTemplate>(want_setter)->GetFunction());
-//	exports->SetAccessor(Nan::New("want").ToLocalChecked(),
-//                 Nan::New<v8::FunctionTemplate>(want_getter)->GetFunction(),
-//                want_getter, want_setter);
+//	exports->Set(Nan::New("wsout").ToLocalChecked(),
+//                 Nan::New<v8::FunctionTemplate>(wsout_getter)->GetFunction());
+//	exports->Set(Nan::New("wsout").ToLocalChecked(),
+//                 Nan::New<v8::FunctionTemplate>(wsout_setter)->GetFunction());
+//	exports->SetAccessor(Nan::New("wsout").ToLocalChecked(),
+//                 Nan::New<v8::FunctionTemplate>(wsout_getter)->GetFunction(),
+//                wsout_getter, wsout_setter);
 
 //	exports->Set(Nan::New("group").ToLocalChecked(),
 //                 Nan::New<v8::FunctionTemplate>(group_getter)->GetFunction());
@@ -2875,8 +2873,8 @@ void entpt_init(v8::Local<v8::Object> exports)
                  Nan::New<v8::FunctionTemplate>(render_entpt)->GetFunction());
 	exports->Set(Nan::New("pixel").ToLocalChecked(),
                  Nan::New<v8::FunctionTemplate>(pixel_entpt)->GetFunction());
-//	exports->Set(Nan::New("want").ToLocalChecked(),
-//                 Nan::New<v8::FunctionTemplate>(want_entpt)->GetFunction());
+//	exports->Set(Nan::New("wsout").ToLocalChecked(),
+//                 Nan::New<v8::FunctionTemplate>(wsout_entpt)->GetFunction());
 //	exports->Set(Nan::New("group").ToLocalChecked(),
 //                 Nan::New<v8::FunctionTemplate>(group_entpt)->GetFunction());
 
