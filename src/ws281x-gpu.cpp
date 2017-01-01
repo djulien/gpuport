@@ -1143,7 +1143,7 @@ bool wincre(const char* title, GLint width, GLint height) //const char* title, G
 #else //X11 native display initialization
 	state.xDisplay = XOpenDisplay(NULL);
 	if (!state.xDisplay) return why(FALSE, "!Xopen");
-    SHOW_CONFIG(printf("win create(XWin !RPi): display 0x%x, size %d x %d\n", state.xDisplay, state.width, state.height));
+	/*always, for sanity SHOW_CONFIG*/(printf("win create(XWin !RPi): display 0x%x, size %d x %d\n", state.xDisplay, state.width, state.height));
 	Atom wm_state;
 	XWMHints hints;
 	XEvent evt = {0};
@@ -2804,7 +2804,7 @@ void entpt_init(v8::Local<v8::Object> exports)
     Nan::HandleScope scope; //for v8 GC
 
 //module desc:
-    CONST_INT("api_version", 1.0);
+    CONST_INT("api_version", 2.0);
     CONST_STR("name", "WS281X-gpu");
     CONST_STR("description", "Node.js stream + GPU driver for WS281X");
 

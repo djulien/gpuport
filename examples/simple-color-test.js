@@ -102,12 +102,12 @@ setImmediate(function() //avoid hoist errors
     src.pipe(new FrameReader()).pipe(dest);
 });
 
-//send patterns from file to GPU:
+//API patterns to GPU:
 if (WHICH == 4) //false)
 blocking(function*() //use synchronous coding style for simplicity
 {
-    console.log("interactive API".cyan_light);
-    WS281X.open("interactive API");
+    var ok = WS281X.open("interactive API");
+    console.log("interactive API, open ok? %d".cyan_light, ok);
     var started = now_sec();
     for (var i = 0; i < playback.length; ++i)
     {
@@ -119,6 +119,7 @@ blocking(function*() //use synchronous coding style for simplicity
     }
     console.log("eof".blue_light);
 });
+
 
 //pause("rgb done (pause)");
 console.log("done (async main)".green_light);
@@ -149,6 +150,7 @@ inherits(FrameWriter, Readable);
 FrameWriter.prototype._read =
 function read(n)
 {
+    if (!this.playback) return;
     if (!this.latest) this.latest = 0;
     if (this.latest >= this.playback.length) { this.push(null); return; } //eof
     var {when, color} = this.playback[this.latest++];
@@ -167,6 +169,32 @@ function read(n)
             buf.writeUInt32BE(((x + y) & 1)? color >>> 0: BLACK >>> 0, ofs += 4);
     this.push(buf);
 console.log("push buf#%d, color 0x%s, delay %s sec".blue_light, this.latest, color.toString(16), when);
+}
+
+
+function mkfr(when)
+{
+    var buf = Buffer.alloc(4 * NUM_UNIV * UNIV_LEN + 16);
+//console.log("alloc buf %s x %s = %s", WS281X.width, WS281X.height, buf.length);
+
+    var ofs = -4;
+    buf.writeUInt32BE(WS281X.FBUFST, ofs += 4); //mark start of frame buffer
+    buf.writeUInt32BE((1000 * when) >>> 0, ofs += 4); //frame delay time
+    buf.writeUInt32BE(0, ofs += 4); //frame offset (x, y)
+    buf.writeUInt32BE((NUM_UNIV << 16) | UNIV_LEN, ofs += 4); //frame size (w, h)
+    buf.fill = function(color)
+    {
+        var ofs = 16 - 4;
+        for (var x = 0; x < NUM_UNIV; ++x)
+            for (var y = 0; y < UNIV_LEN; ++y)
+                buf.writeUInt32BE(color >>> 0, ofs += 4);
+    }
+    buf.pixel = function(x, y, color)
+    {
+        var ofs = x * UNIV_LEN + y + 4;
+        buf.writeUInt32BE(color >>> 0, 4 * ofs);
+    }
+    return buf;
 }
 
 
