@@ -84,6 +84,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/time.h>
+#include <unordered_map>
 
 //#include <GL/glew.h> //must come before gl.h
 #include <GLES2/gl2.h>
@@ -324,7 +325,7 @@ typedef struct
 	struct timeval started, latest;
 	struct timezone tz;
 	float totaltime;
-    int want_ws281x;
+    int want_ws281x, autoclip; //tri-state
     float group_ws281x;
 //	unsigned int frames, draws;
 } MyState;
@@ -336,8 +337,9 @@ inline void state_init()
 	memset(&state, 0, sizeof(state));
 	gettimeofday(&state.started, &state.tz);
 	state.latest = state.started;
-    state.want_ws281x = WS281X_SHADER; //1;
-    state.group_ws281x = 1.0;
+//    state.want_ws281x = WS281X_SHADER; //1;
+//    state.group_ws281x = 1.0;
+//    state.autoclip = -1; //warn but allow
 }
 #undef init
 #define init()  state_init()
@@ -1963,7 +1965,7 @@ void write281x(uint32_t argb)
 
 
 //send to stdout in case errors not caught in node.js:
-void noderr(const char* errmsg, ...)
+int noderr(const char* errmsg, ...)
 {
 	va_list params;
 	char buf[BUFSIZ];
@@ -1972,6 +1974,7 @@ void noderr(const char* errmsg, ...)
 	va_end(params);
 //	printf("THROW: %s\n", buf);
 	Nan::ThrowTypeError(buf);
+    return 0; //dummy ret to match printf
 }
 
 
@@ -1979,6 +1982,37 @@ void noderr(const char* errmsg, ...)
 ////
 /// custom api:
 //
+
+int (*clip_warn)(const char*, ...);
+int silent(const char* ignored, ...) { return 0; }
+
+int warn(const char* errmsg, ...)
+{
+    static std::unordered_map<const char*, int> seen;
+    if (++seen[errmsg] > 10) return 0;
+
+	va_list params;
+	char buf[BUFSIZ];
+	va_start(params, errmsg);
+	int retval = vsprintf(buf, errmsg, params); //TODO: send to stderr?
+	va_end(params);
+	printf("WARNING: %s\n", buf);
+    if (seen[errmsg] == 10) printf("(ignoring further warnings of this type)\n");
+    return retval; //dummy ret to match printf
+}
+
+
+inline void morestate_init()
+{
+    init();
+    state.want_ws281x = WS281X_SHADER; //1;
+    state.group_ws281x = 1.0;
+    state.autoclip = false; //don't allow
+    clip_warn = noderr;
+}
+#undef init
+#define init()  morestate_init()
+
 
 //enable WS281X formatting in shader:
 void want_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
@@ -2045,45 +2079,16 @@ void group_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 	args.GetReturnValue().Set(grp);
 }
 
-/*
-NAN_GETTER(group_getter)
+//auto-clip coordinates:
+void autoclip_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 {
-//    auto person = Nan::ObjectWrap::Unwrap<NanPerson>(info.Holder());
-//    auto name = Nan::New(person->name).ToLocalChecked();
-    info.GetReturnValue().Set(LEDs.latest_group);
-}
-
-NAN_SETTER(group_setter)
-{
-//    auto person = Nan::ObjectWrap::Unwrap<NanPerson>(info.Holder());
-//    // [NOTE] `value` is defined argument in `NAN_SETTER`
-//    auto name = Nan::To<v8::String>(value).ToLocalChecked();
-//    person->name = *Nan::Utf8String(name);
-	float grp = 1.0; //GetOptionalFloat(info, 0, 1); //Number(args, 0, 1);
-//printf("groupWS281X: %f\n", grp);
-    LEDs.group_ws281x(grp);
-	info.GetReturnValue().Set(grp);
-}
-
-v8::Handle<v8::Value> group_getter(v8::Local<v8::Number> property, const v8::AccessorInfo& info)
-{
-//    Box* boxInstance = ObjectWrap::Unwrap<Box>(info.Holder());
-//    Local<Object> size = Object::New();
-//    size->Set(String::New("width"), Integer::New(boxInstance->width));
-//    size->Set(String::New("height"), Integer::New(boxInstance->height));
-    v8::Local<v8::Number> retval = Nan::New(LEDs.latest_group);
-    return retval;
-}
-
-v8::Handle<v8::Value> group_setter(v8::Local<v8::Number> property, 
-    v8::Local<v8::Value> value, const v8::AccessorInfo& info)
-{
-//	if (!args[0]->IsNumber()) Nan::ThrowTypeError("Pixel: 1st arg should be number");
-	float grp = value->FloatValue(); //NumberValue();
+	int onoff = GetOptionalInt(args, 0, true); //Bool(args, 0, true);
 //printf("wantWS281X: %d\n", onoff);
-    LEDs.group_ws281x(grp);
+//    if (LEDs) LEDs->want_ws281x(onoff);
+    state.autoclip = onoff; //allow it to be set before LEDs instantiated
+    clip_warn = !onoff? noderr: (onoff < 0)? warn: silent;
+	args.GetReturnValue().Set(onoff);
 }
-*/
 
 
 //return #"universes":
@@ -2139,17 +2144,27 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 		if (!args[0]->IsArray()) { noderr("Render: outer argument not array"); return; }
 //		v8::Handle<v8::Array> jsArray = v8::Handle<v8::Array>::Cast(args[0]);
 		v8::Local<v8::Array> outer = v8::Local<v8::Array>::Cast(args[0]);
-		if (outer->Length() > UNIV_LEN) { noderr("Render: outer array too long: %d (max is %d)", outer->Length(), UNIV_LEN); return; }
 		outlen = outer->Length();
+		if (outer->Length() > UNIV_LEN)
+        {
+            clip_warn("Render: outer array too long: %d (max is %d)", outer->Length(), UNIV_LEN);
+//            if (!autoclip) return;
+            outlen = UNIV_LEN;
+        }
 //		bool is2D = (outer->Length() == UNIV_LEN);
-		for (int x = 0; x < outer->Length(); ++x)
+		for (int x = 0; x < outlen; ++x)
 		{
 			v8::Local<v8::Value> val = outer->Get(x);
 			if (!val->IsArray()) { noderr("Render: inner argument not array"); return; }
 			v8::Local<v8::Array> inner = v8::Local<v8::Array>::Cast(val);
-			if (inner->Length() > NUM_UNIV) { noderr("Render: inner array[%d] too long: %d (max is %d)", x, inner->Length(), NUM_UNIV); return; }
 			inlen = inner->Length();
-			for (int y = 0; y < inner->Length(); ++y)
+			if (inner->Length() > NUM_UNIV)
+            {
+                clip_warn("Render: inner array[%d] too long: %d (max is %d)", x, inner->Length(), NUM_UNIV);
+//                if (!autoclip) return;
+                inlen = NUM_UNIV;
+            }
+			for (int y = 0; y < inlen; ++y)
 			{
 				val = inner->Get(y);
 //				v8::Local<v8::Value> element = v8::Local<v8::Number>::Cast(val);
@@ -2184,8 +2199,16 @@ void pixel_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //	if (!args[1]->IsNumber()) Nan::ThrowTypeError("Pixel: 2nd arg should be number");
 	int y = args[1]->Uint32Value(); //NumberValue();
 
-	if ((x < 0) || (x >= NUM_UNIV)) { noderr("X out of range"); return; }
-	if ((y < 0) || (y >= UNIV_LEN)) { noderr("Y out of range"); return; }
+	if ((x < 0) || (x >= NUM_UNIV))
+    {
+        clip_warn("X = %d out of range [0..%d)", x, NUM_UNIV);
+        return;
+    }
+	if ((y < 0) || (y >= UNIV_LEN))
+    {
+        clip_warn("Y = %d out of range [0..%d)", y, UNIV_LEN);
+        return;
+    }
 	if (args.Length() > 2) //set pixel color
 	{
 //		if (!args[2]->IsNumber()) Nan::ThrowTypeError("Pixel: 3rd arg should be number");
@@ -2788,6 +2811,7 @@ void entpt_init(v8::Local<v8::Object> exports)
     CONST_STR("description", "Node.js stream + GPU driver for WS281X");
 
 //misc consts:
+    CONST_INT("IsPI", IFPI(true, false)); //easier dev/test
     CONST_INT("FBUFST", FBUFST); //0x59414c50); //"YALP" start of frame marker; checks stream integrity, as well as byte order
     CONST_INT("FBLEN", FBLEN(NUM_UNIV, UNIV_LEN)); //frame buffer size (header + data)
 
@@ -2815,6 +2839,8 @@ void entpt_init(v8::Local<v8::Object> exports)
                  Nan::New<v8::FunctionTemplate>(want_entpt)->GetFunction());
 	exports->Set(Nan::New("group").ToLocalChecked(),
                  Nan::New<v8::FunctionTemplate>(group_entpt)->GetFunction());
+	exports->Set(Nan::New("autoclip").ToLocalChecked(),
+                 Nan::New<v8::FunctionTemplate>(autoclip_entpt)->GetFunction());
 //    VAR_INT("want", set_want_entpt);
 //    VAR_INT("group", set_group_entpt);
 //	exports->Set(Nan::New("want").ToLocalChecked(),

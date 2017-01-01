@@ -1,15 +1,19 @@
 {
   "name": "ws281x-gpu",
-  "description": "WS281X output using GPU",
+  "description": "Node.js stream and API to drive WS281X LEDs using the RPi GPU via OpenGL",
   "keywords": [
-    "gpu",
-    "ws2811",
-    "ws281x",
-    "yalp"
+    "GPU",
+    "RPi",
+    "Raspberry Pi 2",
+    "OpenGL ES",
+    "WS2811",
+    "WS2812",
+    "WS281X",
+    "YALP"
   ],
   "license": "CC-BY-NC-SA-4.0",
-  "version": "0.1.0",
-  "author": "djulien@thejuliens.net",
+  "version": "0.2.0",
+  "author": "djulien",
   "repository": {
     "type": "git",
     "url": "git://github.com/djulien/ws281x-gpu.git"

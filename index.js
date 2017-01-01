@@ -24,62 +24,80 @@ exports = module.exports = WS281X;
 
 
 //general:
-WS281X.api_version = binding.api_version;
-WS281X.description = binding.description;
-WS281X.module_name = binding.name;
+exports.api_version = binding.api_version;
+exports.description = binding.description;
+exports.module_name = binding.name;
 
 
 //define ARGB primary colors:
-WS281X.RED = binding.RED;
-WS281X.GREEN = binding.GREEN;
-WS281X.BLUE = binding.BLUE;
-WS281X.YELLOW = binding.YELLOW;
-WS281X.CYAN = binding.CYAN;
-WS281X.MAGENTA = binding.MAGENTA;
-WS281X.WHITE = binding.WHITE;
-WS281X.BLACK = binding.BLACK;
-WS281X.XPARENT = binding.XPARENT;
+exports.RED = binding.RED;
+exports.GREEN = binding.GREEN;
+exports.BLUE = binding.BLUE;
+exports.YELLOW = binding.YELLOW;
+exports.CYAN = binding.CYAN;
+exports.MAGENTA = binding.MAGENTA;
+exports.WHITE = binding.WHITE;
+exports.BLACK = binding.BLACK;
+exports.XPARENT = binding.XPARENT;
 
 
 //config settings:
-WS281X.width = binding.width;
-WS281X.height = binding.height;
+exports.width = binding.width;
+exports.height = binding.height;
+exports.IsPI = binding.IsPI;
 
 //TODO: change to getters/setters; for now, just make it look that way
+var fps_latest = 30;
+Object.defineProperty(exports, "fps",
+{
+    get: function() { return fps_latest; },
+    set: function(newval) { fps_latest = newval; }, //TODO: add to bindings
+});
+//exports.fps = binding.fps;
+
 //exports.want = binding.want;
 var want_latest;
-Object.defineProperty(WS281X, "want",
+Object.defineProperty(exports, "want",
 {
     get: function() { return want_latest; },
     set: function(newval) { binding.want(want_latest = newval); },
 });
 //exports.group = binding.group;
+
 var group_latest;
-Object.defineProperty(WS281X, "group",
+Object.defineProperty(exports, "group",
 {
     get: function() { return group_latest; },
     set: function(newval) { binding.group(group_latest = newval); },
 });
 //exports.debug = binding.debug;
 
+var autoclip_latest;
+Object.defineProperty(exports, "autoclip",
+{
+    get: function() { return autoclip_latest; },
+    set: function(newval) { binding.autoclip(autoclip_latest = newval); },
+});
+//exports.debug = binding.debug;
+
 
 //buffer mgmt:
-WS281X.fblen = binding.fblen;
-WS281X.FBLEN = binding.FBLEN; //frame buffer size (header + data)
-WS281X.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
-WS281X.shmatt = binding.shmatt;
-WS281X.swap32 = binding.swap32;
+exports.fblen = binding.fblen;
+exports.FBLEN = binding.FBLEN; //frame buffer size (header + data)
+exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
+exports.shmatt = binding.shmatt;
+exports.swap32 = binding.swap32;
 
 
 //interactive (non-stream) api:
-WS281X.pixel = binding.pixel;
-WS281X.fill = binding.fill;
-WS281X.render = binding.render;
+exports.pixel = binding.pixel;
+exports.fill = binding.fill;
+exports.render = binding.render;
 
 //streaming api:
-WS281X.open = binding.open;
-WS281X.write = binding.write;
-WS281X.flush = binding.flush;
+exports.open = binding.open;
+exports.write = binding.write;
+exports.flush = binding.flush;
 
 
 ///////////////////////////////////////////////////////////////////////////////
