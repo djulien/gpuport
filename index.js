@@ -24,9 +24,9 @@ exports = module.exports = WS281X;
 
 
 //general:
+exports.module_name = binding.name;
 exports.api_version = binding.api_version;
 exports.description = binding.description;
-exports.module_name = binding.name;
 
 
 //define ARGB primary colors:
@@ -42,9 +42,9 @@ exports.XPARENT = binding.XPARENT;
 
 
 //config settings:
+exports.IsPI = binding.IsPI;
 exports.width = binding.width;
 exports.height = binding.height;
-exports.IsPI = binding.IsPI;
 
 //TODO: change to getters/setters; for now, just make it look that way
 
@@ -92,21 +92,36 @@ Object.defineProperty(exports, "debug",
 
 //buffer mgmt:
 exports.fblen = binding.fblen;
-exports.FBLEN = binding.FBLEN; //frame buffer size (header + data)
-exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity)
+exports.FBLEN = binding.FBLEN; //frame buffer max size (header + data)
+exports.FBUFST = binding.FBUFST; //start of frame marker (helps check stream integrity and byte order)
 exports.shmatt = binding.shmatt;
 exports.swap32 = binding.swap32;
 
 
 //interactive (non-stream) api:
-exports.pixel = binding.pixel;
-exports.fill = binding.fill;
-exports.render = binding.render;
+//TODO: make these fluent; simulate it for now
 
-//streaming api:
-exports.open = binding.open;
-exports.write = binding.write;
-exports.flush = binding.flush;
+//exports.pixel = binding.pixel;
+exports.pixel = function(x, y, color)
+{
+    var retval = binding.pixel.apply(binding, arguments);
+    if (arguments.length > 2) retval = this; //fluent only if not returning current color data
+    return retval;
+}
+
+//exports.fill = binding.fill;
+exports.fill = function(args)
+{
+    binding.fill.apply(binding, arguments);
+    return this; //fluent
+}
+
+//exports.render = binding.render;
+exports.render = function(args)
+{
+    binding.render.apply(binding, arguments);
+    return this; //fluent
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -120,6 +135,11 @@ const States =
     OPEN: 1,
     CLOSED: 2,
 };
+
+//streaming api:
+exports.open = binding.open; //this one is for interactive API as well
+exports.write = binding.write;
+exports.flush = binding.flush;
 
 
 //ctor:

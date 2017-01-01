@@ -56,7 +56,7 @@
 
 #define WS281X_SHADER  true //tell GPU to render WS281X protocol (node.js can override); value determines default mode in fragment shader; must be TRUE for live show
 #define SHADER_DEBUG //show debug info on screen
-//#define CPU_PIVOT //RPi GPU won't access > 1 texture per pixel, so pivot on CPU instead
+#define CPU_PIVOT //RPi GPU won't access > 1 texture per pixel, so pivot on CPU instead
 //#define HWMUX //use GPIO to drive external mux SR; gives up to ~ 800K nodes @30 FPS
 //#define SHOW_CONFIG //show display surface config, shaders on console (mainly for debug)
 //#define SHOW_VERT //show vertex info on console (only for debug)
@@ -356,10 +356,10 @@ bool errchk(const char* msg)
 {
 	GLenum errcode = glGetError();
 //	const GLubyte* errstr = glewGetErrorString(errcode); //gluErrorString(errcode); //glew.h
-	const char* errstr = ""; //TODO
+	const char* errstr = ""; //TODO: resolve problem with GLEW/GLUT
 
 	if (errcode != GL_NO_ERROR) printf("ERROR code %d: %s %s\n", errcode, msg, errstr);
-	return (errcode != GL_NO_ERROR);
+	return (errcode != GL_NO_ERROR); //true == bad
 }
 
 
@@ -581,9 +581,9 @@ class MyTexture
         group(state.group); //1.0);
 #endif
 //		glBindTexture(GL_TEXTURE_2D, 0);
-		ERRCHK("setup");
+		bool ok = !ERRCHK("setup");
 		dirty = true;
-		return true;
+		return ok;
 	}
 
 	bool render() //GLuint* pixels = 0) //&mpixels[0][0]) //, GLuint width = 0, GLuint height = 0)
@@ -609,8 +609,9 @@ class MyTexture
 //	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 //	    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glBindTexture(GL_TEXTURE_2D, NULL);
-		bool ok = ERRCHK("render");
+		bool ok = !ERRCHK("render");
 		dirty = true;
+printf("render: ok? %d\n", ok);
 		return ok;
 	}
 
@@ -703,7 +704,7 @@ class MyTexture
 			return false;
 		}
 #endif
-//		printf("render %d x %d\n", textureWidth(), textureHeight());
+		printf("flush %d x %d\n", textureWidth(), textureHeight());
 
 		glViewport(0, 0, state.width, state.height); ERRCHK("flush");
 		glClear(GL_COLOR_BUFFER_BIT); ERRCHK("flush"); //clear color buffer
@@ -1505,11 +1506,10 @@ const char* fShaderStr_ws281x =
 //    "   remap.x *= HSCALE;\n"
 //    "   remap.z *= HSCALE;\n"
 //    "   vec3 nodemask = texture2D(s_texture, vec2(v_texCoord.x, MASKROW)).rgb;\n"
-//    "   float nodebit = floor(rawimg.s * UNDERSCAN.s * NODE_BITS);\n" //* PERNODE);\n" //bit# within node; last bit is mostly off-screen (during h sync period); use floor to control rounding (RPi was rounding UP sometimes)
     "   float nodebit = floor(rawimg.s * UNDERSCAN.s * NODE_BITS);\n" //* PERNODE);\n" //bit# within node; last bit is mostly off-screen (during h sync period); use floor to control rounding (RPi was rounding UP sometimes)
     "   float bitangle = rawimg.s * UNDERSCAN.s * NODE_BITS - nodebit;\n" //position within current bit timeslot
     "   float nodemask = pow(0.5, mod(nodebit, 8.0) + 1.0); \n" //BITMASK(nodebit);
-    "   if ((nodebit == 0.0) || (nodebit == 8.0) || (nodebit == 16.0)) nodemask = 0.5;\n" //kludge: arithmetic bad on RPi
+    "   if ((nodebit == 0.0) || (nodebit == 8.0) || (nodebit == 16.0)) nodemask = 0.5;\n" //kludge: arithmetic bad on RPi?
 //send non-WS281X data:
     "   if (!ENABLED) outcolor = texture2D(s_texture, v_texCoord.st);\n" //show texture as-is
 //paranoid checking:
@@ -2123,7 +2123,7 @@ void fill_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 //		if (!args[1]->IsNumber()) Nan::ThrowTypeError("SetAll: 2nd arg should be number");
 	bool flush = GetOptionalBool(args, 1);
 
-//printf("fill: color 0x%x, flush? %d\n", color, flush);
+printf("fill: color 0x%x, flush? %d\n", color, flush);
 	LEDs->fill(color);
 	args.GetReturnValue().Set(flush && LEDs->render() && LEDs->flush());
 }
@@ -2175,8 +2175,8 @@ void render_entpt(const Nan::FunctionCallbackInfo<v8::Value>& args)
 			}
 		}
 	}
-//    if ((outlen != prev_outlen) || (inlen != prev_inlen))
-//    	printf("render got ary %d x %d\n", outlen, inlen);
+    if ((outlen != prev_outlen) || (inlen != prev_inlen))
+    	printf("render got ary %d x %d\n", outlen, inlen);
     prev_outlen = outlen;
     prev_inlen = inlen;
 	args.GetReturnValue().Set(LEDs->render() && LEDs->flush());
@@ -2293,13 +2293,13 @@ printf("open stream: title '%s', w %d, h %d\n", cstr(title), width, height);
 	if (ok) ok = eglcre();
 //TODO?	glewInit(); //must occur after context created; BROKEN
 	if (ok) ok = LEDs->setup();
-	if (!ok) { printf("failed\n"); args.GetReturnValue().Set(false); return; }
+	if (!ok) printf("open init failed\n");
 
 //    mydata* ptr = UnwrapPointer<mydata*>(info[0]);
     /* TODO: async */
 //    ao->flush(ao);
 //    send(); //flush last (partial) buffer
-    args.GetReturnValue().Set(true);
+    args.GetReturnValue().Set(ok);
 #undef args
 }
 

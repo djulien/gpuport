@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 //generate some color test patterns for WS281X-gpu
 
+//TODO: split into separate test files
+
 //to install/compile:
 //  1. cd my parent folder
 //  2. npm install
@@ -17,7 +19,7 @@ const Transform = require('stream').Transform;
 const inherits = require('util').inherits;
 const WS281X = require('../');
 
-const WHICH = 1; //(process.argv.length > 2)? 1; //which test to run
+const WHICH = 4; //(process.argv.length > 2)? 1; //which test to run
 const DEBUG = true; //false;
 console.log("%s ver %s\n%s".blue_light, WS281X.module_name, WS281X.api_version, WS281X.description);
 console.log("canvas %d x %d, Pi? %d".blue_light, WS281X.width, WS281X.height, WS281X.IsPI);
@@ -40,7 +42,7 @@ const WARM_WHITE = 0xffffffb4; //h 60/360, s 30/100, v 1.0
 const BLACK = 0xff000000;
 const XPARENT = 0; //alpha = 0 for transparent
 
-//test colors and durations:
+//test colors and start times:
 const playback =
 [
     {when: 0, color: RED, },
@@ -53,12 +55,20 @@ const playback =
     {when: 6.5, color: BLACK, },
 ];
 
+//slow it down for easier test/debug:
 const lastarg = process.argv.slice(-1)[0];
-const SPEED_ADJUST = //slow down for easier debug
-{
-    mult: lastarg.match(/^x?[0-9]+x?$/)? lastarg.replace(/x/, ""): 1,
-    add: lastarg.match(/^[+-][0-9]+$/)? lastarg.substr(1): 0,
-};
+if (lastarg.match(/^\*[0-9]+$/))
+    playback.reduce((prior, current) =>
+    {
+        current.when_bk = current.when;
+        var delay = current.when - (prior.when_bk || 0);
+        delay *= lastarg.substr(1);
+        current.when = (prior.when || 0) + delay;
+        return current;
+    }, {});
+else if (lastarg.match(/^slow|[+-][0-9]+$/))
+    playback.forEach((evt, inx) => { evt.when += (1 * lastarg || 20) * inx; });
+//console.log("adjusted playback", playback);
 
 
 //various tests:
@@ -92,8 +102,26 @@ setImmediate(function() //avoid hoist errors
     src.pipe(new FrameReader()).pipe(dest);
 });
 
+//send patterns from file to GPU:
+if (WHICH == 4) //false)
+blocking(function*() //use synchronous coding style for simplicity
+{
+    console.log("interactive API".cyan_light);
+    WS281X.open("interactive API");
+    var started = now_sec();
+    for (var i = 0; i < playback.length; ++i)
+    {
+        var {when, color} = playback[i];
+  //      console.log("delay %d, wait %d", when, when + started - now_sec());
+        yield wait(when + started - now_sec()); //minimize cumulative timing errors
+        WS281X.fill(color).render(); //use fluent API
+        console.log("fill 0x%s @%d sec".blue_light, color.toString(16), now_sec() - started);
+    }
+    console.log("eof".blue_light);
+});
+
 //pause("rgb done (pause)");
-console.log("done (async)".green_light);
+console.log("done (async main)".green_light);
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -124,8 +152,6 @@ function read(n)
     if (!this.latest) this.latest = 0;
     if (this.latest >= this.playback.length) { this.push(null); return; } //eof
     var {when, color} = this.playback[this.latest++];
-    when *= SPEED_ADJUST.mult; //easier debug
-    when += SPEED_ADJUST.add; //easier debug
 //console.log(typeof when, typeof color);
     var buf = Buffer.alloc(4 * NUM_UNIV * UNIV_LEN + 16);
 //console.log("alloc buf %s x %s = %s", WS281X.width, WS281X.height, buf.length);
@@ -140,7 +166,7 @@ function read(n)
         for (var y = 0; y < UNIV_LEN; ++y)
             buf.writeUInt32BE(((x + y) & 1)? color >>> 0: BLACK >>> 0, ofs += 4);
     this.push(buf);
-console.log("push buf#%d, color 0x%s, delay %s sec (* %d + %d)".blue_light, this.latest, color.toString(16), when, SPEED_ADJUST.mult, SPEED_ADJUST.add);
+console.log("push buf#%d, color 0x%s, delay %s sec".blue_light, this.latest, color.toString(16), when);
 }
 
 
@@ -268,9 +294,54 @@ util.inherits(readLine, EventEmitter);
 
 ///////////////////////////////////////////////////////////////////////////////
 ////
+/// synchronous (blocking) code:
+//
+
+//step thru a generator function:
+//allows synchronous (blocking) coding style
+function blocking(gen)
+{
+	if (typeof gen == "function") //invoke generator if not already
+    {
+        setImmediate(function() { blocking(gen()); }); //avoid hoist errors
+        return;
+    }
+//    process.stdin.pause(); //don't block process exit while not waiting for input
+    var retval;
+	for (;;)
+	{
+		var status = gen.next(retval); //send previous value to generator
+//		if (!status.done && (typeof status.value == "undefined")) continue; //cooperative multi-tasking
+		if (typeof status.value == "function") //caller wants manual step
+        {
+            retval = status.value(gen);
+            return;
+        }
+        retval = status.value;
+		if (status.done) return retval;
+	}
+}
+
+//wake up from synchronous sleep:
+function wait(delay)
+{
+    delay *= 1000; //sec -> msec
+    if (delay > 1) return setTimeout.bind(null, blocking, delay);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
 /// misc:
 //
 
+//current time in seconds:
+function now_sec()
+{
+    return Date.now() / 1000;
+}
+
+//wait for console input:
 function pause(prompt)
 {
     console.log(prompt);
