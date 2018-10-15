@@ -1,3 +1,5 @@
+was: Node.js stream and API to drive WS281X LEDs using the RPi GPU via OpenGL
+
 ws281x-gpu
 ==========
 ### Node.js add-on module to drive WS281X nodes using RPi GPU
