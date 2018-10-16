@@ -15,6 +15,16 @@ var Writable = require('readable-stream/writable');
 //                 'LE'; // assume little-endian for older versions of node.js
 
 
+//node.js shm:
+//https://www.npmjs.com/package/shm-typed-array
+//https://www.npmjs.com/package/shared-buffer
+//https://www.npmjs.com/package/ems
+
+//https://www.npmjs.com/package/shmmap
+//https://www.npmjs.com/package/node-shm-buffer
+//https://www.npmjs.com/package/node_shm
+
+
 ///////////////////////////////////////////////////////////////////////////////
 ////
 /// entry points:
