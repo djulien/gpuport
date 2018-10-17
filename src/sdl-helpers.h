@@ -14,6 +14,7 @@
 
 #include "msgcolors.h"
 #include "srcline.h"
+#include "debugexc.h"
 
 
 //SDL retval conventions:
@@ -49,16 +50,16 @@ public: //ctor/dtor
 //    void init(Uint32 flags = 0, SrcLine srcline = 0)
     SDL_Lib(Uint32 flags = 0, SrcLine srcline = 0)
     {
-        debug(BLUE_MSG "SDL_Lib: init 0x%x" ENDCOLOR_ATLINE, flags, srcline);
+        debug(BLUE_MSG "SDL_Lib: init 0x%x" ENDCOLOR_ATLINE(srcline), flags);
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         for (Uint32 bit = 1; bit; bit <<= 1) //do one at a time
-            if (flags & bits) //caller wants this one
-                if (!SDL_SubSystems.count(bit)) exc(RED_MSG "SDL_Lib: unknown subsys: 0x%x" ENDCOLOR_ATLINE, srcline); //throw SDL_Exception("SDL_Init");
-                else if (inited & bit) debug(BLUE_MSG "SDL_Lib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE, SDL_SubSystems[bit], srcline);
-                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_Lib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE, SDL_SubSystems[bit], SDL_GetError(), SDL_LastError, srcline);
+            if (flags & bit) //caller wants this one
+                if (!SDL_SubSystems.count(bit)) exc(RED_MSG "SDL_Lib: unknown subsys: 0x%x" ENDCOLOR_ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
+                else if (inited & bit) debug(BLUE_MSG "SDL_Lib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), SDL_SubSystems[bit], bit);
+                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_Lib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems[bit], bit, SDL_GetError(), SDL_LastError);
                 else
                 {
-                    debug(CYAN_MSG "SDL_Lib: subsys '%s' (0x%x) init success" ENDCOLOR_ATLINE, SDL_SubSystems[bit], srcline);
+                    debug(CYAN_MSG "SDL_Lib: subsys '%s' (0x%x) init success" ENDCOLOR_ATLINE(srcline), SDL_SubSystems[bit], bit);
                     std::lock_guard<std::mutex> guard(m_mutex);
                     if (!count()++) atexit(SDL_Quit); //defer cleanup in case caller wants more SDL later
                 }
@@ -108,6 +109,15 @@ public:
     aclass(): sdllib(SDL_INIT_VIDEO) { debug("aclass ctor"); }
     ~aclass() { debug("class dtor"); }
 };
+
+void other(SrcLine srcline = 0)
+{
+    SDL_Lib sdllib(SDL_INIT_EVERYTHING); //SDL_INIT_VIDEO | SDL_INIT_AUDIO>
+//    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR;
+//    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline);
+    printf("here1\n");
+}
+
 
 void afunc(SrcLine srcline = 0)
 {

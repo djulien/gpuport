@@ -12,16 +12,17 @@ CYAN=${ANSI_COLOR//COLOR/1;36} #`tput setaf 6`
 ENDCOLOR=${ANSI_COLOR//COLOR/0} #`tput sgr0`
 TOTEST=$*
 if [ "x$TOTEST" == "x" ]; then TOTEST="?? no files ??"; fi
-echo -e "${PINK}Unit testing '${TOTEST}'...${ENDCOLOR}"
+echo -e "${PINK}Unit testing '${TOTEST}' ...${ENDCOLOR}"
 OPT=3  #3 = max; 0 = none
-CFLAGS=-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14
+#CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
+CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
 BIN="${BASH_SOURCE%.*}"
 rm $BIN 2> /dev/null
 set -x
 #echo -e $CYAN; OPT=3; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" $CFLAGS -o "${BASH_SOURCE%.*}" -x c++ - <<//EOF; echo -e $ENDCOLOR
 #echo -e $CYAN; g++ -DWANT_UNIT_TEST $CFLAGS -o "${BASH_SOURCE%.*}" -x c++ $TOTEST; echo -e $ENDCOLOR
 echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${TOTEST}\"" $CFLAGS -o "${BASH_SOURCE%.*}" -x c++ - <<//EOF; echo -e $ENDCOLOR
-#line 25 __SRCFILE__ #compensate for shell commands above; NOTE: +1 needed (sets *next* line)
+#line 26 __SRCFILE__ #compensate for shell commands above; NOTE: +1 needed (sets *next* line)
 
 #include <iostream> //std::cout, std::flush
 

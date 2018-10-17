@@ -13,6 +13,7 @@
 //ANSI color codes (for console output):
 //https://en.wikipedia.org/wiki/ANSI_escape_code
 #define ANSI_COLOR(code)  "\x1b[" code "m"
+//#define ANSI_COLOR(code)  std::ostringstream("\x1b[" code "m")
 #define RED_MSG  ANSI_COLOR("1;31") //too dark: "0;31"
 #define GREEN_MSG  ANSI_COLOR("1;32")
 #define YELLOW_MSG  ANSI_COLOR("1;33")
@@ -25,6 +26,7 @@
 
 //append the src line# to make debug easier:
 //#define ENDCOLOR_ATLINE(srcline)  " &" TOSTR(srcline) ANSI_COLOR("0") "\n"
+//#define ENDCOLOR_ATLINE(srcline)  "  &" << static_cast<const char*>(shortsrc(srcline, SRCLINE)) << ENDCOLOR_NOLINE "\n"
 #define ENDCOLOR_ATLINE(srcline)  "  &" << shortsrc(srcline, SRCLINE) << ENDCOLOR_NOLINE "\n"
 //#define ENDCOLOR_MYLINE  ENDCOLOR_ATLINE(%s) //%d) //NOTE: requires extra param
 #define ENDCOLOR  ENDCOLOR_ATLINE(SRCLINE) //__LINE__)
@@ -32,6 +34,11 @@
 
 #endif //ndef _COLORS_H
 
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Unit test
+//
 
 #ifdef WANT_UNIT_TEST
 #undef WANT_UNIT_TEST //prevent recursion
@@ -42,17 +49,18 @@
 
 void func(int a, SrcLine srcline = 0)
 {
-    std::cout << BLUE_MSG << "hello " << a << " from" << ENDCOLOR;
-    std::cout << CYAN_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline);
+    std::cout << BLUE_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR;
+    std::cout << CYAN_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR_ATLINE(srcline);
 }
 
 
 //int main(int argc, const char* argv[])
 void unit_test()
 {
-    std::cout << BLUE_MSG << "start" << ENDCOLOR;
+    std::cout << BLUE_MSG /*<<*/ "start" /*<<*/ ENDCOLOR;
     func(1);
     func(2, SRCLINE);
+    std::cout << BLUE_MSG << "finish" << ENDCOLOR;
 //    return 0;
 }
 
