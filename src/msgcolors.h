@@ -27,10 +27,11 @@
 //append the src line# to make debug easier:
 //#define ENDCOLOR_ATLINE(srcline)  " &" TOSTR(srcline) ANSI_COLOR("0") "\n"
 //#define ENDCOLOR_ATLINE(srcline)  "  &" << static_cast<const char*>(shortsrc(srcline, SRCLINE)) << ENDCOLOR_NOLINE "\n"
-#define ENDCOLOR_ATLINE(srcline)  "  &" << shortsrc(srcline, SRCLINE) << ENDCOLOR_NOLINE "\n"
+#define ENDCOLOR_ATLINE(srcline)  "  &" << shortsrc(srcline, SRCLINE) << ENDCOLOR_NOLINE //"\n"
 //#define ENDCOLOR_MYLINE  ENDCOLOR_ATLINE(%s) //%d) //NOTE: requires extra param
 #define ENDCOLOR  ENDCOLOR_ATLINE(SRCLINE) //__LINE__)
 //#define ENDCOLOR_LINE(line)  FMT(ENDCOLOR_MYLINE) << (line? line: __LINE__) //show caller line# if available
+#define ENDCOLOR_NEWLINE  ENDCOLOR "\n"
 
 #endif //ndef _COLORS_H
 
@@ -43,24 +44,24 @@
 #ifdef WANT_UNIT_TEST
 #undef WANT_UNIT_TEST //prevent recursion
 
-#include <iostream>
+#include <iostream> //std::cout, std::endl
 #include "srcline.h"
 #include "msgcolors.h"
 
 void func(int a, SrcLine srcline = 0)
 {
-    std::cout << BLUE_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR;
-    std::cout << CYAN_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR_ATLINE(srcline);
+    std::cout << BLUE_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR "\n";
+    std::cout << CYAN_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR_ATLINE(srcline) << std::endl;
 }
 
 
 //int main(int argc, const char* argv[])
 void unit_test()
 {
-    std::cout << BLUE_MSG /*<<*/ "start" /*<<*/ ENDCOLOR;
+    std::cout << BLUE_MSG /*<<*/ "start" /*<<*/ ENDCOLOR_NEWLINE;
     func(1);
     func(2, SRCLINE);
-    std::cout << BLUE_MSG << "finish" << ENDCOLOR;
+    std::cout << BLUE_MSG << "finish" << ENDCOLOR_NEWLINE;
 //    return 0;
 }
 

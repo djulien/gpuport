@@ -162,15 +162,15 @@ public: //opeartors
 
 void func(int a, SrcLine srcline = 0)
 {
-    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR;
-    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline);
+    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR "\n";
+    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline) << std::endl;
 }
 
 
 //int main(int argc, const char* argv[])
 void unit_test()
 {
-    std::cout << BLUE_MSG << "start" << ENDCOLOR;
+    std::cout << BLUE_MSG "start" ENDCOLOR "\n";
     func(1);
     func(2, SRCLINE);
 //    return 0;

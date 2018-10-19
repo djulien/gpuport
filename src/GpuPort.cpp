@@ -64,8 +64,11 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 ////
-/// test
+/// unit test:
 //
+
+#ifdef WANT_UNIT_TEST
+#undef WANT_UNIT_TEST //prevent recursion
 
 #if 0
 //http://lazyfoo.net/tutorials/SDL/01_hello_SDL/linux/cli/index.php
@@ -124,4 +127,21 @@ int main(int argc, char* argv[])
 }
 #endif
 
+
+//#include <iostream> //std::cout
+#include "sdl-helpers.h"
+#include "msgcolors.h"
+#include "srcline.h"
+
+
+//int main(int argc, const char* argv[])
+void unit_test()
+{
+//    SDL_Lib sdllib(SDL_INIT_VIDEO, SRCLINE);
+    SDL_AutoSurface surf(xx);
+    debug(BLUE_MSG << "finish" << ENDCOLOR);
+//    return 0;
+}
+
+#endif //def WANT_UNIT_TEST
 //eof
