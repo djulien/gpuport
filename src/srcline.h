@@ -22,6 +22,7 @@ private: //data
 #include <string.h>
 #include <algorithm> //std::min()
 #include <string>
+//#include <ostream> //std::ostream
 //#include <memory> //std::unique_ptr<>
 //#include <stdio.h> 
 
@@ -35,6 +36,9 @@ private: //data
 //typedef int SRCLINE;
 #define SRCLINE  _sl.srcline = __FILE__ ":" TOSTR(__LINE__)
 typedef const char* SrcLine; //allow compiler to distinguish param types, catch implicit conv
+//    friend ostream& operator<<(ostream& os, const Date& dt);  
+//std::ostream& operator<<(std::ostream& ostrm, SrcLine srcline) { ostrm << static_cast<const char*>(srcline); return ostrm; }
+//std::ostream& operator<<(std::ostream& ostrm, const char* srcline) { ostrm << "srcline"; return ostrm; }
 struct { SrcLine srcline; } _sl; //kludge: global destination so SRCLINE can be used outside NAMED
 
 
@@ -163,7 +167,9 @@ public: //opeartors
 void func(int a, SrcLine srcline = 0)
 {
     std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR "\n";
+    std::cout << PINK_MSG "hello " << a << " from" ENDCOLOR "\n";
     std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline) << std::endl;
+    std::cout << RED_MSG "hello " << a << " from" ENDCOLOR_ATLINE(srcline) << std::endl;
 }
 
 

@@ -11,6 +11,7 @@
 #include <sstream> //std::ostream
 #include <stdio.h> //snprintf
 
+
 class FMT
 {
 public: //ctor
@@ -68,9 +69,11 @@ private:
 void unit_test()
 {
     int x;
-    std::cout << BLUE_MSG << FMT("hex 0x%x") << 42 << ENDCOLOR;
-    std::cout << BLUE_MSG << FMT("str4 %.4s") << "abcdefgh" << ENDCOLOR;
-    std::cout << BLUE_MSG << FMT("ptr %p") << &x << ENDCOLOR;
+    std::cout << BLUE_MSG << FMT("hex 0x%x") << 42 << ENDCOLOR_NEWLINE;
+    std::cout << BLUE_MSG << FMT("str4 %.4s") << "abcdefgh" << ENDCOLOR_NEWLINE;
+    std::cout << BLUE_MSG << FMT("ptr %p") << &x << ENDCOLOR_NEWLINE;
+//    void* ptr = (void*)0x12345678;
+//TODO    std::cout << BLUE_MSG << FMT("dec %d, hex %x, ptr %p") << (long)(int)ptr << (long)(int)ptr << ptr << ", etc" << ENDCOLOR_NEWLINE;
 //    return 0;
 }
 

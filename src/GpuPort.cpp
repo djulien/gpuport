@@ -61,6 +61,39 @@
 
 #include "sdl-helpers.h"
 
+//C++11 implements a lot of SDL functionality in a more C++-friendly way, so let's use it! :)
+#if __cplusplus < 201103L
+ #pragma message("CAUTION: this file probably needs c++11 to compile correctly")
+#endif
+
+#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
+
+//#define rdiv(n, d)  int(((n) + ((d) >> 1)) / (d))
+//#define divup(n, d)  int(((n) + (d) - 1) / (d))
+
+//#define SIZE(thing)  int(sizeof(thing) / sizeof((thing)[0]))
+
+//#define return_void(expr) { expr; return; } //kludge: avoid warnings about returning void value
+
+//inline int toint(void* val) { return (int)(long)val; }
+//#define toint(ptr)  reinterpret_cast<int>(ptr) //gives "loses precision" warning/error
+//#define toint(expr)  (int)(long)(expr)
+
+//#define CONST  //should be const but function signatures aren't defined that way
+
+//typedef enum {No = false, Yes = true, Maybe} tristate;
+//enum class tristate: int {No = false, Yes = true, Maybe, Error = Maybe};
+
+//#define uint24_t  uint32_t //kludge: use pre-defined type and just ignore first byte
+
+//kludge: need nested macros to stringize correctly:
+//https://stackoverflow.com/questions/2849832/c-c-line-number
+//#define TOSTR(str)  TOSTR_NESTED(str)
+//#define TOSTR_NESTED(str)  #str
+
+//#define CONCAT(first, second)  CONCAT_NESTED(first, second)
+//#define CONCAT_NESTED(first, second)  first ## second
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////
@@ -69,64 +102,6 @@
 
 #ifdef WANT_UNIT_TEST
 #undef WANT_UNIT_TEST //prevent recursion
-
-#if 0
-//http://lazyfoo.net/tutorials/SDL/01_hello_SDL/linux/cli/index.php
-//https://github.com/AndrewFromMelbourne/sdl_image_example/blob/master/test_image.c
-int main(int argc, char* argv[])
-{
-    SDL_Surface *screen = NULL;
-    SDL_Surface *image = NULL;
-    const SDL_VideoInfo *videoInfo = NULL;
-    /*-----------------------------------------------------------------*/
-    if (argc != 2)
-    {
-        fprintf(stderr, "single argument ... name of image to display\n");
-        return 1;
-    }
-    /*-----------------------------------------------------------------*/
-    if (SDL_Init(SDL_INIT_VIDEO) < 0)
-    {
-        fprintf(stderr, "SDL_Init failed - %s\n", SDL_GetError());
-        return 1;
-    }
-    /*-----------------------------------------------------------------*/
-    videoInfo = SDL_GetVideoInfo();
-    if (videoInfo == 0)
-    {
-        fprintf(stderr, "SDL_GetVideoInfo failed - %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-    /*-----------------------------------------------------------------*/
-    image = IMG_Load(argv[1]);
-    if (!image)
-    {
-        fprintf(stderr, "IMG_Load failed - %s\n", IMG_GetError());
-        SDL_Quit();
-        return 1;
-    }
-    /*-----------------------------------------------------------------*/
-    screen = SDL_SetVideoMode(image->w,
-                              image->h,
-                              videoInfo->vfmt->BitsPerPixel,
-                              SDL_HWSURFACE);
-    if (!screen)
-    {
-        fprintf(stderr, "SetVideoMode failed - %s\n", SDL_GetError());
-        SDL_FreeSurface(image);
-        SDL_Quit();
-        return 1;
-    }
-    /*-----------------------------------------------------------------*/
-    SDL_BlitSurface(image, 0, screen, 0);
-    SDL_Delay(5000);
-    SDL_FreeSurface(image);
-    SDL_Quit();
-    return 0;
-}
-#endif
-
 
 //#include <iostream> //std::cout
 #include "sdl-helpers.h"

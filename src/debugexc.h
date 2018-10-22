@@ -73,6 +73,7 @@ public: //operators
 //    myprintf(-1, std::forward<ARGS>(args) ...); //perfect fwding
 //}
 #define debug(...)  myprintf(0, std::ostringstream() << __VA_ARGS__)
+#define debug_level(level, ...)  myprintf(level, std::ostringstream() << __VA_ARGS__)
 //#define debug(...)  myprintf(0, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
 //void debug(ARGS&& ... args)
