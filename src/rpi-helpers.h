@@ -43,3 +43,26 @@ bool isRPi()
 
 
 #endif //ndef _RPI_HELPERS_H
+
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Unit test
+//
+
+#ifdef WANT_UNIT_TEST
+#undef WANT_UNIT_TEST //prevent recursion
+
+#include "msgcolors.h"
+#include "debugexc.h"
+
+
+//int main(int argc, const char* argv[])
+void unit_test()
+{
+    debug(CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
+//    return 0;
+}
+
+#endif //def WANT_UNIT_TEST

@@ -357,7 +357,7 @@ const std::map<Uint32, const char*> SDL_RendererFlagNames =
 
 
 //inspect SDL_Rect (mainly for debug msgs):
-const std::string& rect_desc(const SDL_Rect* rect)
+const std::string/*&*/ rect_desc(const SDL_Rect* rect)
 {
     std::ostringstream ss;
     if (!rect) ss << "all";
@@ -367,7 +367,7 @@ const std::string& rect_desc(const SDL_Rect* rect)
 
 
 //inspect SDL_RendererInfo (mainly for debug msgs):
-const std::string& renderer_desc(const SDL_RendererInfo& info)
+const std::string/*no! &*/ renderer_desc(const SDL_RendererInfo& info)
 {
     std::stringstream flags, fmts, count;
     for (const auto& pair: SDL_RendererFlagNames)
@@ -448,7 +448,7 @@ public: //operators
         SDL_version ver;
         SDL_GetVersion(&ver);
 //        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
-        ostrm << "SDL_Lib {version " << ver.major << "." << ver.minor << "." << ver.patch << "}";
+        ostrm << "SDL_Lib {version " << (int)ver.major << "." << (int)ver.minor << "." << (int)ver.patch << "}";
         return ostrm;
     }
 //public: //methods
@@ -456,6 +456,8 @@ public: //operators
 private: //helpers
     static void first_time(SrcLine srcline = 0)
     {
+        SDL_AutoLib* dummy = 0;
+        debug_level(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
 //std::thread::hardware_concurrency()
         debug_level(12, BLUE_MSG "platform: '%s', #cores %d, ram %s MB, isRPi (likely)? %d" ENDCOLOR_ATLINE(srcline), SDL_GetPlatform(), SDL_GetCPUCount(), commas(SDL_GetSystemRAM()), isRPi());
         debug_level(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
@@ -478,7 +480,7 @@ private: //helpers
 //            if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
 //            else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
 //            debug_level(12, BLUE_MSG "Renderer[%s]: '%s', flags 0x%x %s, max %d x %d, %s%s" ENDCOLOR, which.str().c_str(), info.name, info.flags, flags.str().c_str() + 1, info.max_texture_width, info.max_texture_height, count.str().c_str(), fmts.str().c_str() + 2);
-            debug_level(12, BLUE_MSG "Renderer[%s]: '%s', %s" ENDCOLOR, which.str().c_str(), renderer_desc(info).c_str());
+            debug_level(12, BLUE_MSG "Renderer[%s]: %s" ENDCOLOR_ATLINE(srcline), which.str().c_str(), renderer_desc(info).c_str());
         }
 //NOTE: SDL_Init() seems to call bcm_host_init() on RPi to init VC(GPU) (or else it's no longer needed);  http://elinux.org/Raspberry_Pi_VideoCore_APIs
 //        if (!SDL_OK(SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Missing file", "File is missing. Please reinstall the program.", NO_PARENT))) SDL_exc("simple msg box", false);
@@ -787,6 +789,15 @@ public: //ctors/dtors
         reset(ptr, srcline); //take ownership of window after checking
     }
     virtual ~SDL_AutoTexture() { debug(BLUE_MSG "SDL_AutoTexture dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), this); } //get()); }
+//for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
+//NOTE: need to explicitly define this to avoid "use of deleted function" errors
+    SDL_AutoTexture(const SDL_AutoTexture& that) { operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
+//    {
+//        SrcLine srcline = m_srcline; //TODO: where to get this?
+//        debug(BLUE_MSG "SDL_AutoTexture copy ctor: old texture 0x%p, new texture 0x%p" ENDCOLOR_ATLINE(srcline), get(), that.get());
+//        reset(ptr, srcline);
+//        return *this; //fluent/chainable
+//    }
 public: //factory methods:
     template <typename ... ARGS>
     static SDL_AutoTexture/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //SDL_Renderer*, uint32 PixelFormat, int AccessMode, int width, int height)
@@ -802,6 +813,7 @@ public: //factory methods:
     }
 public: //operators
     operator SDL_Texture*() const { return get(); }
+//    SDL_AutoTexture& operator=(const SDL_AutoTexture& that) //copy asst op; //= delete; //deleted copy assignment operator
     SDL_AutoTexture& operator=(SDL_Texture* ptr) //, SrcLine srcline = 0)
     {
 //        if (!srcline) srcline = m_srcline;
@@ -895,7 +907,8 @@ public: //static helper methods
         {
 //            int pitch;
             Uint32* pixels; //don't give this back to caller; not valid unless texture is locked anyway
-            if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &pixels, &cached->pitch)) SDL_exc("lock texture");
+            void* pixels_void; //kludge: C++ doesn't like casting Uint32* to void* due to potential alignment issues
+            if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &pixels_void, &cached->pitch))) SDL_exc("lock texture");
             VOID SDL_UnlockTexture(txtr);
             if (cached->pitch != cached->w * sizeof(pixels[0])) exc(RED_MSG "pitch mismatch: expected %d, got d" ENDCOLOR_ATLINE(srcline), want_w * sizeof(pixels[0]), cached->pitch);
         }
@@ -976,16 +989,21 @@ public: //ctors/dtors
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
     explicit SDL_AutoWindow(SDL_Window* ptr, SrcLine srcline = 0): SDL_AutoWindow(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
+        if (++count() > 30) exc("recursion?");
         debug(BLUE_MSG "SDL_AutoWindow ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
         if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", true, srcline); //required window
         reset(ptr, srcline); //take ownership of window after checking
     }
     virtual ~SDL_AutoWindow() { debug(BLUE_MSG "SDL_AutoWindow dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), get()); }
+//for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
+//NOTE: need to explicitly define this to avoid "use of deleted function" errors
+    SDL_AutoWindow(const SDL_AutoWindow& that) { operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
 public: //factory methods:
     template <typename ... ARGS>
     static SDL_AutoWindow/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //title, x, y, w, h, mode)
     {
+        if (++count() > 30) exc("recursion?");
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
         return SDL_AutoWindow(SDL_CreateWindow(std::forward<ARGS>(args) ...), srcline); //perfect fwd
     }
@@ -993,6 +1011,7 @@ public: //factory methods:
     static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, srcline); }
     static SDL_AutoWindow/*& not allowed with rval ret; not needed with unique_ptr*/ fullscreen(Uint32 flags = 0, SrcLine srcline = 0)
     {
+        if (++count() > 30) exc("recursion?");
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
         return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), srcline);
 //        window = isRPi()?
@@ -1194,6 +1213,11 @@ public: //static helper methods
 private: //members
 //    SDL_AutoLib sdllib;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+    static /*std::atomic<int>*/int& count() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static /*std::atomic<int>*/int m_count = 0;
+        return m_count;
+    }
 protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
     using super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>;
@@ -1235,7 +1259,6 @@ void other(SrcLine srcline = 0)
     SDL_AutoLib sdl(SDL_INIT_EVERYTHING, SRCLINE); //SDL_INIT_VIDEO | SDL_INIT_AUDIO>
 //    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR;
 //    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline);
-    debug("here1" ENDCOLOR);
 }
 
 
@@ -1435,7 +1458,7 @@ void fullscreen_test()
         VOID SDL_Delay(2 sec);
         for (int i = 0; i < W * H; ++i) myPixels[0][i] = palette[c]; //asRGBA(PINK);
 //TODO: combine
-        txtr.update(myPixels, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        txtr.update((Uint32*)myPixels, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
         VOID wnd.render(txtr.get(), false, SRCLINE); //put new texture on screen
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
@@ -1448,7 +1471,7 @@ void fullscreen_test()
             VOID SDL_Delay(0.01 sec);
             myPixels[y][x] = palette[(x + y) % SIZEOF(palette)];
 //TODO: combine
-            txtr.update(myPixels, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
+            txtr.update((Uint32*)myPixels, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
             VOID wnd.render(txtr, false, SRCLINE); //put new texture on screen
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
@@ -1461,7 +1484,7 @@ void unit_test()
     lib_test();
 //    surface_test();
 //    window_test();
-    sdl_api_test();
+//    sdl_api_test();
     fullscreen_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>

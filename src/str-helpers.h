@@ -41,3 +41,26 @@ const char* commas(int64_t val)
 
 
 #endif //ndef _STR_HELPERS_H
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Unit test
+//
+
+#ifdef WANT_UNIT_TEST
+#undef WANT_UNIT_TEST //prevent recursion
+
+#include "msgcolors.h"
+#include "debugexc.h"
+
+
+//int main(int argc, const char* argv[])
+void unit_test()
+{
+    debug(BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
+    debug(BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
+//    return 0;
+}
+
+#endif //def WANT_UNIT_TEST

@@ -24,6 +24,7 @@
 //1a. install nvm
 //1b. install node v10.12.0  #or later; older versions might work; ymmv
 //1c. install git client
+//1d. install SDL2 >=2.0.8 from libsdl.org; install from source recommended (repo versions tend to be older)
 //2. Create parent project
 //2a. create a folder + cd into it
 //2b. npm init
