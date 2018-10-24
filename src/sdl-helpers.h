@@ -145,6 +145,18 @@ static UNPACKED& unpack(UNPACKED& params, CALLBACK&& named_params)
 }
 
 
+//utility class for tracing in/out:
+class InOutDebug
+{
+public:
+    InOutDebug(const char* label = "", SrcLine srcline = 0): m_label(label), m_srcline(srcline? srcline: SRCLINE) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
+    ~InOutDebug() { debug(BLUE_MSG << m_label << ": out" ENDCOLOR_ATLINE(m_srcline)); }
+private: //data members
+    const char* m_label;
+    SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+};
+
+
 ////////////////////////////////////////////////////////////////////////////////
 ////
 /// SDL headers, wrappers, etc
@@ -377,6 +389,7 @@ const std::string/*no! &*/ renderer_desc(const SDL_RendererInfo& info)
         fmts << ", " << SDL_BITSPERPIXEL(info.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(info.texture_formats[i]);
     if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
     else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
+    else count << "1 fmt: ";
     std::ostringstream ostrm;
 //    ostrm << "SDL_Renderer {" << FMT("rndr 0x%p ") << rndr;
     ostrm << FMT("'%s'") << info.name;
@@ -418,7 +431,7 @@ class SDL_AutoLib
 public: //ctor/dtor
 //    SDL_lib(Uint32 flags) { init(flags); }
 //    void init(Uint32 flags = 0, SrcLine srcline = 0)
-    explicit SDL_AutoLib(SrcLine srcline = 0): SDL_AutoLib(0, srcline) {}
+    explicit SDL_AutoLib(SrcLine srcline = 0): SDL_AutoLib(0, srcline? srcline: SRCLINE) {}
     explicit SDL_AutoLib(Uint32 flags /*= 0*/, SrcLine srcline = 0): m_srcline(srcline)
     {
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
@@ -426,21 +439,21 @@ public: //ctor/dtor
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         for (Uint32 bit = 1; bit; bit <<= 1) //do one at a time
             if (flags & bit) //caller wants this one
-                if (!SDL_SubSystemNames.count(bit)) exc(RED_MSG "SDL_AutoLib: unknown subsys: 0x%ux" ENDCOLOR_ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
-                else if (inited & bit) debug(BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%ux) already inited" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit);
-                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%ux) failed: %s (err 0x%d)" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, SDL_GetError(), SDL_LastError);
+                if (!SDL_SubSystemNames.count(bit)) exc(RED_MSG "SDL_AutoLib: unknown subsys: 0x%x" ENDCOLOR_ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
+                else if (inited & bit) debug(BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit);
+                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%d)" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, SDL_GetError(), SDL_LastError);
                 else
                 {
                     std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init or get count at a time
 //NOTE: scaling *must* be set to nearest pixel sampling (0) because texture is stretched horizontally to fill screen:
 //no!        if (!SDL_OK(SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear"), "SDL_SetHint")) SDL_exc("set hint");  // make the scaled rendering look smoother
                     if (bit == SDL_INIT_VIDEO && !SDL_OK(SDL_SetRenderScaleQuality(Nearest))) SDL_exc("Linear render scale quality");
-                    debug(CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%ux) init[%d] success" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, count());
+                    debug(CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%x) init[%d] success" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, count());
 //                    std::lock_guard<std::mutex> guard(mutex());
                     if (!count()++) first_time(srcline);
                 }
     }
-    virtual ~SDL_AutoLib() { debug("SDL_AutoLib dtor" ENDCOLOR_ATLINE(m_srcline)); }
+    virtual ~SDL_AutoLib() { debug(BLUE_MSG "SDL_AutoLib dtor" ENDCOLOR_ATLINE(m_srcline)); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoLib& dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -463,15 +476,15 @@ private: //helpers
         debug_level(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
 //TMI?
         for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
-            debug_level(12, BLUE_MSG "driver[%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
+            debug_level(12, BLUE_MSG "  [%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
         debug_level(12, BLUE_MSG "%d render driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumRenderDrivers());
 //TMI?
         for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i)
         {
             SDL_RendererInfo info;
-            std::ostringstream which; //, fmts, count, flags;
-            which << i << "/" << SDL_GetNumRenderDrivers();
-            if (!SDL_OK(SDL_GetRenderDriverInfo(i, &info))) { SDL_exc("get renderer " << which.str() <<, true); continue; }
+//            std::ostringstream which; //, fmts, count, flags;
+//            which << i << "/" << SDL_GetNumRenderDrivers();
+            if (!SDL_OK(SDL_GetRenderDriverInfo(i, &info))) { SDL_exc("get renderer " << i << "/" << SDL_GetNumRenderDrivers() <<, true); continue; }
 //            for (const auto& pair: SDL_RendererFlagNames)
 //                if (info.flags & pair.first) flags << ";" << pair.second;
 //            if (!flags.tellp()) flags << ";";
@@ -480,7 +493,7 @@ private: //helpers
 //            if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
 //            else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
 //            debug_level(12, BLUE_MSG "Renderer[%s]: '%s', flags 0x%x %s, max %d x %d, %s%s" ENDCOLOR, which.str().c_str(), info.name, info.flags, flags.str().c_str() + 1, info.max_texture_width, info.max_texture_height, count.str().c_str(), fmts.str().c_str() + 2);
-            debug_level(12, BLUE_MSG "Renderer[%s]: %s" ENDCOLOR_ATLINE(srcline), which.str().c_str(), renderer_desc(info).c_str());
+            debug_level(12, BLUE_MSG "  [%d/%d]: %s" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumRenderDrivers(), renderer_desc(info).c_str());
         }
 //NOTE: SDL_Init() seems to call bcm_host_init() on RPi to init VC(GPU) (or else it's no longer needed);  http://elinux.org/Raspberry_Pi_VideoCore_APIs
 //        if (!SDL_OK(SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Missing file", "File is missing. Please reinstall the program.", NO_PARENT))) SDL_exc("simple msg box", false);
@@ -502,7 +515,7 @@ private: //helpers
 //        debug_level(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
 //        for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
 //            debug_level(12, BLUE_MSG "Video driver[%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
-        SDL_AutoLib dummy;
+        SDL_AutoLib dummy(srcline);
         debug_level(12, BLUE_MSG << dummy << ENDCOLOR_ATLINE(srcline));
     }
 private: //data members
@@ -780,13 +793,13 @@ public: //ctors/dtors
     explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
-    explicit SDL_AutoTexture(SDL_Texture* ptr, SrcLine srcline = 0): SDL_AutoTexture(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
+    explicit SDL_AutoTexture(SDL_Texture* ptr, SrcLine srcline = 0): SDL_AutoTexture(srcline? srcline: SRCLINE) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
         debug(RED_MSG "TODO: add shm pixel buf" ENDCOLOR_ATLINE(srcline));
         debug(BLUE_MSG "SDL_AutoTexture ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
-        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoTexture: init texture", true, srcline); //required window
-        reset(ptr, srcline); //take ownership of window after checking
+        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoTexture: init texture", true, srcline? srcline: SRCLINE); //required window
+        reset(ptr, srcline? srcline: SRCLINE); //take ownership of window after checking
     }
     virtual ~SDL_AutoTexture() { debug(BLUE_MSG "SDL_AutoTexture dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), this); } //get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
@@ -802,14 +815,14 @@ public: //factory methods:
     template <typename ... ARGS>
     static SDL_AutoTexture/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //SDL_Renderer*, uint32 PixelFormat, int AccessMode, int width, int height)
     {
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
-        return SDL_AutoTexture(SDL_CreateTexture(std::forward<ARGS>(args) ...), srcline); //perfect fwd
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
+        return SDL_AutoTexture(SDL_CreateTexture(std::forward<ARGS>(args) ...), srcline? srcline: SRCLINE); //perfect fwd
     }
-    static SDL_AutoTexture/*&*/ streaming(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0) { return streaming(rndr, w, h, 0, 0, srcline); }
+    static SDL_AutoTexture/*&*/ streaming(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0) { return streaming(rndr, w, h, 0, 0, srcline? srcline: SRCLINE); }
     static SDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ streaming(SDL_Renderer* rndr, int w, int h, Uint32 fmt = 0, int access = 0, SrcLine srcline = 0)
     {
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
-        return SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w, h), srcline);
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
+        return SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w, h), srcline? srcline: SRCLINE);
     }
 public: //operators
     operator SDL_Texture*() const { return get(); }
@@ -819,7 +832,7 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoTexture: old texture 0x%p, new texture 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
-        reset(ptr, srcline);
+        reset(ptr, srcline? srcline: SRCLINE);
         return *this; //fluent/chainable
     }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoTexture& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
@@ -855,8 +868,8 @@ public: //methods
     {
         if (!SDL_OK(SDL_SetTextureColorMod(get(), r, g, b))) SDL_exc("set texture color mod");
     }
-    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, srcline); }
-    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, srcline); }
+    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, srcline? srcline: SRCLINE); }
+    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, srcline? srcline: SRCLINE); }
     void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0)
     {
         if (!pitch) pitch = cached.w * sizeof(pixels[0]); //Uint32);
@@ -869,8 +882,8 @@ public: //methods
     {
         if (new_ptr == get()) return; //nothing changed
         SDL_Surface new_cached;
-        if (new_ptr) check(new_ptr, &new_cached, srcline); //validate before acquiring new ptr
-        if (new_ptr) inspect(new_ptr, srcline);
+        if (new_ptr) check(new_ptr, &new_cached, srcline? srcline: SRCLINE); //validate before acquiring new ptr
+        if (new_ptr) inspect(new_ptr, srcline? srcline: SRCLINE);
         super::reset(new_ptr);
         cached = new_cached; //keep cached info in sync with ptr
     }
@@ -891,7 +904,7 @@ public: //named arg variants
 private: //named arg variant helpers
     auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.srcline); }
 public: //static helper methods
-    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, srcline); }
+    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, srcline? srcline: SRCLINE); }
     static void check(SDL_Texture* txtr, SDL_Surface* cached, int want_w = 0, int want_h = 0, SrcLine srcline = 0)
     {
         SDL_Surface my_cache;
@@ -928,7 +941,7 @@ public: //static helper methods
 //            if (flags & pair.first) desc << ";" << pair.second;
 //        if (!desc.tellp()) desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        SDL_AutoTexture autotxtr(txtr, srcline);
+        SDL_AutoTexture autotxtr(txtr, srcline? srcline: SRCLINE);
         debug_level(12, BLUE_MSG << autotxtr << ENDCOLOR_ATLINE(srcline));
     }
 //private: //static helpers
@@ -984,16 +997,17 @@ template <bool WantRenderer = true> //, WantTexture = true, WantPixels = true> /
 class SDL_AutoWindow: public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 public: //ctors/dtors
-    explicit SDL_AutoWindow(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
+    explicit SDL_AutoWindow(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //InOutDebug inout("auto wnd def ctor", SRCLINE); } //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
     explicit SDL_AutoWindow(SDL_Window* ptr, SrcLine srcline = 0): SDL_AutoWindow(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
-        if (++count() > 30) exc("recursion?");
+        InOutDebug inout("auto wnd ctor", SRCLINE);
+//        if (++count() > 30) exc("recursion?");
         debug(BLUE_MSG "SDL_AutoWindow ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
-        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", true, srcline); //required window
-        reset(ptr, srcline); //take ownership of window after checking
+        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", true, srcline? srcline: SRCLINE); //required window
+        reset(ptr, srcline? srcline: SRCLINE); //take ownership of window after checking
     }
     virtual ~SDL_AutoWindow() { debug(BLUE_MSG "SDL_AutoWindow dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
@@ -1003,17 +1017,19 @@ public: //factory methods:
     template <typename ... ARGS>
     static SDL_AutoWindow/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //title, x, y, w, h, mode)
     {
-        if (++count() > 30) exc("recursion?");
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
-        return SDL_AutoWindow(SDL_CreateWindow(std::forward<ARGS>(args) ...), srcline); //perfect fwd
+        InOutDebug inout("auto wnd create", SRCLINE);
+//        if (++count() > 30) exc("recursion?");
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
+        return SDL_AutoWindow(SDL_CreateWindow(std::forward<ARGS>(args) ...), srcline? srcline: SRCLINE); //perfect fwd
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
-    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, srcline); }
+    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, srcline? srcline: SRCLINE); }
     static SDL_AutoWindow/*& not allowed with rval ret; not needed with unique_ptr*/ fullscreen(Uint32 flags = 0, SrcLine srcline = 0)
     {
-        if (++count() > 30) exc("recursion?");
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
-        return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), srcline);
+        InOutDebug inout("auto wnd fullscreen", SRCLINE);
+//        if (++count() > 30) exc("recursion?");
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
+        return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), srcline? srcline: SRCLINE);
 //        window = isRPi()?
 //            SDL_CreateWindow(title, IGNORED_X_Y_W_H, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN): //| SDL_WINDOW_OPENGL): //don't use OpenGL; too slow
 //            SDL_CreateWindow(title, 10, 10, MaxFit().w, MaxFit().h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN); //| SDL_WINDOW_OPENGL);
@@ -1021,10 +1037,11 @@ public: //factory methods:
     template <bool WantRenderer_copy = WantRenderer> //for function specialization
     static std::enable_if<WantRenderer_copy, SDL_AutoWindow&> fullsceen(Uint32 flags = 0, SrcLine srcline = 0) //SFINAE
     {
+        InOutDebug inout("auto wnd with renderer fullscreen", SRCLINE);
         SDL_Window* wnd;
         SDL_Renderer* rndr;
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline); //init lib before creating window
-        return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, srcline);
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
+        return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, srcline? srcline: SRCLINE);
     }
 //    static SDL_AutoTexture& texture(int w, int h, SrcLine srcline = 0)
 //    {
@@ -1040,10 +1057,10 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoWindow: old window 0x%p, new window 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
-        reset(ptr, srcline);
+        reset(ptr, srcline? srcline: SRCLINE);
         return *this; //fluent/chainable
     }
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //causes recursion via inspect: const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         CONST SDL_Window* wnd = me.get();
         int wndw, wndh;
@@ -1102,13 +1119,13 @@ public: //methods
     void reset(SDL_Window* new_ptr, SrcLine srcline = 0)
     {
         if (new_ptr == get()) return; //nothing changed
-        if (new_ptr) check(new_ptr, srcline); //validate before acquiring new ptr
-        if (new_ptr) inspect(new_ptr, srcline);
+        if (new_ptr) check(new_ptr, srcline? srcline: SRCLINE); //validate before acquiring new ptr
+        if (new_ptr) inspect(new_ptr, srcline? srcline: SRCLINE);
         super::reset(new_ptr);
     }
-    SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline); }
-    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, srcline); }
-    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, srcline); }
+    SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline? srcline: SRCLINE); }
+    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, srcline? srcline: SRCLINE); }
+    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, srcline? srcline: SRCLINE); }
     void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
     {
         SDL_Renderer* rndr = renderer(get());
@@ -1150,7 +1167,7 @@ public: //named arg variants
 private: //named arg variant helpers
     auto render(const RenderParams& params, Unpacked) { VOID render(params.txtr, params.src, params.dest, params.clearfb, params.srcline); }
 public: //static helper methods
-    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, srcline); }
+    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, srcline? srcline: SRCLINE); }
     static void check(SDL_Window* wnd, int want_w = 0, int want_h = 0, Uint32 want_fmt = 0, SrcLine srcline = 0)
     {
         Uint32 fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
@@ -1177,8 +1194,9 @@ public: //static helper methods
 //            if (flags & pair.first) desc << ";" << pair.second;
 //        if (!desc.tellp()) desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        SDL_AutoWindow<false> autownd(wnd, srcline);
-        debug_level(12, BLUE_MSG << autownd << ENDCOLOR_ATLINE(srcline));
+        super no_ctor(wnd, [](SDL_Window* wnd){});
+//        SDL_AutoWindow<false>& super autownd(wnd, srcline); //CAUTION: can't call ctor here (causes recursion)
+        debug_level(12, BLUE_MSG << static_cast<SDL_AutoWindow<>>(no_ctor) << ENDCOLOR_ATLINE(srcline));
     }
 //get renderer from window:
 //this allows one window ptr to be used with/out AutoRenderer or a caller-supplied renderer
@@ -1213,11 +1231,11 @@ public: //static helper methods
 private: //members
 //    SDL_AutoLib sdllib;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-    static /*std::atomic<int>*/int& count() //kludge: use wrapper to avoid trailing static decl at global scope
-    {
-        static /*std::atomic<int>*/int m_count = 0;
-        return m_count;
-    }
+//    static /*std::atomic<int>*/int& count() //kludge: use wrapper to avoid trailing static decl at global scope
+//    {
+//        static /*std::atomic<int>*/int m_count = 0;
+//        return m_count;
+//    }
 protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
     using super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>;
@@ -1248,9 +1266,9 @@ protected:
 
 class aclass
 {
-    SDL_AutoLib sdl; //(SRCLINE);
+    SDL_AutoLib sdl;
 public:
-    aclass(): sdl(SDL_INIT_VIDEO, SRCLINE) { debug("aclass ctor" ENDCOLOR); }
+    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, srcline? srcline: SRCLINE) { debug("aclass ctor" ENDCOLOR_ATLINE(srcline)); }
     ~aclass() { debug("class dtor" ENDCOLOR); }
 };
 
@@ -1270,13 +1288,13 @@ void afunc(SrcLine srcline = 0)
     other();
 }
 
-aclass A;
+aclass AA(SRCLINE); //CAUTION: "A" conflicts with color macro
 
 void lib_test()
 {
-    debug(BLUE_MSG << "start" << ENDCOLOR);
+    debug(PINK_MSG << "lib_test start" << ENDCOLOR);
     afunc();
-    aclass B;
+    aclass BB(SRCLINE);
 }
 
 
@@ -1359,6 +1377,7 @@ int main(int argc, char* argv[])
 //using "fully rendered frames" style
 void sdl_api_test()
 {
+    debug(PINK_MSG << "api_test start" << ENDCOLOR);
     SDL_AutoLib sdllib(SDL_INIT_VIDEO, SRCLINE);
 
 //give me the whole screen and don't change the resolution:
@@ -1430,10 +1449,11 @@ void sdl_api_test()
 //using "fully rendered frames" style
 void fullscreen_test()
 {
+    debug(PINK_MSG << "fullscreen_test start" << ENDCOLOR);
 //    SDL_AutoLib sdllib(SDL_INIT_VIDEO, SRCLINE);
 //give me the whole screen and don't change the resolution:
     const int W = 3 * 24, H = 64; //1111;
-    SDL_AutoWindow<> wnd(SDL_AutoWindow<true>::fullscreen(SRCLINE));
+    /*SDL_AutoWindow<true>*/ auto wnd(SDL_AutoWindow<true>::fullscreen(SRCLINE));
     VOID wnd.render(BLACK, SRCLINE);
 //TODO: combine these:
 //    wnd.texture(W, H, SRCLINE);

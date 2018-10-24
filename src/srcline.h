@@ -109,8 +109,21 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
     static std::atomic<int> ff;
     static char buf_pool[4][60]; //static to preserve after return to caller; kuldge: use buf pool in lieu of mem mgmt of ret bufs
     char* buf = buf_pool[ff++ % SIZEOF(buf_pool)];
+    int toolong;
+
+    const char* defbp = 0;
+    if (!defline) defline = SRCLINE; //need a value here
+    if (srcline == defline) srcline = 0;
+    if (srcline && ((toolong = strlen(srcline)) > 50)) srcline += toolong - 50;
+    if (defline && ((toolong = strlen(defline)) > 50)) defline += toolong - 50;
+    if (srcline) //show default also (easier debug/trace)
+    {
+        defbp = strrchr(defline, '/');
+        if (defbp) defline = defbp + 1; //drop parent folder name
+        defbp = strrchr(defline, ':');
+        if (!defbp) defbp = ":#?"; //endp + strlen(endp);
+    }
     if (!srcline) srcline = defline;
-    if (!srcline) srcline = SRCLINE;
 //std::cout << "raw file " << srcline << "\n" << std::flush;
     const char* svsrc = srcline; //dirname = strdup(srcline);
 
@@ -124,10 +137,11 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
         if (!bp) bp = ":#?"; //endp + strlen(endp);
 //        if (bp) line = atoi(bp+1);
 //    }
+
     const char* extp = strrchr(srcline, '.');
     if (!extp || !isunique(svsrc, srcline, extp)) extp = srcline + std::min<size_t>(bp - srcline, strlen(srcline)); //drop extension if unambiguous
 //    if (!extp || !isunique([svrc,srcline,extp](auto& _) { _.folder = svsrc; _.basename = srcline; _.ext = extp; }) extp = srcline + std::min<size_t>(bp - srcline, strlen(srcline)); //drop extension if unambiguous
-    snprintf(buf, sizeof(buf_pool[0]), "%.*s%s", (int)(extp - srcline), srcline, bp); //line);
+    snprintf(buf, sizeof(buf_pool[0]), "%.*s%s%s", (int)(extp - srcline), srcline, bp, defbp? defbp: ""); //line);
     return buf;
 }
 
