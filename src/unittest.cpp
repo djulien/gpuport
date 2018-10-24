@@ -15,27 +15,24 @@ if [ "x$TOTEST" == "x" ]; then TOTEST="?? no files ??"; fi
 echo -e "${PINK}Unit testing '${TOTEST}' ...${ENDCOLOR}"
 OPT=3  #3 = max; 0 = none
 #CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
-CFLAGS="`sdl2-config --cflags` -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
+CFLAGS="`sdl2-config --cflags` -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14 -x c++"
 CLIBS="`sdl2-config --libs`"
 BIN="${BASH_SOURCE%.*}"
 rm $BIN 2> /dev/null
 set -x
 #echo -e $CYAN; OPT=3; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" $CFLAGS -o "${BASH_SOURCE%.*}" -x c++ - <<//EOF; echo -e $ENDCOLOR
 #echo -e $CYAN; g++ -DWANT_UNIT_TEST $CFLAGS -o "${BASH_SOURCE%.*}" -x c++ $TOTEST; echo -e $ENDCOLOR
-echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${TOTEST}\"" $CFLAGS $CLIBS -o "${BASH_SOURCE%.*}" -x c++ - <<//EOF; echo -e $ENDCOLOR
+echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${TOTEST}\"" $CFLAGS - $CLIBS -o "${BASH_SOURCE%.*}" <<//EOF; echo -e $ENDCOLOR
 #line 27 __SRCFILE__ #compensate for shell commands above; NOTE: +1 needed (sets *next* line)
 
-#include <iostream> //std::cout, std::flush
+#include <iostream> //std::cout, std::endl, std::flush
 
-//#define QUOTEME(M)       #M
-//#define INCLUDE_FILE(M)  QUOTEME(M##_impl_win.hpp)
-//#include INCLUDE_FILE(module)
 #include __TEST_FILE__ //include first time without unit test
 #define WANT_UNIT_TEST
 #include __TEST_FILE__ //include unit test second time
 
 #ifndef MSG
- #define MSG(msg)  { std::cout << msg << "\n" << std::flush; }
+ #define MSG(msg)  { std::cout << msg << std::endl << std::flush; }
 #endif
 
 int main(int argc, const char* argv[])
