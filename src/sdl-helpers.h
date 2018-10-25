@@ -70,8 +70,8 @@
 //#define clip_255(val)  ((val) & 0xFF)
 
 
+//put desc/dump of object to debug:
 #define INSPECT(thing, srcline)  debug_level(12, BLUE_MSG << thing << ENDCOLOR_ATLINE(srcline))
-
 
 //get bit-size of a value *at compile time*:
 //based on https://hbfs.wordpress.com/2016/03/22/log2-with-c-metaprogramming/
@@ -152,7 +152,7 @@ static UNPACKED& unpack(UNPACKED& params, CALLBACK&& named_params)
 class InOutDebug
 {
 public:
-    InOutDebug(const char* label = "", SrcLine srcline = 0): m_label(label), m_srcline(srcline? srcline: SRCLINE) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
+    InOutDebug(const char* label = "", SrcLine srcline = 0): m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
     ~InOutDebug() { debug(BLUE_MSG << m_label << ": out" ENDCOLOR_ATLINE(m_srcline)); }
 private: //data members
     const char* m_label;
@@ -200,10 +200,11 @@ inline bool SDL_OK(void* ptr) { return SDL_OK(ptr? SDL_Success: SDL_GenericError
 //report SDL error (throw exc):
 //use optional param to show msg instead of throw exc
 //#define SDL_exc(what_failed)  exc(RED_MSG what_failed " failed: %s (error %d)" ENDCOLOR, SDL_GetError(), SDL_LastError)
-#define SDL_errmsg(handler, what_failed, srcline)  handler(RED_MSG what_failed " failed: %s (error %d)" ENDCOLOR_ATLINE(srcline), SDL_GetError(), SDL_LastError)
+#define SDL_errmsg(handler, what_failed, srcline)  handler(RED_MSG what_failed " failed: %s (error %d)" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetError()), SDL_LastError)
 #define SDL_exc_1ARG(what_failed)  SDL_errmsg(exc, what_failed, 0)
-#define SDL_exc_2ARGS(what_failed, want_throw)  ((want_throw)? SDL_errmsg(exc, what_failed, 0): SDL_errmsg(debug, what_failed, 0))
-#define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? SDL_errmsg(exc, what_failed, srcline): SDL_errmsg(debug, what_failed, srcline))
+//#define SDL_exc_2ARGS(what_failed, want_throw)  ((want_throw)? SDL_errmsg(exc, what_failed, 0): SDL_errmsg(debug, what_failed, 0))
+#define SDL_exc_2ARGS(what_failed, srcline)  SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE))
+#define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE)): SDL_errmsg(debug, what_failed, NVL(srcline, SRCLINE)))
 #define SDL_exc(...)  USE_ARG4(__VA_ARGS__, SDL_exc_3ARGS, SDL_exc_2ARGS, SDL_exc_1ARG) (__VA_ARGS__)
 
 
@@ -386,21 +387,21 @@ const std::string/*&*/ rect_desc(const SDL_Rect* rect)
 //TODO: operator<< ?
 const std::string/*no! &*/ renderer_desc(const SDL_RendererInfo& info)
 {
-    std::stringstream flags, fmts, count;
+    std::stringstream flags, fmts; //, count;
     for (const auto& pair: SDL_RendererFlagNames)
         if (info.flags & pair.first) flags << ";" << pair.second;
     if (!flags.tellp()) flags << ";";
     for (unsigned int i = 0; i < info.num_texture_formats; ++i)
         fmts << ", " << SDL_BITSPERPIXEL(info.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(info.texture_formats[i]);
-    if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
-    else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
-    else count << "1 fmt: ";
+//    if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
+//    else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
+//    else count << "1 fmt: ";
     std::ostringstream ostrm;
 //    ostrm << "SDL_Renderer {" << FMT("rndr 0x%p ") << rndr;
-    ostrm << FMT("'%s'") << info.name;
+    ostrm << FMT("'%s'") << NVL(info.name, "(none)");
     ostrm << FMT(", flags 0x%x") << info.flags << FMT(" %s") << flags.str().c_str() + 1;
     ostrm << ", max " << info.max_texture_width << " x " << info.max_texture_height;
-    ostrm << ", " << count.str() << FMT("%s") << fmts.str().c_str() + 2;
+    ostrm << ", " << info.num_texture_formats << " fmt" << plural(info.num_texture_formats) << ": " << fmts.str().c_str() + 2; //<< count.str() << FMT("%s") << fmts.str().c_str() + 2;
 //    ostrm << "}";
     return ostrm.str();
 }
@@ -437,29 +438,29 @@ class SDL_AutoLib
 public: //ctor/dtor
 //    SDL_lib(Uint32 flags) { init(flags); }
 //    void init(Uint32 flags = 0, SrcLine srcline = 0)
-    explicit SDL_AutoLib(SrcLine srcline = 0): SDL_AutoLib(0, srcline? srcline: SRCLINE) {}
+    explicit SDL_AutoLib(SrcLine srcline = 0): SDL_AutoLib(0, NVL(srcline, SRCLINE)) {}
     explicit SDL_AutoLib(Uint32 flags /*= 0*/, SrcLine srcline = 0): m_srcline(srcline)
     {
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
-        debug(GREEN_MSG "SDL_AutoLib ctor: init 0x%x (%s)" ENDCOLOR_ATLINE(srcline), flags, unmap(SDL_SubSystemNames, flags)); //SDL_SubSystems.count(flags)? SDL_SubSystems.find(flags)->second: "");
+        debug(GREEN_MSG "SDL_AutoLib(0x%p) ctor: init 0x%x (%s)" ENDCOLOR_ATLINE(srcline), this, flags, NVL(unmap(SDL_SubSystemNames, flags))); //SDL_SubSystems.count(flags)? SDL_SubSystems.find(flags)->second: "");
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         for (Uint32 bit = 1; bit; bit <<= 1) //do one at a time
             if (flags & bit) //caller wants this one
                 if (!SDL_SubSystemNames.count(bit)) exc(RED_MSG "SDL_AutoLib: unknown subsys: 0x%x" ENDCOLOR_ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
-                else if (inited & bit) debug(BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit);
-                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%d)" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, SDL_GetError(), SDL_LastError);
+                else if (inited & bit) debug(BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), NVL(unmap(SDL_SubSystemNames, bit)), bit);
+                else if (!SDL_OK(SDL_InitSubSystem(bit))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%d)" ENDCOLOR_ATLINE(srcline), NVL(unmap(SDL_SubSystemNames, bit)), bit, SDL_GetError(), SDL_LastError);
                 else
                 {
                     std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init or get count at a time
 //NOTE: scaling *must* be set to nearest pixel sampling (0) because texture is stretched horizontally to fill screen:
 //no!        if (!SDL_OK(SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear"), "SDL_SetHint")) SDL_exc("set hint");  // make the scaled rendering look smoother
-                    if (bit == SDL_INIT_VIDEO && !SDL_OK(SDL_SetRenderScaleQuality(Nearest))) SDL_exc("Linear render scale quality");
-                    debug(CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%x) init[%d] success" ENDCOLOR_ATLINE(srcline), unmap(SDL_SubSystemNames, bit), bit, count());
+                    if (bit == SDL_INIT_VIDEO && !SDL_OK(SDL_SetRenderScaleQuality(Nearest))) SDL_exc("Linear render scale quality", srcline);
+                    debug(CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%x) init[%d] success" ENDCOLOR_ATLINE(srcline), NVL(unmap(SDL_SubSystemNames, bit)), bit, count());
 //                    std::lock_guard<std::mutex> guard(mutex());
                     if (!count()++) first_time(srcline);
                 }
     }
-    virtual ~SDL_AutoLib() { debug(RED_MSG "SDL_AutoLib dtor" ENDCOLOR_ATLINE(m_srcline)); }
+    virtual ~SDL_AutoLib() { debug(RED_MSG "SDL_AutoLib(0x%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoLib& dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -478,19 +479,19 @@ private: //helpers
         SDL_AutoLib* dummy = 0;
         debug_level(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
 //std::thread::hardware_concurrency()
-        debug_level(12, BLUE_MSG "platform: '%s', #cores %d, ram %s MB, isRPi (likely)? %d" ENDCOLOR_ATLINE(srcline), SDL_GetPlatform(), SDL_GetCPUCount(), commas(SDL_GetSystemRAM()), isRPi());
-        debug_level(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
+        debug_level(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi (likely)? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
+        debug_level(12, BLUE_MSG "%d video driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers(), plural(SDL_GetNumVideoDrivers()));
 //TMI?
         for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
-            debug_level(12, BLUE_MSG "  [%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
-        debug_level(12, BLUE_MSG "%d render driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumRenderDrivers());
+            debug_level(12, BLUE_MSG "  [%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), NVL(SDL_GetVideoDriver(i)));
+        debug_level(12, BLUE_MSG "%d render driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumRenderDrivers(), plural(SDL_GetNumRenderDrivers()));
 //TMI?
         for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i)
         {
             SDL_RendererInfo info;
 //            std::ostringstream which; //, fmts, count, flags;
 //            which << i << "/" << SDL_GetNumRenderDrivers();
-            if (!SDL_OK(SDL_GetRenderDriverInfo(i, &info))) { SDL_exc("get renderer " << i << "/" << SDL_GetNumRenderDrivers() <<, true); continue; }
+            if (!SDL_OK(SDL_GetRenderDriverInfo(i, &info))) { SDL_exc("get renderer " << i << "/" << SDL_GetNumRenderDrivers() <<, srcline); continue; }
 //            for (const auto& pair: SDL_RendererFlagNames)
 //                if (info.flags & pair.first) flags << ";" << pair.second;
 //            if (!flags.tellp()) flags << ";";
@@ -499,7 +500,7 @@ private: //helpers
 //            if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
 //            else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
 //            debug_level(12, BLUE_MSG "Renderer[%s]: '%s', flags 0x%x %s, max %d x %d, %s%s" ENDCOLOR, which.str().c_str(), info.name, info.flags, flags.str().c_str() + 1, info.max_texture_width, info.max_texture_height, count.str().c_str(), fmts.str().c_str() + 2);
-            debug_level(12, BLUE_MSG "  [%d/%d]: %s" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumRenderDrivers(), renderer_desc(info).c_str());
+            debug_level(12, BLUE_MSG "  [%d/%d]: %s" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumRenderDrivers(), NVL(renderer_desc(info).c_str()));
         }
 //NOTE: SDL_Init() seems to call bcm_host_init() on RPi to init VC(GPU) (or else it's no longer needed);  http://elinux.org/Raspberry_Pi_VideoCore_APIs
 //        if (!SDL_OK(SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Missing file", "File is missing. Please reinstall the program.", NO_PARENT))) SDL_exc("simple msg box", false);
@@ -510,7 +511,7 @@ private: //helpers
     {
         SrcLine srcline = 0; //TODO: where to get this?
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
-        debug(CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(srcline), inited, unmap(SDL_SubSystemNames, inited));
+        debug(CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(srcline), inited, NVL(unmap(SDL_SubSystemNames, inited)));
         SDL_Quit(); //all inited subsystems
     }
 #if 0
@@ -794,7 +795,7 @@ const std::map<Uint32, const char*> SDL_TextureAccessNames =
 
 //SDL_Texture ptr auto-cleanup wrapper:
 //includes a few factory helper methods
-//TODO? template <bool WantPixels = true> //, bool DebugInfo = true>
+template <bool WantPixels = true> //, bool DebugInfo = true>
 class SDL_AutoTexture: public std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
 {
 protected:
@@ -804,13 +805,13 @@ public: //ctors/dtors
     explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
-    explicit SDL_AutoTexture(SDL_Texture* ptr, SrcLine srcline = 0): SDL_AutoTexture(srcline? srcline: SRCLINE) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
+    explicit SDL_AutoTexture(SDL_Texture* ptr, SrcLine srcline = 0): SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
         debug(RED_MSG "TODO: add shm pixel buf" ENDCOLOR_ATLINE(srcline));
-        debug(GREEN_MSG "SDL_AutoTexture ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
+        debug(GREEN_MSG "SDL_AutoTexture(0x%p) ctor 0x%p" ENDCOLOR_ATLINE(srcline), this, ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
-        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoTexture: init texture", true, srcline? srcline: SRCLINE); //required window
-        reset(ptr, srcline? srcline: SRCLINE); //take ownership of window after checking
+        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoTexture: init texture", NVL(srcline, SRCLINE)); //required window
+        reset(ptr, NVL(srcline, SRCLINE)); //take ownership of window after checking
     }
     virtual ~SDL_AutoTexture() { debug(RED_MSG "SDL_AutoTexture dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), this); } //get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
@@ -826,14 +827,14 @@ public: //factory methods:
     template <typename ... ARGS>
     static SDL_AutoTexture/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //SDL_Renderer*, uint32 PixelFormat, int AccessMode, int width, int height)
     {
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
-        return SDL_AutoTexture(SDL_CreateTexture(std::forward<ARGS>(args) ...), srcline? srcline: SRCLINE); //perfect fwd
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        return SDL_AutoTexture(SDL_CreateTexture(std::forward<ARGS>(args) ...), NVL(srcline, SRCLINE)); //perfect fwd
     }
-    static SDL_AutoTexture/*&*/ streaming(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0) { return streaming(rndr, w, h, 0, 0, srcline? srcline: SRCLINE); }
+    static SDL_AutoTexture/*&*/ streaming(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0) { return streaming(rndr, w, h, 0, 0, NVL(srcline, SRCLINE)); }
     static SDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ streaming(SDL_Renderer* rndr, int w, int h, Uint32 fmt = 0, int access = 0, SrcLine srcline = 0)
     {
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
-        return SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w, h), srcline? srcline: SRCLINE);
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        return SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w, h), NVL(srcline, SRCLINE));
     }
 public: //operators
     operator SDL_Texture*() const { return get(); }
@@ -843,7 +844,7 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoTexture: old texture 0x%p, new texture 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
-        reset(ptr, srcline? srcline: SRCLINE);
+        reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoTexture& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
@@ -861,40 +862,40 @@ public: //operators
         ostrm << "SDL_Texture {" << FMT("txtr 0x%p ") << txtr;
         ostrm << me.cached.w << " x " << me.cached.h;
         ostrm << FMT(", fmt %i") << SDL_BITSPERPIXEL(cached_fmt);
-        ostrm << FMT(" bpp %s") << SDL_PixelFormatShortName(cached_fmt);
-        ostrm << FMT(", %s") << unmap(SDL_TextureAccessNames, cached_access);
+        ostrm << FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(cached_fmt));
+        ostrm << FMT(", %s") << NVL(unmap(SDL_TextureAccessNames, cached_access));
         ostrm << "}";
         return ostrm; 
     }
 public: //methods
     void SetAlpha(Uint8 alpha, SrcLine srcline = 0)
     {
-        if (!SDL_OK(SDL_SetTextureAlphaMod(get(), alpha))) SDL_exc("set texture alpha");
+        if (!SDL_OK(SDL_SetTextureAlphaMod(get(), alpha))) SDL_exc("set texture alpha", srcline);
     }
     void SetBlendMode(SDL_BlendMode blend, SrcLine srcline = 0)
     {
-        if (!SDL_OK(SDL_SetTextureBlendMode(get(), blend))) SDL_exc("set texture blend mode");
+        if (!SDL_OK(SDL_SetTextureBlendMode(get(), blend))) SDL_exc("set texture blend mode", srcline);
     }
     void SetColorMod(Uint8 r, Uint8 g, Uint8 b, SrcLine srcline = 0)
     {
-        if (!SDL_OK(SDL_SetTextureColorMod(get(), r, g, b))) SDL_exc("set texture color mod");
+        if (!SDL_OK(SDL_SetTextureColorMod(get(), r, g, b))) SDL_exc("set texture color mod", srcline);
     }
-    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, srcline? srcline: SRCLINE); }
-    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, srcline? srcline: SRCLINE); }
+    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
+    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
     void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0)
     {
         if (!pitch) pitch = cached.w * sizeof(pixels[0]); //Uint32);
-        debug(BLUE_MSG "update %s pixels from texture 0x%p, pixels 0x%p, pitch %d" ENDCOLOR_ATLINE(srcline), rect_desc(rect).c_str(), get(), pixels, pitch);
+        debug(BLUE_MSG "update %s pixels from texture 0x%p, pixels 0x%p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
         if (pitch != cached.w * sizeof(pixels[0])) exc(RED_MSG "pitch mismatch: expected %d, got d" ENDCOLOR_ATLINE(srcline), cached.w * sizeof(pixels[0]), pitch);
-        if (!SDL_OK(SDL_UpdateTexture(get(), rect, pixels, pitch))) SDL_exc("update texture");
+        if (!SDL_OK(SDL_UpdateTexture(get(), rect, pixels, pitch))) SDL_exc("update texture", srcline);
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
     }
     void reset(SDL_Texture* new_ptr, SrcLine srcline = 0)
     {
         if (new_ptr == get()) return; //nothing changed
         SDL_Surface new_cached;
-        if (new_ptr) check(new_ptr, &new_cached, srcline? srcline: SRCLINE); //validate before acquiring new ptr
-//        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, srcline? srcline: SRCLINE);
+        if (new_ptr) check(new_ptr, &new_cached, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
+//        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
         super::reset(new_ptr);
         cached = new_cached; //keep cached info in sync with ptr
         INSPECT(*this, srcline);
@@ -916,7 +917,7 @@ public: //named arg variants
 private: //named arg variant helpers
     auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.srcline); }
 public: //static helper methods
-    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, srcline? srcline: SRCLINE); }
+    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, NVL(srcline, SRCLINE)); }
     static void check(SDL_Texture* txtr, SDL_Surface* cached, int want_w = 0, int want_h = 0, SrcLine srcline = 0)
     {
         SDL_Surface my_cache;
@@ -926,14 +927,14 @@ public: //static helper methods
 //        int w, h; //texture width, height (in pixels)
 //        int access; //texture access mode (one of the SDL_TextureAccess values)
 //        Uint32 fmt; //raw format of texture; actual format may differ, but pixel transfers will use this format
-        if (!SDL_OK(SDL_QueryTexture(txtr, &cached_fmt, &cached_access, &cached->w, &cached->h))) SDL_exc("query texture");
+        if (!SDL_OK(SDL_QueryTexture(txtr, &cached_fmt, &cached_access, &cached->w, &cached->h))) SDL_exc("query texture", srcline);
         if ((want_w && (cached->w != want_w)) || (want_h && (cached->h != want_h))) exc(RED_MSG "texture mismatch: expected %d x %d, got %d x %d" ENDCOLOR_ATLINE(srcline), want_w, want_h, cached->w, cached->h);
         if (cached_access == SDL_TEXTUREACCESS_STREAMING) //lock() only used with streamed textures
         {
 //            int pitch;
             Uint32* pixels; //don't give this back to caller; not valid unless texture is locked anyway
             void* pixels_void; //kludge: C++ doesn't like casting Uint32* to void* due to potential alignment issues
-            if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &pixels_void, &cached->pitch))) SDL_exc("lock texture");
+            if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &pixels_void, &cached->pitch))) SDL_exc("lock texture", srcline);
             VOID SDL_UnlockTexture(txtr);
             if (cached->pitch != cached->w * sizeof(pixels[0])) exc(RED_MSG "pitch mismatch: expected %d, got d" ENDCOLOR_ATLINE(srcline), want_w * sizeof(pixels[0]), cached->pitch);
         }
@@ -954,7 +955,7 @@ public: //static helper methods
 //            if (flags & pair.first) desc << ";" << pair.second;
 //        if (!desc.tellp()) desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        SDL_AutoTexture autotxtr(txtr, srcline? srcline: SRCLINE);
+        SDL_AutoTexture autotxtr(txtr, NVL(srcline, SRCLINE));
         debug_level(12, BLUE_MSG << autotxtr << ENDCOLOR_ATLINE(srcline));
     }
 #endif
@@ -1018,10 +1019,10 @@ public: //ctors/dtors
     {
         InOutDebug inout("auto wnd ctor", SRCLINE);
 //        if (++count() > 30) exc("recursion?");
-        debug(GREEN_MSG "SDL_AutoWindow ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
+        debug(GREEN_MSG "SDL_AutoWindow(0x%p) ctor 0x%p" ENDCOLOR_ATLINE(srcline), this, ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
-        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", true, srcline? srcline: SRCLINE); //required window
-        reset(ptr, srcline? srcline: SRCLINE); //take ownership of window after checking
+        if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", srcline); //required window
+        reset(ptr, NVL(srcline, SRCLINE)); //take ownership of window after checking
     }
     virtual ~SDL_AutoWindow() { debug(RED_MSG "SDL_AutoWindow dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
@@ -1033,19 +1034,24 @@ public: //factory methods:
     {
         InOutDebug inout("auto wnd create", SRCLINE);
 //        if (++count() > 30) exc("recursion?");
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
-        return SDL_AutoWindow(SDL_CreateWindow(std::forward<ARGS>(args) ...), srcline? srcline: SRCLINE); //perfect fwd
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        return SDL_AutoWindow(SDL_CreateWindow(std::forward<ARGS>(args) ...), NVL(srcline, SRCLINE)); //perfect fwd
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
-    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, srcline? srcline: SRCLINE); }
+    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, NVL(srcline, SRCLINE)); }
+#if 0 //overloaded SFINAE broken; use in-line logic instead (hopefully compiler will still optimize it)
+//kludge: seem to need to create overloaded SFINAE as well?
+    template <bool WantRenderer_copy = WantRenderer> //for function specialization
+    static std::enable_if<WantRenderer_copy, SDL_AutoWindow/*&*/> fullscreen(SrcLine srcline = 0) { return fullscreen(0, NVL(srcline, SRCLINE)); } //SFINAE
 //paranoid; no worky   template <bool WantRenderer_copy = WantRenderer> //for function specialization
 //no    static std::enable_if<!WantRenderer_copy, SDL_AutoWindow/*&*/> fullscreen(Uint32 flags = 0, SrcLine srcline = 0) //SFINAE
     static SDL_AutoWindow/*& not allowed with rval ret; not needed with unique_ptr*/ fullscreen(Uint32 flags = 0, SrcLine srcline = 0)
     {
+        debug(BLUE_MSG "want_renderer? " << WantRenderer << ENDCOLOR_ATLINE(srcline));
         InOutDebug inout("auto wnd withOUT renderer fullscreen", SRCLINE);
 //        if (++count() > 30) exc("recursion?");
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
-        return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), srcline? srcline: SRCLINE);
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), NVL(srcline, SRCLINE));
 //        window = isRPi()?
 //            SDL_CreateWindow(title, IGNORED_X_Y_W_H, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN): //| SDL_WINDOW_OPENGL): //don't use OpenGL; too slow
 //            SDL_CreateWindow(title, 10, 10, MaxFit().w, MaxFit().h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN); //| SDL_WINDOW_OPENGL);
@@ -1053,11 +1059,27 @@ public: //factory methods:
     template <bool WantRenderer_copy = WantRenderer> //for function specialization
     static std::enable_if<WantRenderer_copy, SDL_AutoWindow/*&*/> fullscreen(Uint32 flags = 0, SrcLine srcline = 0) //SFINAE
     {
+        debug(BLUE_MSG "want_renderer? " << WantRenderer << ENDCOLOR_ATLINE(srcline));
         InOutDebug inout("auto wnd with renderer fullscreen", SRCLINE);
         SDL_Window* wnd;
         SDL_Renderer* rndr;
-        SDL_AutoLib sdllib(SDL_INIT_VIDEO, srcline? srcline: SRCLINE); //init lib before creating window
-        return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, srcline? srcline: SRCLINE);
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
+    }
+#endif
+    static SDL_AutoWindow/*& not allowed with rval ret; not needed with unique_ptr*/ fullscreen(Uint32 flags = 0, SrcLine srcline = 0)
+    {
+        InOutDebug inout(WantRenderer? "auto wnd with renderer fullscreen": "auto wnd withOUT renderer fullscreen", SRCLINE);
+//        if (++count() > 30) exc("recursion?");
+        SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
+        if (!WantRenderer)
+            return SDL_AutoWindow(SDL_CreateWindow("GpuPort", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), NVL(srcline, SRCLINE));
+//        window = isRPi()?
+//            SDL_CreateWindow(title, IGNORED_X_Y_W_H, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN): //| SDL_WINDOW_OPENGL): //don't use OpenGL; too slow
+//            SDL_CreateWindow(title, 10, 10, MaxFit().w, MaxFit().h, SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN); //| SDL_WINDOW_OPENGL);
+        SDL_Window* wnd;
+        SDL_Renderer* rndr;
+        return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
     }
 //    static SDL_AutoTexture& texture(int w, int h, SrcLine srcline = 0)
 //    {
@@ -1073,40 +1095,36 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoWindow: old window 0x%p, new window 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
-        reset(ptr, srcline? srcline: SRCLINE);
+        reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //causes recursion via inspect: const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
-printf("op<< here1\n"); fflush(stdout);
+        SrcLine srcline = SRCLINE; //TODO: where to get this?
         CONST SDL_Window* wnd = me.get();
         int wndw, wndh;
         VOID SDL_GL_GetDrawableSize(wnd, &wndw, &wndh);
-printf("op<< here2\n"); fflush(stdout);
 //        return err(RED_MSG "Can't get drawable window size" ENDCOLOR);
         Uint32 fmt = SDL_GetWindowPixelFormat(wnd);
-        if (!SDL_OK(fmt, SDL_PIXELFORMAT_UNKNOWN)) SDL_exc("Can't get window format", false);
+        if (!SDL_OK(fmt, SDL_PIXELFORMAT_UNKNOWN)) SDL_exc("Can't get window format", false, srcline);
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
-        SDL_RendererInfo info;
+        SDL_RendererInfo info = {0};
         SDL_Renderer* rndr = SDL_GetRenderer(wnd);
-        if (rndr && !SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info");
-printf("op<< here3\n"); fflush(stdout);
+        if (rndr && !SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info", srcline);
         std::ostringstream desc;
         Uint32 flags = SDL_GetWindowFlags(wnd);
         for (const auto& pair: SDL_WindowFlagNames)
             if (flags & pair.first) desc << ";" << pair.second;
         if (!desc.tellp()) desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-printf("op<< here4\n"); fflush(stdout);
         ostrm << "SDL_Window {" << FMT("wnd 0x%p ") << wnd;
         ostrm << wndw << " x " << wndh;
         ostrm << FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
-        ostrm << FMT(" bpp %s") << SDL_PixelFormatShortName(fmt);
+        ostrm << FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
         ostrm << FMT(", flags %s") << desc.str().c_str() + 1;
 //        ostrm << *renderer(wnd); //FMT(", rndr 0x%p") << renderer(wnd);
-        ostrm << ", rndr " << rndr? renderer_desc(info): "(none)";
+        ostrm << FMT(", rndr 0x%p ") << rndr << rndr? renderer_desc(info): "(none)";
         ostrm << "}";
-printf("op<< here5\n"); fflush(stdout);
         return ostrm; 
     }
 #if 0
@@ -1136,29 +1154,29 @@ public: //methods
     {
         SDL_Renderer* rndr = renderer(get());
         debug(BLUE_MSG "set render logical size to %d x %d" ENDCOLOR_ATLINE(srcline), w, h);
-        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
+        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
     }
     void reset(SDL_Window* new_ptr, SrcLine srcline = 0)
     {
 //printf("reset here1\n"); fflush(stdout);
         if (new_ptr == get()) return; //nothing changed
 //printf("reset here2\n"); fflush(stdout);
-        if (new_ptr) check(new_ptr, srcline? srcline: SRCLINE); //validate before acquiring new ptr
-//        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, srcline? srcline: SRCLINE);
+        if (new_ptr) check(new_ptr, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
+//        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
         super::reset(new_ptr);
 //printf("reset here3\n"); fflush(stdout);
         INSPECT(*this, srcline);
 //printf("reset here4\n"); fflush(stdout);
     }
-    SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline? srcline: SRCLINE); }
-    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, srcline? srcline: SRCLINE); }
-    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, srcline? srcline: SRCLINE); }
+    SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), NVL(srcline, SRCLINE)); }
+    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, NVL(srcline, SRCLINE)); }
+    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, NVL(srcline, SRCLINE)); }
     void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
     {
         SDL_Renderer* rndr = renderer(get());
-        if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear"); //clear previous framebuffer
-        debug(BLUE_MSG "copy %s pixels from texture 0x%p to %s pixels in window 0x%p" ENDCOLOR_ATLINE(srcline), rect_desc(src).c_str(), txtr, rect_desc(dest).c_str(), get());
-        if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy"); //copy texture to video framebuffer
+        if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear", srcline); //clear previous framebuffer
+        debug(BLUE_MSG "copy %s pixels from texture 0x%p to %s pixels in window 0x%p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
+        if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
         VOID SDL_RenderPresent(rndr); //put new texture on screen
     }
 //    void update(void* pixels, SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
@@ -1171,8 +1189,8 @@ public: //methods
     {
 //printf("render color here1\n"); fflush(stdout);
         SDL_Renderer* rndr = renderer(get());
-        if (!SDL_OK(SDL_SetRenderDrawColor(rndr, R_G_B_A(color)))) SDL_exc("set render draw color");
-        if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear");
+        if (!SDL_OK(SDL_SetRenderDrawColor(rndr, R_G_B_A(color)))) SDL_exc("set render draw color", srcline);
+        if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
         debug(BLUE_MSG "set all pixels in window 0x%p to 0x%x" ENDCOLOR_ATLINE(srcline), get(), color);
         VOID SDL_RenderPresent(rndr); //flips texture to screen
     }
@@ -1195,11 +1213,11 @@ public: //named arg variants
 private: //named arg variant helpers
     auto render(const RenderParams& params, Unpacked) { VOID render(params.txtr, params.src, params.dest, params.clearfb, params.srcline); }
 public: //static helper methods
-    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, srcline? srcline: SRCLINE); }
+    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, NVL(srcline, SRCLINE)); }
     static void check(SDL_Window* wnd, int want_w = 0, int want_h = 0, Uint32 want_fmt = 0, SrcLine srcline = 0)
     {
         Uint32 fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
-        if (!SDL_OK(fmt, SDL_PIXELFORMAT_UNKNOWN)) SDL_exc("Can't get window format");
+        if (!SDL_OK(fmt, SDL_PIXELFORMAT_UNKNOWN)) SDL_exc("Can't get window format", srcline);
 //        if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
         if (want_fmt && (fmt != want_fmt)) exc(RED_MSG "unexpected window format: got %d, expected %d" ENDCOLOR_ATLINE(srcline), fmt, want_fmt);
         int wndw, wndh;
@@ -1235,7 +1253,7 @@ public: //static helper methods
     static SDL_Renderer* renderer(SDL_Window* wnd, bool want_throw = true, SrcLine srcline = 0)
     {
         SDL_Renderer* rndr = SDL_GetRenderer(wnd);
-        if (!SDL_OK(rndr)) SDL_exc("can't get renderer for window", want_throw);
+        if (!SDL_OK(rndr)) SDL_exc("can't get renderer for window", want_throw, srcline);
         return rndr;
     }
 //private: //static helpers
@@ -1248,14 +1266,25 @@ public: //static helper methods
         debug(BLUE_MSG "SDL_AutoWindow: destroy window 0x%p" ENDCOLOR, ptr);
         VOID SDL_DestroyWindow(ptr);
     }
+#if 0 //overloaded SFINAE broken; use in-line logic instead (hopefully compiler will still optimize it)
 //paranoid; no worky    template <bool WantRenderer_copy = WantRenderer> //for function specialization
     static void delete_renderer(SDL_Window* ptr) {} //noop
 //    static std::enable_if<!WantRenderer_copy, void> delete_renderer(SDL_Window* ptr) {} //SFINAE; noop
     template <bool WantRenderer_copy = WantRenderer> //for function specialization
     static std::enable_if<WantRenderer_copy, void> delete_renderer(SDL_Window* ptr) //SFINAE
     {
-        if (!ptr) return;
+        if (!ptr) return NULL; //kludge: compiler wants a return value here (due to enable_if<>?); //std::enable_if<WantRenderer_copy, void> NULL;
         SDL_Renderer* rndr = renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
+        if (!rndr) return NULL;
+        debug(BLUE_MSG "SDL_AutoWindow: destroy renderer 0x%p" ENDCOLOR, ptr);
+        VOID SDL_DestroyRenderer(rndr);
+    }
+#endif
+    static void delete_renderer(SDL_Window* ptr)
+    {
+        if (!ptr || !WantRenderer) return;
+        SDL_Renderer* rndr = renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
+        if (!rndr) return;
         debug(BLUE_MSG "SDL_AutoWindow: destroy renderer 0x%p" ENDCOLOR, ptr);
         VOID SDL_DestroyRenderer(rndr);
     }
@@ -1297,8 +1326,8 @@ class aclass
     SDL_AutoLib sdl;
     SrcLine m_srcline;
 public:
-    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, srcline? srcline: SRCLINE), m_srcline(srcline) { debug(GREEN_MSG "aclass ctor" ENDCOLOR_ATLINE(srcline)); }
-    ~aclass() { debug(RED_MSG "aclass dtor" ENDCOLOR_ATLINE(m_srcline)); }
+    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)), m_srcline(srcline) { debug(GREEN_MSG "aclass(0x%p) ctor" ENDCOLOR_ATLINE(srcline), this); }
+    ~aclass() { debug(RED_MSG "aclass(0x%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 };
 
 void other(SrcLine srcline = 0)
@@ -1415,6 +1444,7 @@ void sdl_api_test()
     SDL_Renderer* sdlRenderer;
     const int W = 3 * 24, H = 64; //1111;
     if (!SDL_OK(SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer))) SDL_exc("cre wnd & rndr");
+    debug(BLUE_MSG "wnd renderer 0x%p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
     if (!SDL_OK(SDL_RenderSetLogicalSize(sdlRenderer, W, H))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
 
     if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(BLACK)))) SDL_exc("set render draw color");
@@ -1433,7 +1463,7 @@ void sdl_api_test()
     myPixels[0][W] = RED;
     myPixels[0][2 * W] = GREEN;
     myPixels[0][3 * W] = BLUE;
-    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], unmap(ColorNames, myPixels[1][0]), myPixels[2][0], unmap(ColorNames, myPixels[2][0]), myPixels[3][0], unmap(ColorNames, myPixels[3][0]));
+    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
 #endif
 //primary color test:
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
@@ -1444,7 +1474,7 @@ void sdl_api_test()
         if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
         if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
         if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-        debug(BLUE_MSG "set all %d pixels to 0x%x %s " ENDCOLOR, W * H, palette[c], unmap(ColorNames, palette[c]));
+        debug(BLUE_MSG "set all %d pixels to 0x%x %s " ENDCOLOR, W * H, palette[c], NVL(unmap(ColorNames, palette[c])));
         VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
@@ -1461,7 +1491,7 @@ void sdl_api_test()
             if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
             if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
             if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-            debug(BLUE_MSG "set pixel[%d, %d] to 0x%x %s " ENDCOLOR, x, y, myPixels[y][x], unmap(ColorNames, myPixels[y][x]));
+            debug(BLUE_MSG "set pixel[%d, %d] to 0x%x %s " ENDCOLOR, x, y, myPixels[y][x], NVL(unmap(ColorNames, myPixels[y][x])));
             VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
@@ -1487,7 +1517,7 @@ void fullscreen_test()
 //TODO: combine these:
 //    wnd.texture(W, H, SRCLINE);
     VOID wnd.virtsize(W, H, SRCLINE);
-    SDL_AutoTexture txtr(SDL_AutoTexture::streaming(wnd.renderer(), W, H, SRCLINE));
+    /*SDL_AutoTexture*/ auto txtr(SDL_AutoTexture<>::streaming(wnd.renderer(), W, H, SRCLINE));
 //    Uint32* myPixels = malloc
     Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    memset(myPixels, 0, sizeof(myPixels));
@@ -1498,7 +1528,7 @@ void fullscreen_test()
     myPixels[0][W] = RED;
     myPixels[0][2 * W] = GREEN;
     myPixels[0][3 * W] = BLUE;
-    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], unmap(ColorNames, myPixels[1][0]), myPixels[2][0], unmap(ColorNames, myPixels[2][0]), myPixels[3][0], unmap(ColorNames, myPixels[3][0]));
+    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
 #endif
 //primary color test:
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
@@ -1514,8 +1544,8 @@ void fullscreen_test()
 
 //pixel test:
     for (int i = 0; i < W * H; ++i) myPixels[0][i] = BLACK;
-    for (int x = 0; x < W; ++x)
-        for (int y = 0; y < H; ++y)
+    for (int x = 0 + W-3; x < W; ++x)
+        for (int y = 0 + H-3; y < H; ++y)
         {
             VOID SDL_Delay(0.01 sec);
             myPixels[y][x] = palette[(x + y) % SIZEOF(palette)];
@@ -1533,7 +1563,7 @@ void unit_test()
     lib_test();
 //    surface_test();
 //    window_test();
-//    sdl_api_test();
+    sdl_api_test();
     fullscreen_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>

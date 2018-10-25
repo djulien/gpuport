@@ -20,6 +20,18 @@
 #endif
 
 
+//return default string instead of null:
+inline const char* NVL(const char* str, const char* defval = 0) { return str? str: defval? defval: "(null)"; }
+
+
+//for grammatically correct msgs: :)
+inline const char* plural(int count, const char* suffix = "s", const char* singular = 0)
+{
+//    return "(s)";
+    return (count != 1)? suffix: "";
+}
+
+
 //insert commas into a numeric string (for readability):
 //CAUTION: uses static data to preserve data after return; semaphore arbitrates a pool of 12 ret values
 const char* commas(int64_t val)
@@ -60,6 +72,10 @@ void unit_test()
 {
     debug(BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
     debug(BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
+    int count0 = 0, count1 = 1, count2 = 2;
+    debug(BLUE_MSG << count0 << " thing" << plural(count0) << ENDCOLOR);
+    debug(BLUE_MSG << count1 << " thing" << plural(count1) << ENDCOLOR);
+    debug(BLUE_MSG << count2 << " thing" << plural(count2, "ies") << ENDCOLOR);
 //    return 0;
 }
 
