@@ -65,7 +65,9 @@ public: //operators
 //    /*return*/ myprintf(0, __VA_ARGS__);
 //}
 
-#define exc(...)  myprintf(-1, std::ostringstream() << __VA_ARGS__)
+#define exc exc_hard
+#define exc_hard(...)  myprintf(-1, std::ostringstream() << __VA_ARGS__)
+#define exc_soft(...)  myprintf(-2, std::ostringstream() << __VA_ARGS__)
 //#define exc(...)  myprintf(-1, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
 //void exc(ARGS&& ... args)
@@ -101,8 +103,8 @@ void myprintf(int level, const char* fmt, ...)
 //TODO: combine with env/command line options, write to file, etc 
     if (level < 0) //error
     {
-        fprintf(stderr, "%s%s\n", fmtbuf, tooshort.str().c_str());
-        throw std::runtime_error(fmtbuf);
+        fprintf(stderr, "%s%s\n", fmtbuf, tooshort.str().c_str()); fflush(stderr);
+        if (level == -1) throw std::runtime_error(fmtbuf);
     }
     else //debug
         printf("%s%s\n", fmtbuf, tooshort.str().c_str());

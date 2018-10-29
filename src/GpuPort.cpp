@@ -60,7 +60,7 @@
 /// Headers, general macros, inline functions
 //
 
-#include "sdl-helpers.h"
+#include "GpuPort.h"
 
 //C++11 implements a lot of SDL functionality in a more C++-friendly way, so let's use it! :)
 #if __cplusplus < 201103L
@@ -96,28 +96,4 @@
 //#define CONCAT_NESTED(first, second)  first ## second
 
 
-////////////////////////////////////////////////////////////////////////////////
-////
-/// unit test:
-//
-
-#ifdef WANT_UNIT_TEST
-#undef WANT_UNIT_TEST //prevent recursion
-
-//#include <iostream> //std::cout
-#include "sdl-helpers.h"
-#include "msgcolors.h"
-#include "srcline.h"
-
-
-//int main(int argc, const char* argv[])
-void unit_test()
-{
-//    SDL_Lib sdllib(SDL_INIT_VIDEO, SRCLINE);
-    SDL_AutoSurface surf(xx);
-    debug(BLUE_MSG << "finish" << ENDCOLOR);
-//    return 0;
-}
-
-#endif //def WANT_UNIT_TEST
 //eof

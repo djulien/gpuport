@@ -21,7 +21,12 @@
 
 
 //return default string instead of null:
+//use function to avoid evaluating params > 1x
+//#define NVL(str, defval)  ((str)? (str): (defval)? (defval): "(null")
 inline const char* NVL(const char* str, const char* defval = 0) { return str? str: defval? defval: "(null)"; }
+//TODO:
+//template <typename VALTYPE, VALTYPE DEFVAL = 0>
+//_GLIBCXX14_CONSTEXPR inline const VALTYPE& NVL(const VALTYPE& val, const VALTYPE& defval = DEFVAL) { return val? val: defval? defval: DEFVAL; }
 
 
 //for grammatically correct msgs: :)
@@ -76,6 +81,14 @@ void unit_test()
     debug(BLUE_MSG << count0 << " thing" << plural(count0) << ENDCOLOR);
     debug(BLUE_MSG << count1 << " thing" << plural(count1) << ENDCOLOR);
     debug(BLUE_MSG << count2 << " thing" << plural(count2, "ies") << ENDCOLOR);
+    int x1 = 0, x2 = 1;
+//    debug(BLUE_MSG << NVL(x1, -1) << ENDCOLOR);
+//    debug(BLUE_MSG << NVL(x2, -1) << ENDCOLOR);
+    const char* str = "hello";
+    const char* null = 0;
+    debug(BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
+    debug(BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
+
 //    return 0;
 }
 

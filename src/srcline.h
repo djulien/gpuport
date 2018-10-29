@@ -2,8 +2,45 @@
 #define _SRCLINE_H
 
 
-//smart ptr wrapper for DIR:
+//check for ambiguous base file name:
+#include <string.h>
+#include <algorithm> //std::min()
+#include <string>
+//#include <ostream> //std::ostream
+//#include <memory> //std::unique_ptr<>
+//#include <stdio.h> 
+
+
+//macro expansion helpers:
+#ifndef TOSTR
+ #define TOSTR(str)  TOSTR_NESTED(str)
+ #define TOSTR_NESTED(str)  #str
+#endif
+
+
+//typedef struct { int line; } SRCLINE; //allow compiler to distinguish param types, prevent implicit conversion
+//typedef int SRCLINE;
+#define SRCLINE  _.srcline = __FILE__ ":" TOSTR(__LINE__)
+typedef const char* SrcLine; //allow compiler to distinguish param types, catch implicit conv
+//    friend ostream& operator<<(ostream& os, const Date& dt);  
+//std::ostream& operator<<(std::ostream& ostrm, SrcLine srcline) { ostrm << static_cast<const char*>(srcline); return ostrm; }
+//std::ostream& operator<<(std::ostream& ostrm, const char* srcline) { ostrm << "srcline"; return ostrm; }
+struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+
+
+//struct UniqParams { const char* folder = 0; const char* basename = 0; const char* ext = 0; SrcLine srcline = SRCLINE; };
+//#ifndef NAMED
+// #define NAMED  SRCLINE, [&](auto& _)
+//#endif
+
+#ifndef SIZEOF
+ #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
+#endif
+
+
 #include <dirent.h> //opendir(), readdir(), closedir()
+
+//smart ptr wrapper for DIR:
 class Dir
 {
 public: //ctor/dtor
@@ -16,40 +53,6 @@ public: //methods:
 private: //data
     DIR* m_ptr;
 };
-
-
-//check for ambiguous base file name:
-#include <string.h>
-#include <algorithm> //std::min()
-#include <string>
-//#include <ostream> //std::ostream
-//#include <memory> //std::unique_ptr<>
-//#include <stdio.h> 
-
-//macro expansion helpers:
-#ifndef TOSTR
- #define TOSTR(str)  TOSTR_NESTED(str)
- #define TOSTR_NESTED(str)  #str
-#endif
-
-//typedef struct { int line; } SRCLINE; //allow compiler to distinguish param types, prevent implicit conversion
-//typedef int SRCLINE;
-#define SRCLINE  _sl.srcline = __FILE__ ":" TOSTR(__LINE__)
-typedef const char* SrcLine; //allow compiler to distinguish param types, catch implicit conv
-//    friend ostream& operator<<(ostream& os, const Date& dt);  
-//std::ostream& operator<<(std::ostream& ostrm, SrcLine srcline) { ostrm << static_cast<const char*>(srcline); return ostrm; }
-//std::ostream& operator<<(std::ostream& ostrm, const char* srcline) { ostrm << "srcline"; return ostrm; }
-struct { SrcLine srcline; } _sl; //kludge: global destination so SRCLINE can be used outside NAMED
-
-
-//struct UniqParams { const char* folder = 0; const char* basename = 0; const char* ext = 0; SrcLine srcline = SRCLINE; };
-//#ifndef NAMED
-// #define NAMED  SRCLINE, [&](auto& _)
-//#endif
-
-#ifndef SIZEOF
- #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
-#endif
 
 
 static bool isunique(const char* folder, const char* basename, const char* ext)
@@ -97,10 +100,10 @@ static bool isunique(const char* folder, const char* basename, const char* ext)
 }
 
 
-//shorten src file name:
 #include <stdio.h> //snprintf()
 #include <atomic> //std::atomic<>
 
+//shorten src file name:
 //#define _GNU_SOURCE //select GNU version of basename()
 //#include <stdlib.h> //atoi()
 SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
@@ -146,6 +149,70 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
 }
 
 
+//#include <regex>
+#include <vector>
+
+#define TEMPL_ARGS  templ_args(__PRETTY_FUNCTION__)
+//https://bytes.com/topic/c/answers/878171-any-way-print-out-template-typename-value
+//typeid(TYPE).name() can't use with -fno-rtti compiler flag
+
+//get template arg types from __PRETTY_FUNC__
+//example: AutoShmary<TYPE, WANT_MUTEX>::AutoShmary(size_t, key_t, SrcLine) [with TYPE = unsigned int; bool WANT_MUTEX = false; size_t = unsigned int; key_t = int; SrcLine = const char*] 
+/*const char* */std::string/*&*/ templ_args(const char* str)
+{
+    const char* svstr = str;
+//printf("get args from: %s\n", str);
+    if (!(str = strchr(str, '<'))) return "????"; //svstr;
+//    const char* name_start = strchr(str, '<');
+//    if (!name_start++) return str;
+//    const char* name_end = strchr(name_start, '>');
+//    if (!name_end) return str;
+//string split examples: https://stackoverflow.com/questions/1894886/parsing-a-comma-delimited-stdstring
+//or http://www.partow.net/programming/strtk/index.html
+    std::vector<std::pair<const char*, int>> arg_names;
+    for (const char* sep = ++str; /*sep != end*/; ++sep)
+        if ((*sep == ',') || (*sep == '>'))
+        {
+//printf("arg#%d: '%.*s'\n", arg_names.size(), sep - str, str);
+            arg_names.push_back(std::pair<const char*, int>(str, sep - str)); //std::string(start, sep - start));
+            if (*sep == '>') break;
+            str = sep + 1;
+            if (*str == ' ') ++str;
+        }
+//printf("found %d templ arg names in %s\n", arg_names.size(), svstr);
+//get type string for each arg:
+//    std::ostringstream argtypes;
+//    int numfound = 0;
+    std::string arg_types;
+    for (auto it = arg_names.begin(); it != arg_names.end(); ++it)
+    {
+        char buf[64];
+        arg_types.push_back(arg_types.length()? ',': '<');
+        if (!strncmp(it->first, "anonymous", it->second)) strcpy(buf, " = "); //kludge: unnamed args
+        else snprintf(buf, sizeof(buf), " %.*s = ", it->second, it->first);
+        const char* bp1 = strstr(str, buf);
+        if (!bp1) { arg_types.append(it->first, it->second); continue; } //just give arg name if can't find type
+        bp1 += strlen(buf);
+        const char* bp2 = strchr(bp1, ';'); if (!bp2) bp2 = strrchr(bp1, ']'); //strpbrk(bp1, ";]");
+        if (!bp2) { arg_types.append(it->first, it->second); continue; }
+//        ++numfound;
+        arg_types.append(bp1, bp2 - bp1);
+//        if (arg_types.length() != 1) continue;
+//        sprintf(buf, "%d args: ", arg_names.size());
+//        arg_types.insert(0, buf);
+    }
+    if (arg_types.length()) arg_types.push_back('>');
+//printf("found %d templ arg names, %d types in %s\n", arg_names.size(), numfound, svstr);
+    return arg_types;
+//    std::regex args_re ("<([^>]*)>");
+//    std::smatch m;
+//    if (!std::regex_search(str, m, re)) return str;
+//    for (auto x:m) std::cout << x << " ";
+//    std::cout << std::endl;
+//    s = m.suffix().str();
+}
+
+
 #if 0
 class SRCLINE
 {
@@ -187,12 +254,23 @@ void func(int a, SrcLine srcline = 0)
 }
 
 
+template<typename ARG1, typename ARG2>
+class X
+{
+public:
+    X(SrcLine srcline = 0) { std::cout << BLUE_MSG "hello from X<" << TEMPL_ARGS << ">" ENDCOLOR_ATLINE(srcline) "\n"; }
+    ~X() {}
+};
+
+
 //int main(int argc, const char* argv[])
 void unit_test()
 {
     std::cout << BLUE_MSG "start" ENDCOLOR "\n";
     func(1);
     func(2, SRCLINE);
+    X<int, const char*> aa(SRCLINE);
+    X<long, long> bb(SRCLINE);
 //    return 0;
 }
 
