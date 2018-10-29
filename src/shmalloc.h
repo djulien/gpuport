@@ -49,6 +49,7 @@
 #include "debugexc.h" //debug(), TEMPL_ARGS
 #include "elapsed.h" //timestamp()
 #include "srcline.h" //SrcLine, SRCLINE
+#include "str-helpers.h" //NVL()
 #include "ostrfmt.h" //FMT()
 
 #ifndef STATIC
@@ -103,6 +104,7 @@ ShmHdr* get_shmhdr(void* addr, SrcLine srcline = 0)
 
 //allocate shm:
 //TODO: use ftok?
+//NOTE: same shm seg can be attached at multiple addresses within same proc
 void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
 //printf("here1\n"); fflush(stdout);
@@ -131,19 +133,8 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     ptr->key = key;
     ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
     ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
-    return ptr + 1;
+    err_ret(ptr + 1, 0);
 }
-#undef err_ret
-
-#if 1
-void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
-{
-    void* retval = shmalloc(size, key, srcline);
-    debug(CYAN_MSG "shmalloc(size %d, key %zu) => 0x%p (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval, errno, errno? NVL(strerror(errno), "??error??"): "no error");
-    return retval;
-}
-#define shmalloc  shmalloc_debug
-#endif
 
 
 key_t shmkey(void* addr, SrcLine srcline = 0)
@@ -168,6 +159,13 @@ key_t shmexisted(void* addr, SrcLine srcline = 0)
     return (get_shmhdr(addr, srcline)->marker != SHM_MAGIC);
 }
 
+int shmnattch(void* addr, SrcLine srcline = 0)
+{
+    struct shmid_ds shminfo;
+    return (shmctl(get_shmhdr(addr, srcline)->id, IPC_STAT, &shminfo) != -1)? shminfo.shm_nattch: 0;
+}
+
+
 //release shm:
 int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid after
 {
@@ -187,9 +185,20 @@ int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid a
         if (shmctl(svhdr.id, IPC_RMID, NULL /*ignored*/)) throw std::runtime_error(strerror(errno));
 //        debug(CYAN_MSG << timestamp() << "shmfree: freed " << svhdr.id << FMT("0x%lx") << svhdr.key << ", size " << shminfo.shm_segsz << ENDCOLOR_ATLINE(srcline));
 //    }
-    return shminfo.shm_nattch; //return #procs still using memory
+    err_ret(shminfo.shm_nattch, 0); //return #procs still using memory
 }
+#undef err_ret
+
+
 #if 1
+void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
+{
+    void* retval = shmalloc(size, key, srcline);
+    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr 0x%p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(strerror(errno), "??error??"): "no error");
+    return retval;
+}
+#define shmalloc  shmalloc_debug
+
 int shmfree_debug(void* addr, SrcLine srcline = 0)
 {
     int retval = shmfree(addr, srcline);
@@ -213,39 +222,72 @@ int shmfree_debug(void* addr, SrcLine srcline = 0)
 
 const key_t KEY_NONE = -2;
 
+//share static members across template instances:
+class AutoShmary_common_base
+{
+protected: //methods
+    static void cleanup_later(void* ptr)
+    {
+        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init or get count at a time
+        if (!all().size()) atexit(cleanup); //defer cleanup in case other threads or processes want to use it
+        all().push_back(ptr); //cleanup() must be a static member, so make a list and do it all once at the time
+    }
+private: //helper methods
+    static void cleanup()
+    {
+        SrcLine srcline = 0; //TODO: where to get this?
+        debug(CYAN_MSG "AutoShmary: clean up %d shm ptrs" ENDCOLOR_ATLINE(srcline), all().size());
+        for (auto it = all().begin(); it != all().end(); ++it) shmfree(*it);
+    }
+private: //data members
+    static std::vector<void*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static std::vector<void*> m_all;
+        return m_all;
+    }
+//    static std::mutex m_mutex;
+    static std::mutex& mutex() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static std::mutex m_mutex;
+        return m_mutex;
+    }
+};
+
+
 //shm array auto-cleanup wrapper:
 //defers cleanup until process exit in case other threads or processes are using shmbuf
 //thread safe
 //NOTE: no need for std::unique_ptr<> or std::shared_ptr<> since underlying memory itself is shared
 template <typename TYPE = uint8_t, bool WANT_MUTEX = false>
-class AutoShmary //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
+class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 public:
 //    const key_t KEY_NONE = -2;
     explicit AutoShmary(size_t ents, key_t key, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
     {
-        if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc<" << TEMPL_ARGS << ">(" << ents << FMT(", 0x%lx") << key << ") failed");
+        if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
 //        debug(GREEN_MSG "AutoShmary(0x%p) ctor: ptr 0x%p, key 0x%x => 0x%x, size %zu * %zu => %zu, existed? %d, page size %ld" ENDCOLOR_ATLINE(srcline), this, m_ptr, key, shmkey(m_ptr), ents, sizeof(TYPE), shmsize(m_ptr), shmexisted(m_ptr), sysconf(_SC_PAGESIZE));
-        debug(GREEN_MSG "ctor " << *this << ENDCOLOR_ATLINE(srcline));
-        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init or get count at a time
-        if (!all().size()) atexit(cleanup); //defer cleanup in case other threads or processes want to use it
-        all().push_back(m_ptr); //cleanup() must be a static member, so make a list and do it all once at the time
+//        debug(GREEN_MSG "ctor " << *this << ENDCOLOR_ATLINE(srcline));
+        cleanup_later(m_ptr);
     }
-    virtual ~AutoShmary() { if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(0x%p) dtor, ptr 0x%p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
+    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(0x%p) dtor, ptr 0x%p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
 public: //operators
     operator TYPE*() { return m_ptr; }
 //    operator void*() { return m_ptr; }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const AutoShmary& that) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
-    { 
+    {
 //        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
         ostrm << "AutoShmary" << my_templargs();
-        ostrm << FMT("{0x%p") << &that;
-        ostrm << FMT(", ptr 0x%p") << that.m_ptr;
-        ostrm << FMT(", key 0x%lx") << that.key();
-        ostrm << FMT(", len %zu") << that.len();
-        ostrm << ", existed? " << that.existed();
+        ostrm << FMT("{0x%p: ") << &that;
+        ostrm << FMT("key 0x%lx, ") << that.key();
+        ostrm << FMT("ptr 0x%p ") << that.m_ptr;
+        ostrm << FMT("len %zu, ") << that.len();
+        ostrm << FMT("hdr 0x%p ") << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
+        ostrm << FMT("len %zu, ") << (that.m_ptr? sizeof(*get_shmhdr(that.m_ptr)): 0);
+        ostrm << "existed? " << that.existed();
+        ostrm << ", #attch " << (that.m_ptr? shmnattch(that.m_ptr): 0);
         ostrm << "}";
         return ostrm;
     }
@@ -258,27 +300,9 @@ public: //methods
     size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
-private: //helpers
-    static void cleanup()
-    {
-        SrcLine srcline = 0; //TODO: where to get this?
-        debug(CYAN_MSG "AutoShmary: cleanup %d shm ptrs" ENDCOLOR_ATLINE(srcline), all().size());
-        for (auto it = all().begin(); it != all().end(); ++it) shmfree(*it);
-    }
 private: //data members
     TYPE* const m_ptr; //doesn't change after ctor
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-    static std::vector<void*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
-    {
-        static std::vector<void*> m_all;
-        return m_all;
-    }
-//    static std::mutex m_mutex;
-    static std::mutex& mutex() //kludge: use wrapper to avoid trailing static decl at global scope
-    {
-        static std::mutex m_mutex;
-        return m_mutex;
-    }
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //only used for debug msgs
@@ -319,7 +343,7 @@ void unit_test()
 #endif
 
     AutoShmary<> ary1(5, 0, SRCLINE);
-    debug(BLUE_MSG << ary1 << ENDCOLOR);
+    debug(BLUE_MSG << ary1 << ", &end 0x%p" << ENDCOLOR, &ary1[5]);
 
     { //create nested scope to force dtor
         AutoShmary<> ary2(0, ary1.key(), SRCLINE);
@@ -329,7 +353,7 @@ void unit_test()
     key_t key;
     { //create nested scope to force dtor
         AutoShmary<uint32_t> ary3(12, 0, SRCLINE);
-        debug(BLUE_MSG << ary3 << ENDCOLOR);
+        debug(BLUE_MSG << ary3 << ", &end 0x%p" << ENDCOLOR, &ary3[12]);
         key = ary3.key();
     }
     AutoShmary<uint32_t> ary4(4, key, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
@@ -366,7 +390,7 @@ void unit_test()
 // #undef SHMALLOC_DEBUG
 // #define SHMALLOC_DEBUG  ATOMIC_MSG
 #else
- #define DEBUG_MSG(...)  {} //noop
+ #define DEBUG_MSG(...)  {} //noop158000
 // #define SHMALLOC_DEBUG(msg)  //noop
 #endif
 

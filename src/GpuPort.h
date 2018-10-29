@@ -160,10 +160,10 @@ void unit_test()
             for (int y = 0; y < gp.UNIV_LEN; ++y)
 {
                 Uint32 color = ((x + c) & 1)? BLACK: palette[(y + c) % SIZEOF(palette)]; //((x + y) & 3)? BLACK: palette[c % SIZEOF(palette)];
-if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @0x%p = 0x%x...\n", timestamp(), x, y, &gp.pixels[x][y], color); fflush(stdout);
+if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @0x%p = 0x%x...\n", timestamp().c_str(), x, y, &gp.pixels[x][y], color); fflush(stdout);
                 gp.pixels[x][y] = color;
 }
-printf("%sdirty[%d] ...\n", timestamp(), x); fflush(stdout);
+printf("%sdirty[%d] ...\n", timestamp().c_str(), x); fflush(stdout);
             gp.dirty(gp.pixels[x]);
         }
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued

@@ -13,6 +13,8 @@
 #include <stdio.h> //<cstdio> //vsnprintf()
 #include <stdarg.h> //varargs
 
+#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+
 
 //set default if caller didn't specify:
 #ifndef MAX_DEBUG_LEVEL
@@ -103,7 +105,7 @@ void myprintf(int level, const char* fmt, ...)
 //TODO: combine with env/command line options, write to file, etc 
     if (level < 0) //error
     {
-        fprintf(stderr, "%s%s\n", fmtbuf, tooshort.str().c_str()); fflush(stderr);
+        fprintf(stderr, RED_MSG "%s%s\n" ENDCOLOR_NOLINE, fmtbuf, tooshort.str().c_str()); fflush(stderr);
         if (level == -1) throw std::runtime_error(fmtbuf);
     }
     else //debug
@@ -111,7 +113,7 @@ void myprintf(int level, const char* fmt, ...)
 }
 
 
-//kludge: overload with perfect forwarding until implicit conversion works
+//kludge: overload with perfect forwarding until implicit cast ostringstream -> const char* works
 template <typename ... ARGS>
 //see https://stackoverflow.com/questions/24315434/trouble-with-stdostringstream-as-function-parameter
 void myprintf(int level, std::/*ostringstream*/ostream& fmt, ARGS&& ... args) //const std::ostringstream& fmt, ...);
