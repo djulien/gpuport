@@ -92,14 +92,14 @@ typedef struct ShmHdr
 ShmHdr* get_shmhdr(void* addr, SrcLine srcline = 0)
 {
 //    MemHdr<IPC>* ptr = static_cast<MemHdr<IPC>*>(addr);
-//printf("here5 0x%p\n", addr); fflush(stdout);
+//printf("here5 %p\n", addr); fflush(stdout);
     ShmHdr* ptr = static_cast<ShmHdr*>(addr);
     if (ptr-- && !((ptr->marker ^ SHM_MAGIC) & ~1)) return ptr;
 //printf("here6\n"); fflush(stdout);
 //    char buf[64];
 //    snprintf(buf, sizeof(buf), "%s: bad shmem pointer %p", func, addr);
 //    throw std::runtime_error(buf);
-    exc(FMT("bad shm ptr 0x%p") << addr, srcline);
+    exc(FMT("bad shm ptr %p") << addr, srcline);
 }
 
 
@@ -128,7 +128,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
 //    size = shminfo.shm_segsz; //NOTE: size will be rounded up to a multiple of PAGE_SIZE, so give caller actual size
     if (size > shminfo.shm_segsz) err_ret(0, EOVERFLOW); //throw "pre-existing shm smaller than requested"; //TODO: enlarge?
     ShmHdr* ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
-//printf("here4 0x%p\n", ptr); fflush(stdout);
+//printf("here4 %p\n", ptr); fflush(stdout);
     if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
     ptr->id = shmid;
     ptr->key = key;
@@ -140,13 +140,13 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
 
 key_t shmkey(void* addr, SrcLine srcline = 0)
 {
-//printf("here10 0x%p\n", addr); fflush(stdout);
+//printf("here10 %p\n", addr); fflush(stdout);
     return get_shmhdr(addr, srcline)->key;
 }
 
 size_t shmsize(void* addr, SrcLine srcline = 0)
 {
-//printf("here11 0x%p\n", addr); fflush(stdout);
+//printf("here11 %p\n", addr); fflush(stdout);
 //    struct shmid_ds shminfo;
 //    ShmHdr* ptr = get_shmhdr(addr, srcline);
 //    if (shmctl(ptr->id, IPC_STAT, &shminfo) == -1) throw std::runtime_error(strerror(errno));
@@ -156,7 +156,7 @@ size_t shmsize(void* addr, SrcLine srcline = 0)
 
 key_t shmexisted(void* addr, SrcLine srcline = 0)
 {
-//printf("here12 0x%p\n", addr); fflush(stdout);
+//printf("here12 %p\n", addr); fflush(stdout);
     return (get_shmhdr(addr, srcline)->marker != SHM_MAGIC);
 }
 
@@ -195,7 +195,7 @@ int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid a
 void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
     void* retval = shmalloc(size, key, srcline);
-    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr 0x%p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(strerror(errno), "??error??"): "no error");
+    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(strerror(errno), "??error??"): "no error");
     return retval;
 }
 #define shmalloc  shmalloc_debug
@@ -203,7 +203,7 @@ void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine 
 int shmfree_debug(void* addr, SrcLine srcline = 0)
 {
     int retval = shmfree(addr, srcline);
-    debug(BLUE_MSG "shmfree(0x%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(strerror(errno), "??error??"): "no error");
+    debug(BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(strerror(errno), "??error??"): "no error");
     return retval;
 }
 #define shmfree  shmfree_debug
@@ -270,11 +270,11 @@ public:
         if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
-//        debug(GREEN_MSG "AutoShmary(0x%p) ctor: ptr 0x%p, key 0x%x => 0x%x, size %zu * %zu => %zu, existed? %d, page size %ld" ENDCOLOR_ATLINE(srcline), this, m_ptr, key, shmkey(m_ptr), ents, sizeof(TYPE), shmsize(m_ptr), shmexisted(m_ptr), sysconf(_SC_PAGESIZE));
+//        debug(GREEN_MSG "AutoShmary(%p) ctor: ptr %p, key 0x%x => 0x%x, size %zu * %zu => %zu, existed? %d, page size %ld" ENDCOLOR_ATLINE(srcline), this, m_ptr, key, shmkey(m_ptr), ents, sizeof(TYPE), shmsize(m_ptr), shmexisted(m_ptr), sysconf(_SC_PAGESIZE));
 //        debug(GREEN_MSG "ctor " << *this << ENDCOLOR_ATLINE(srcline));
         cleanup_later(m_ptr);
     }
-    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(0x%p) dtor, ptr 0x%p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
+    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(%p) dtor, ptr %p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
 public: //operators
     operator TYPE*() { return m_ptr; }
 //    operator void*() { return m_ptr; }
@@ -282,11 +282,11 @@ public: //operators
     {
 //        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
         ostrm << "AutoShmary" << my_templargs();
-        ostrm << FMT("{0x%p: ") << &that;
+        ostrm << FMT("{%p: ") << &that;
         ostrm << FMT("key 0x%lx, ") << that.key();
-        ostrm << FMT("ptr 0x%p ") << that.m_ptr;
+        ostrm << FMT("ptr %p ") << that.m_ptr;
         ostrm << FMT("len %zu, ") << that.len();
-        ostrm << FMT("hdr 0x%p ") << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
+        ostrm << FMT("hdr %p ") << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
         ostrm << FMT("len %zu, ") << (that.m_ptr? sizeof(*get_shmhdr(that.m_ptr)): 0);
         ostrm << "existed? " << that.existed();
         ostrm << ", #attch " << (that.m_ptr? shmnattch(that.m_ptr): 0);
@@ -334,19 +334,19 @@ void unit_test()
 {
 #if 0
     void* ptr = shmalloc(100, 0, SRCLINE);
-    debug(BLUE_MSG << FMT("0x%p") << ptr << ", key " << shmkey(ptr) << ", size " << shmsize(ptr) << ", existed? " << shmexisted(ptr) << ENDCOLOR);
+    debug(BLUE_MSG << FMT("%p") << ptr << ", key " << shmkey(ptr) << ", size " << shmsize(ptr) << ", existed? " << shmexisted(ptr) << ENDCOLOR);
     shmfree(ptr, SRCLINE);
 
     key_t key = 0x1234;
     void* ptr2 = shmalloc(100, key, SRCLINE);
     void* ptr3 = shmalloc(100, key, SRCLINE);
-    debug(BLUE_MSG << FMT("0x%p") << ptr2 << ", key " << shmkey(ptr2) << ", size " << shmsize(ptr2) << ", existed? " << shmexisted(ptr) << ENDCOLOR);
+    debug(BLUE_MSG << FMT("%p") << ptr2 << ", key " << shmkey(ptr2) << ", size " << shmsize(ptr2) << ", existed? " << shmexisted(ptr) << ENDCOLOR);
     shmfree(ptr2, SRCLINE);
     shmfree(ptr3, SRCLINE);
 #endif
 
     AutoShmary<> ary1(5, 0, SRCLINE);
-    debug(BLUE_MSG << ary1 << ", &end 0x%p" << ENDCOLOR, &ary1[5]);
+    debug(BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
 
     { //create nested scope to force dtor
         AutoShmary<> ary2(0, ary1.key(), SRCLINE);
@@ -356,7 +356,7 @@ void unit_test()
     key_t key;
     { //create nested scope to force dtor
         AutoShmary<uint32_t> ary3(12, 0, SRCLINE);
-        debug(BLUE_MSG << ary3 << ", &end 0x%p" << ENDCOLOR, &ary3[12]);
+        debug(BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[12]);
         key = ary3.key();
     }
     AutoShmary<uint32_t> ary4(4, key, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive

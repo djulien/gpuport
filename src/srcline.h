@@ -170,10 +170,12 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
 //string split examples: https://stackoverflow.com/questions/1894886/parsing-a-comma-delimited-stdstring
 //or http://www.partow.net/programming/strtk/index.html
     std::vector<std::pair<const char*, int>> arg_names;
+//if (strstr(str, "anonymous")) { printf("templ args in: %s\n", str); fflush(stdout); }
     for (const char* sep = ++str; /*sep != end*/; ++sep)
         if ((*sep == ',') || (*sep == '>'))
         {
 //printf("arg#%d: '%.*s'\n", arg_names.size(), sep - str, str);
+//            if (!strncmp(str, "<anonymous", sep - str)) ++str; //unnamed args; skip extra "<"
             arg_names.push_back(std::pair<const char*, int>(str, sep - str)); //std::string(start, sep - start));
             if (*sep == '>') break;
             str = sep + 1;
@@ -188,14 +190,22 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
     {
         char buf[64];
         arg_types.push_back(arg_types.length()? ',': '<');
-        if (!strncmp(it->first, "anonymous", it->second)) strcpy(buf, " = "); //kludge: unnamed args
+        bool hasname = strncmp(it->first, "<anonymous", it->second); //kludge: unnamed args; NOTE: extra "<" present from above
+        if (!hasname) { strcpy(buf, " = "); ++it->first; it->second -= 6; } 
         else snprintf(buf, sizeof(buf), " %.*s = ", it->second, it->first);
         const char* bp1 = strstr(str, buf);
-        if (!bp1) { arg_types.append(it->first, it->second); continue; } //just give arg name if can't find type
+//printf("templ args[%d]: found '%s' in '%s'? %d\n", it - arg_names.begin(), buf, str, bp1? (bp1 - str): -1);
+        if (!hasname && bp1) //try to find real name
+            for (const char* bp0 = bp1; bp0 > str; --bp0)
+                if (bp0[-1] == ' ') { it->second = bp1 - (it->first = bp0); break; } //found start of name
+        arg_types.append(it->first, it->second);
+        if (!bp1) continue; //just give arg name if can't find type
         bp1 += strlen(buf);
         const char* bp2 = strchr(bp1, ';'); if (!bp2) bp2 = strrchr(bp1, ']'); //strpbrk(bp1, ";]");
-        if (!bp2) { arg_types.append(it->first, it->second); continue; }
+//printf("templ args: then found ;] ? %d\n", bp2? (bp2 - str): -1);
+        if (!bp2) continue;
 //        ++numfound;
+        arg_types.push_back('=');
         arg_types.append(bp1, bp2 - bp1);
 //        if (arg_types.length() != 1) continue;
 //        sprintf(buf, "%d args: ", arg_names.size());
@@ -203,6 +213,7 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
     }
     if (arg_types.length()) arg_types.push_back('>');
 //printf("found %d templ arg names, %d types in %s\n", arg_names.size(), numfound, svstr);
+//if (strstr(arg_types.c_str(), "anonymous")) { printf("templ args in: %s\n", arg_types.c_str()); fflush(stdout); }
     return arg_types;
 //    std::regex args_re ("<([^>]*)>");
 //    std::smatch m;

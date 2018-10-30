@@ -15,7 +15,7 @@
 #include <algorithm> //std::max()
 
 #include "msgcolors.h" //*_MSG, ENDCOLOR, ENDCOLOR_ATLINE()
-#include "srcline.h" //SrcLine, SRCLINE
+#include "srcline.h" //SrcLine, SRCLINE, TEMPL_ARGS
 #include "debugexc.h" //debug(), exc()
 #include "str-helpers.h" //commas()
 #include "rpi-helpers.h" //isrpi()
@@ -435,7 +435,7 @@ const std::string/*no! &*/ renderer_desc(const SDL_RendererInfo& info)
 //    else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
 //    else count << "1 fmt: ";
     std::ostringstream ostrm;
-//    ostrm << "SDL_Renderer {" << FMT("rndr 0x%p ") << rndr;
+//    ostrm << "SDL_Renderer {" << FMT("rndr %p ") << rndr;
     ostrm << "{";
     ostrm << FMT("'%s'") << NVL(info.name, "(none)");
     ostrm << FMT(", flags 0x%x ") << info.flags << flag_desc.str().substr(1); //<< FMT(" %s") << flags.str().c_str() + 1;
@@ -481,7 +481,7 @@ public: //ctor/dtor
     explicit SDL_AutoLib(Uint32 flags /*= 0*/, SrcLine srcline = 0): m_srcline(srcline)
     {
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
-        debug(GREEN_MSG "SDL_AutoLib(0x%p) ctor: init 0x%x (%s)" ENDCOLOR_ATLINE(srcline), this, flags, NVL(unmap(SDL_SubSystemNames, flags))); //SDL_SubSystems.count(flags)? SDL_SubSystems.find(flags)->second: "");
+        debug(GREEN_MSG "SDL_AutoLib(%p) ctor: init 0x%x (%s)" ENDCOLOR_ATLINE(srcline), this, flags, NVL(unmap(SDL_SubSystemNames, flags))); //SDL_SubSystems.count(flags)? SDL_SubSystems.find(flags)->second: "");
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         for (Uint32 bit = 1; bit; bit <<= 1) //do one at a time
             if (flags & bit) //caller wants this one
@@ -499,7 +499,7 @@ public: //ctor/dtor
                     if (!count()++) first_time(srcline);
                 }
     }
-    virtual ~SDL_AutoLib() { debug(RED_MSG "SDL_AutoLib(0x%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
+    virtual ~SDL_AutoLib() { debug(RED_MSG "SDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SDL_AutoLib& dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -636,12 +636,12 @@ public: //ctors/dtors
 //printf("here1\n"); fflush(stdout);
 //        InOutDebug inout("auto wnd ctor", SRCLINE);
 //        if (++count() > 30) exc("recursion?");
-        debug(GREEN_MSG "SDL_AutoWindow%s(0x%p) ctor 0x%p" ENDCOLOR_ATLINE(srcline), my_templargs().c_str(), this, ptr);
+        debug(GREEN_MSG "SDL_AutoWindow%s(%p) ctor %p" ENDCOLOR_ATLINE(srcline), my_templargs().c_str(), this, ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
         if (!SDL_OK(ptr)) SDL_exc("SDL_AutoWindow: init window", srcline); //required window
         reset(ptr, NVL(srcline, SRCLINE)); //take ownership of window after checking
     }
-    virtual ~SDL_AutoWindow() { debug(RED_MSG "SDL_AutoWindow(0x%p) dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
+    virtual ~SDL_AutoWindow() { debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
     SDL_AutoWindow(const SDL_AutoWindow& that) { this->reset(((SDL_AutoWindow)that).release()); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -724,7 +724,7 @@ public: //operators
 //        SDL_Window* ptr = that.release();
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
-        debug(BLUE_MSG "SDL_AutoWindow: old window 0x%p, new window 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        debug(BLUE_MSG "SDL_AutoWindow: old window %p, new window %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
         reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
@@ -748,13 +748,13 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "SDL_Window" << my_templargs() << "{" << FMT("wnd 0x%p: ") << wnd;
+        ostrm << "SDL_Window" << my_templargs() << "{" << FMT("wnd %p: ") << wnd;
         ostrm << wndw << " x " << wndh;
         ostrm << ", fmt " << SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
         ostrm << " bpp " << NVL(SDL_PixelFormatShortName(fmt)); //FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
         ostrm << ", flags " << flag_desc.str().substr(1); //FMT(", flags %s") << flag_desc.str().c_str() + 1;
-//        ostrm << *renderer(wnd); //FMT(", rndr 0x%p") << renderer(wnd);
-        ostrm << FMT(", rndr 0x%p ") << rndr << (rndr? renderer_desc(info): "(none)");
+//        ostrm << *renderer(wnd); //FMT(", rndr %p") << renderer(wnd);
+        ostrm << FMT(", rndr %p ") << rndr << (rndr? renderer_desc(info): "(none)");
         ostrm << "}";
         return ostrm; 
     }
@@ -771,7 +771,7 @@ public: //operators
             fmts << ", " << SDL_BITSPERPIXEL(info.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(info.texture_formats[i]));
         if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
         else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
-        ostrm << "SDL_Renderer {" << FMT("rndr 0x%p ") << rndr;
+        ostrm << "SDL_Renderer {" << FMT("rndr %p ") << rndr;
         ostrm << FMT("'%s'") << info.name;
         ostrm << FMT(", flags 0x%x") << info.flags << FMT(" %s") << flags.str().c_str() + 1;
         ostrm << ", max " << info.max_texture_width << " x " << info.max_texture_height;
@@ -789,7 +789,7 @@ public: //methods; mostly just wrappers for static utility methods
 //printf("reset here2\n"); fflush(stdout);
         if (new_ptr) check(new_ptr, 0, 0, 0, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
 //        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
-        debug(BLUE_MSG << FMT("AutoWindow(0x%p)") << this << " taking ownership of " << FMT("0x%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
+        debug(BLUE_MSG << FMT("AutoWindow(%p)") << this << " taking ownership of " << FMT("%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
         super::reset(new_ptr);
 //printf("reset here3\n"); fflush(stdout);
         VOID INSPECT(*this, srcline);
@@ -858,16 +858,16 @@ public: //static utility methods
         if (!SDL_OK(SDL_SetRenderDrawColor(rndr, R_G_B_A(color)))) SDL_exc("set render draw color", srcline);
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
         debug(BLUE_MSG "set all pixels in window to color 0x%x" ENDCOLOR_ATLINE(srcline), color);
-//printf("hello2 0x%p\n", rndr); fflush(stdout);
+//printf("hello2 %p\n", rndr); fflush(stdout);
         VOID SDL_RenderPresent(rndr); //flips texture to screen
-//printf("hello3 0x%p\n", rndr); fflush(stdout);
+//printf("hello3 %p\n", rndr); fflush(stdout);
     }
     static void render(SDL_Window* wnd, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0) { VOID render(renderer(wnd), txtr, src, dest, clearfb, srcline); }
     static void render(SDL_Renderer* rndr, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
     {
 //        SDL_Renderer* rndr = renderer(wnd);
         if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear", srcline); //clear previous framebuffer
-//        debug(BLUE_MSG "copy %s pixels from texture 0x%p to %s pixels in window 0x%p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
+//        debug(BLUE_MSG "copy %s pixels from texture %p to %s pixels in window %p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
         VOID SDL_RenderPresent(rndr); //put new texture on screen
     }
@@ -921,7 +921,7 @@ public: //static utility methods
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
         delete_renderer(ptr); //delete renderer first (get it from window)
-        debug(BLUE_MSG "SDL_AutoWindow: destroy window 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_AutoWindow: destroy window %p" ENDCOLOR, ptr);
         VOID SDL_DestroyWindow(ptr);
     }
 #if 0 //overloaded SFINAE broken; use in-line logic instead (hopefully compiler will still optimize it)
@@ -934,7 +934,7 @@ public: //static utility methods
         if (!ptr) return NULL; //kludge: compiler wants a return value here (due to enable_if<>?); //std::enable_if<WantRenderer_copy, void> NULL;
         SDL_Renderer* rndr = renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
         if (!rndr) return NULL;
-        debug(BLUE_MSG "SDL_AutoWindow: destroy renderer 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
         VOID SDL_DestroyRenderer(rndr);
     }
 #endif
@@ -943,7 +943,7 @@ public: //static utility methods
         if (!ptr || !WantRenderer) return;
         SDL_Renderer* rndr = renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
         if (!rndr) return;
-        debug(BLUE_MSG "SDL_AutoWindow: destroy renderer 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
         VOID SDL_DestroyRenderer(rndr);
     }
 private: //members
@@ -979,12 +979,12 @@ public: //ctors/dtors
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
     SDL_AutoSurface(SDL_Surface* ptr, SrcLine srcline = 0): SDL_AutoSurface(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
-        debug(BLUE_MSG "SDL_AutoSurface ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
+        debug(BLUE_MSG "SDL_AutoSurface ctor %p" ENDCOLOR_ATLINE(srcline), ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
         if (!SDL_OK(ptr)) exc(RED_MSG "SDL_AutoSurface: init surface failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_GetError(), SDL_LastError); //required surface
         reset(ptr, srcline); //take ownership of surface
     }
-    virtual ~SDL_AutoSurface() { debug(BLUE_MSG "SDL_AutoSurface dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), get()); }
+    virtual ~SDL_AutoSurface() { debug(BLUE_MSG "SDL_AutoSurface dtor %p" ENDCOLOR_ATLINE(m_srcline), get()); }
 public: //factory methods:
     template <typename ... ARGS>
     SDL_AutoSurface SDL_CreateRGBSurfaceWithFormat(ARGS&& ... args, SrcLine srcline = 0) //UNUSED, TXR_WIDTH, univ_len, SDL_BITSPERPIXEL(fmt), fmt);
@@ -1004,7 +1004,7 @@ public: //operators
     {
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
-        debug(BLUE_MSG "SDL_AutoSurface: old surface 0x%p, new surface 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        debug(BLUE_MSG "SDL_AutoSurface: old surface %p, new surface %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
         reset(ptr, srcline);
         return *this; //fluent/chainable
     }
@@ -1024,7 +1024,7 @@ public: //static helper methods
     {
 //    if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
         if ((w && (surf->w != w)) || (h && (surf->h != h))) exc(RED_MSG "Surface wrong size: got %d x %d, wanted %d x %d" ENDCOLOR_ATLINE(srcline), surf->w, surf->h, w, h);
-        if (!surf->pixels || (toint(surf->pixels) & 7)) exc(RED_MSG "Surface pixels not aligned on 8-byte boundary: 0x%p" ENDCOLOR_ATLINE(srcline), surf->pixels);
+        if (!surf->pixels || (toint(surf->pixels) & 7)) exc(RED_MSG "Surface pixels not aligned on 8-byte boundary: %p" ENDCOLOR_ATLINE(srcline), surf->pixels);
         if ((size_t)surf->pitch != sizeof(uint32_t) * surf->w) exc(RED_MSG "Surface unexpected pitch: %d should be %zu * %d = %zu" ENDCOLOR_ATLINE(srcline), surf->pitch, sizeof(uint32_t), surf->w, sizeof(uint32_t) * surf->w);
     }
     static void lock(SDL_Surface* ptr, SrcLine srcline = 0) {} //noop
@@ -1054,7 +1054,7 @@ public: //static helper methods
             fmts << ";" << SDL_BITSPERPIXEL(fmtptr->format) << " bpp " << SDL_PixelFormatShortName(fmtptr->format);
         if (!numfmt) { count << "no fmts"; fmts << ";"; }
         else if (numfmt != 1) count << numfmt << " fmts: ";
-        debug(18, BLUE_MSG "Surface 0x%p: %d x %d, pitch %s, size %s, must lock? %d, %s%s" ENDCOLOR_ATLINE(srcline), surf, surf->w, surf->h, commas(surf->pitch), commas(surf->h * surf->pitch), SDL_MUSTLOCK(surf), count.str().c_str(), fmts.str().c_str() + 1);
+        debug(18, BLUE_MSG "Surface %p: %d x %d, pitch %s, size %s, must lock? %d, %s%s" ENDCOLOR_ATLINE(srcline), surf, surf->w, surf->h, commas(surf->pitch), commas(surf->h * surf->pitch), SDL_MUSTLOCK(surf), count.str().c_str(), fmts.str().c_str() + 1);
     }
 //private: //static helpers
     static void deleter(SDL_Surface* ptr)
@@ -1062,7 +1062,7 @@ public: //static helper methods
         if (!ptr) return;
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
-        debug(BLUE_MSG "SDL_AutoSurface: free surface 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_AutoSurface: free surface %p" ENDCOLOR, ptr);
         /*if (ptr)*/ SDL_FreeSurface(ptr);
     }
 private: //members
@@ -1086,12 +1086,12 @@ public: //ctors/dtors
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
     SDL_MemorySurface(SDL_Surface* ptr, SrcLine srcline = 0): SDL_MemorySurface(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
-        debug(BLUE_MSG "SDL_MemorySurface ctor 0x%p" ENDCOLOR_ATLINE(srcline), ptr);
+        debug(BLUE_MSG "SDL_MemorySurface ctor %p" ENDCOLOR_ATLINE(srcline), ptr);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
         if (!SDL_OK(ptr)) exc(RED_MSG "SDL_MemorySurface: init surface failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_GetError(), SDL_LastError); //required surface
         reset(ptr, srcline); //take ownership of surface
     }
-    virtual ~SDL_MemorySurface() { debug(BLUE_MSG "SDL_MemorySurface dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), get()); }
+    virtual ~SDL_MemorySurface() { debug(BLUE_MSG "SDL_MemorySurface dtor %p" ENDCOLOR_ATLINE(m_srcline), get()); }
 public: //factory methods:
     template <typename ... ARGS>
     SDL_MemorySurface alloc(int w, int h, SrcLine srcline = 0)
@@ -1104,7 +1104,7 @@ public: //operators
     {
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
-        debug(BLUE_MSG "SDL_MemorySurface: old surface 0x%p, new surface 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        debug(BLUE_MSG "SDL_MemorySurface: old surface %p, new surface %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
         reset(ptr, srcline);
         return *this; //fluent/chainable
     }
@@ -1124,7 +1124,7 @@ public: //static helper methods
     {
 //    if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
         if ((w && (surf->w != w)) || (h && (surf->h != h))) exc(RED_MSG "Surface wrong size: got %d x %d, wanted %d x %d" ENDCOLOR_ATLINE(srcline), surf->w, surf->h, w, h);
-        if (!surf->pixels || (toint(surf->pixels) & 7)) exc(RED_MSG "Surface pixels not aligned on 8-byte boundary: 0x%p" ENDCOLOR_ATLINE(srcline), surf->pixels);
+        if (!surf->pixels || (toint(surf->pixels) & 7)) exc(RED_MSG "Surface pixels not aligned on 8-byte boundary: %p" ENDCOLOR_ATLINE(srcline), surf->pixels);
         if ((size_t)surf->pitch != sizeof(uint32_t) * surf->w) exc(RED_MSG "Surface unexpected pitch: %d should be %zu * %d = %zu" ENDCOLOR_ATLINE(srcline), surf->pitch, sizeof(uint32_t), surf->w, sizeof(uint32_t) * surf->w);
     }
     static void lock(SDL_Surface* ptr, SrcLine srcline = 0) {} //noop
@@ -1140,7 +1140,7 @@ public: //static helper methods
             fmts << ";" << SDL_BITSPERPIXEL(fmtptr->format) << " bpp " << SDL_PixelFormatShortName(fmtptr->format);
         if (!numfmt) { count << "no fmts"; fmts << ";"; }
         else if (numfmt != 1) count << numfmt << " fmts: ";
-        debug(18, BLUE_MSG "Surface 0x%p: %d x %d, pitch %s, size %s, must lock? %d, %s%s" ENDCOLOR_ATLINE(srcline), surf, surf->w, surf->h, commas(surf->pitch), commas(surf->h * surf->pitch), SDL_MUSTLOCK(surf), count.str().c_str(), fmts.str().c_str() + 1);
+        debug(18, BLUE_MSG "Surface %p: %d x %d, pitch %s, size %s, must lock? %d, %s%s" ENDCOLOR_ATLINE(srcline), surf, surf->w, surf->h, commas(surf->pitch), commas(surf->h * surf->pitch), SDL_MUSTLOCK(surf), count.str().c_str(), fmts.str().c_str() + 1);
     }
 //private: //static helpers
     static void deleter(SDL_Surface* ptr)
@@ -1148,7 +1148,7 @@ public: //static helper methods
         if (!ptr) return;
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
-        debug(BLUE_MSG "SDL_MemorySurface: free surface 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_MemorySurface: free surface %p" ENDCOLOR, ptr);
         /*if (ptr)*/ free(ptr);
     }
 private: //members
@@ -1229,13 +1229,13 @@ public: //ctors/dtors
     {
 //    (SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
 //        debug(RED_MSG "TODO: add shm pixel buf" ENDCOLOR_ATLINE(srcline));
-        debug(GREEN_MSG "SDL_AutoTexture(0x%p) ctor txtr 0x%p, wnd 0x%p" ENDCOLOR_ATLINE(srcline), /*TEMPL_ARGS.c_str(),*/ this, ptr, wnd);
+        debug(GREEN_MSG "SDL_AutoTexture(%p) ctor txtr %p, wnd %p" ENDCOLOR_ATLINE(srcline), /*TEMPL_ARGS.c_str(),*/ this, ptr, wnd);
 //        if (!SDL_OK(SDL_get_surface(std::forward<ARGS>(args) ...))) exc(RED_MSG "SDL_AutoLib: init subsys '%s' (0x%x) failed: %s (err 0x%x)" ENDCOLOR_ATLINE(srcline), SDL_SubSystems.find(bit)->second, bit, SDL_GetError(), SDL_LastError);
         if (!SDL_OK(ptr)) SDL_exc("SDL_AutoTexture: init texture", NVL(srcline, SRCLINE)); //required window
 //        m_wnd.reset(wnd); //CAUTION: caller loses ownership
         reset(ptr, NVL(srcline, SRCLINE)); //take ownership of window after checking
     }
-    virtual ~SDL_AutoTexture() { debug(RED_MSG "SDL_AutoTexture(0x%p) dtor 0x%p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
+    virtual ~SDL_AutoTexture() { debug(RED_MSG "SDL_AutoTexture(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
 //    SDL_AutoTexture(const SDL_AutoTexture& that) { *this = that; } //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -1244,7 +1244,7 @@ public: //ctors/dtors
 //    SDL_AutoTexture(/*const*/ SDL_Texture* that) { this->reset(that); } //operator=(that); } //*this = that; } //copy ctor; //= delete; //deleted copy constructor
 //    {
 //        SrcLine srcline = m_srcline; //TODO: where to get this?
-//        debug(BLUE_MSG "SDL_AutoTexture copy ctor: old texture 0x%p, new texture 0x%p" ENDCOLOR_ATLINE(srcline), get(), that.get());
+//        debug(BLUE_MSG "SDL_AutoTexture copy ctor: old texture %p, new texture %p" ENDCOLOR_ATLINE(srcline), get(), that.get());
 //        reset(ptr, srcline);
 //        return *this; //fluent/chainable
 //    }
@@ -1288,7 +1288,7 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
 //        SDL_Texture* ptr = that.release();
         SrcLine srcline = m_srcline; //TODO: where to get this?
-        debug(BLUE_MSG "SDL_AutoTexture: old texture 0x%p, new texture 0x%p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        debug(BLUE_MSG "SDL_AutoTexture: old texture %p, new texture %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
         reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
@@ -1304,7 +1304,7 @@ public: //operators
         int& cached_access = *(int*)&me.cached.userdata; //kludge: reuse element
         Uint32& cached_fmt = *(Uint32*)&me.cached.format; //kludge: reuse ptr as actual value
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
-        ostrm << "SDL_Texture" << /*TEMPL_ARGS <<*/ "{" << FMT("txtr 0x%p ") << txtr;
+        ostrm << "SDL_Texture" << /*TEMPL_ARGS <<*/ "{" << FMT("txtr %p ") << txtr;
         ostrm << me.cached.w << " x " << me.cached.h;
         ostrm << FMT(", fmt %i") << SDL_BITSPERPIXEL(cached_fmt);
         ostrm << FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(cached_fmt));
@@ -1338,7 +1338,7 @@ public: //methods
     {
 //        if (!pixels) pixels = m_shmbuf;
         if (!pitch) pitch = cached.w * sizeof(pixels[0]); //Uint32);
-        debug(BLUE_MSG "update %s pixels from texture 0x%p, pixels 0x%p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
+        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
         if (pitch != cached.w * sizeof(pixels[0])) exc(RED_MSG "pitch mismatch: expected %d, got d" ENDCOLOR_ATLINE(srcline), cached.w * sizeof(pixels[0]), pitch);
         if (!SDL_OK(SDL_UpdateTexture(get(), rect, pixels, pitch))) SDL_exc("update texture", srcline);
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
@@ -1441,7 +1441,7 @@ public: //static helper methods
         if (!ptr) return;
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
-        debug(BLUE_MSG "SDL_AutoTexture: free texture 0x%p" ENDCOLOR, ptr);
+        debug(BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
         VOID SDL_DestroyTexture(ptr);
     }
 private: //member vars
@@ -1491,8 +1491,8 @@ class aclass
     SDL_AutoLib sdl;
     SrcLine m_srcline;
 public:
-    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)), m_srcline(srcline) { debug(GREEN_MSG "aclass(0x%p) ctor" ENDCOLOR_ATLINE(srcline), this); }
-    ~aclass() { debug(RED_MSG "aclass(0x%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
+    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)), m_srcline(srcline) { debug(GREEN_MSG "aclass(%p) ctor" ENDCOLOR_ATLINE(srcline), this); }
+    ~aclass() { debug(RED_MSG "aclass(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 };
 
 void other(SrcLine srcline = 0)
@@ -1609,7 +1609,7 @@ void sdl_api_test()
     SDL_Renderer* sdlRenderer;
     const int W = 3 * 24, H = 64; //1111;
     if (!SDL_OK(SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer))) SDL_exc("cre wnd & rndr");
-    debug(BLUE_MSG "wnd renderer 0x%p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
+    debug(BLUE_MSG "wnd renderer %p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
     if (!SDL_OK(SDL_RenderSetLogicalSize(sdlRenderer, W, H))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
 
     if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(BLACK)))) SDL_exc("set render draw color");
