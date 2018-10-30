@@ -12,6 +12,7 @@
 #include <utility> //std::forward<>
 #include <type_traits> //std::conditional, std::enable_if, std::is_same, std::disjunction, etc
 #include <climits> //<limits.h> //*_MIN, *_MAX
+#include <algorithm> //std::max()
 
 #include "msgcolors.h" //*_MSG, ENDCOLOR, ENDCOLOR_ATLINE()
 #include "srcline.h" //SrcLine, SRCLINE
@@ -19,6 +20,7 @@
 #include "str-helpers.h" //commas()
 #include "rpi-helpers.h" //isrpi()
 #include "ostrfmt.h" //FMT()
+#include "elapsed.h" //elapsed(), timestamp()
 //#include "shmalloc.h" //AutoShmary<>
 
 
@@ -77,9 +79,10 @@
 
 
 #define mix_2ARGS(dim, val)  mix_3ARGS(dim, val, 0)
-#define mix_3ARGS(blend, val1, val2)  ((int)((val1) * (blend) + (val2) * (1 - blend)) //uses floating point
+#define mix_3ARGS(blend, val1, val2)  ((int)((val1) * (blend) + (val2) * (1 - (blend)))) //uses floating point
 #define mix_4ARGS(num, den, val1, val2)  (((val1) * (num) + (val2) * (den - num)) / (den)) //use fractions to avoid floating point at compile time
 #define mix(...)  UPTO_4ARGS(__VA_ARGS__, mix_4ARGS, mix_3ARGS, mix_2ARGS, mix_1ARG) (__VA_ARGS__)
+#define dim  mix_2ARGS
 
 
 //put desc/dump of object to debug:
@@ -155,7 +158,7 @@ static UNPACKED& unpack(UNPACKED& params, CALLBACK&& named_params)
 //        MSG(BLUE_MSG << "... got params" << ENDCOLOR);
 //        ret_params = params;
 //        MSG("ret ctor params: var1 " << ret_params.var1 << ", src line " << ret_params.srcline);
-    debug(BLUE_MSG << "unpack ret" << ENDCOLOR);
+//    debug(BLUE_MSG << "unpack ret" << ENDCOLOR);
     return params;
 }
 
@@ -164,9 +167,17 @@ static UNPACKED& unpack(UNPACKED& params, CALLBACK&& named_params)
 class InOutDebug
 {
 public:
-    InOutDebug(const char* label = "", SrcLine srcline = 0): m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
-    ~InOutDebug() { debug(BLUE_MSG << m_label << ": out" ENDCOLOR_ATLINE(m_srcline)); }
+    InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
+    ~InOutDebug() { debug(BLUE_MSG << m_label << ": out after %ld msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
+public: //methods
+    double restart() //my_elapsed_msec(bool restart = false)
+    {
+        double retval = elapsed_msec() - m_started;
+        /*if (restart)*/ m_started = elapsed_msec();
+        return retval;
+    }
 private: //data members
+    double m_started; //= -elapsed_msec();
     const char* m_label;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
@@ -336,9 +347,10 @@ template <bool> class SDL_AutoWindow;
 #define B_G_R_A(color)  B(color), G(color), R(color), A(color)
 
 #define mixARGB_2ARGS(dim, val)  mixARGB_3ARGS(dim, val, Abits(val)) //preserve Alpha
-#define mixARGB_3ARGS(blend, val1, val2)  fromARGB(mix(blend, A(C1), A(C2)), mix(blend, R(C1), R(C2)), mix(blend, G(C1), G(C2)), mix(blend, B(C1), B(C2))) //uses floating point
-#define mixARGB_4ARGS(num, den, val1, val2)  fromARGB(mix(num, den, A(val1), A(val2)), mix(num, den, R(val1), R(val2)), mix(num, den, G(val1), G(val2)), mix(num, den, B(val1), B(val2))) //use fractions to avoid floating point at compile time
+#define mixARGB_3ARGS(blend, c1, c2)  fromARGB(mix(blend, A(c1), A(c2)), mix(blend, R(c1), R(c2)), mix(blend, G(c1), G(c2)), mix(blend, B(c1), B(c2))) //uses floating point
+#define mixARGB_4ARGS(num, den, c1, c2)  fromARGB(mix(num, den, A(c1), A(c2)), mix(num, den, R(c1), R(c2)), mix(num, den, G(c1), G(c2)), mix(num, den, B(c1), B(c2))) //use fractions to avoid floating point at compile time
 #define mixARGB(...)  UPTO_4ARGS(__VA_ARGS__, mixARGB_4ARGS, mixARGB_3ARGS, mixARGB_2ARGS, mixARGB_1ARG) (__VA_ARGS__)
+#define dimARGB  mixARGB_2ARGS
 
 //#define R_G_B_A_masks(color)  Rmask(color), Gmask(color), Bmask(color), Amask(color)
 
@@ -402,7 +414,7 @@ const std::string/*&*/ rect_desc(const SDL_Rect* rect)
 {
     std::ostringstream ss;
     if (!rect) ss << "all";
-    else ss << rect->w * rect->h << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
+    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
     return ss.str();
 }
 
@@ -424,11 +436,12 @@ const std::string/*no! &*/ renderer_desc(const SDL_RendererInfo& info)
 //    else count << "1 fmt: ";
     std::ostringstream ostrm;
 //    ostrm << "SDL_Renderer {" << FMT("rndr 0x%p ") << rndr;
+    ostrm << "{";
     ostrm << FMT("'%s'") << NVL(info.name, "(none)");
     ostrm << FMT(", flags 0x%x ") << info.flags << flag_desc.str().substr(1); //<< FMT(" %s") << flags.str().c_str() + 1;
     ostrm << ", max " << info.max_texture_width << " x " << info.max_texture_height;
-    ostrm << ", " << info.num_texture_formats << " fmt" << plural(info.num_texture_formats) << ": " << fmts.str().c_str() + 2; //<< count.str() << FMT("%s") << fmts.str().c_str() + 2;
-//    ostrm << "}";
+    ostrm << ", " << info.num_texture_formats << " fmt" << plural(info.num_texture_formats) << ": " << fmts.str().substr(2); //c_str() + 2; //<< count.str() << FMT("%s") << fmts.str().c_str() + 2;
+    ostrm << "}";
     return ostrm.str();
 }
 
@@ -578,19 +591,28 @@ private: //data members
 //readable names (mainly for debug msgs):
 const std::map<Uint32, const char*> SDL_WindowFlagNames =
 {
-    {SDL_WINDOW_FULLSCREEN, "FULLSCR"},
-    {SDL_WINDOW_OPENGL, "OPENGL"},
-    {SDL_WINDOW_SHOWN, "SHOWN"},
-    {SDL_WINDOW_HIDDEN, "HIDDEN"},
-    {SDL_WINDOW_BORDERLESS, "BORDERLESS"},
-    {SDL_WINDOW_RESIZABLE, "RESIZABLE"},
-    {SDL_WINDOW_MINIMIZED, "MIN"},
-    {SDL_WINDOW_MAXIMIZED, "MAX"},
-    {SDL_WINDOW_INPUT_GRABBED, "GRABBED"},
-    {SDL_WINDOW_INPUT_FOCUS, "FOCUS"},
-    {SDL_WINDOW_MOUSE_FOCUS, "MOUSE"},
-    {SDL_WINDOW_FOREIGN, "FOREIGN"},
+    {SDL_WINDOW_FULLSCREEN, "FULLSCR"}, //0x0001
+    {SDL_WINDOW_OPENGL, "OPENGL"}, //0x0002
+    {SDL_WINDOW_SHOWN, "SHOWN"}, //0x0004
+    {SDL_WINDOW_HIDDEN, "HIDDEN"}, //x0008
+    {SDL_WINDOW_BORDERLESS, "BORDERLESS"}, //0x0010
+    {SDL_WINDOW_RESIZABLE, "RESIZABLE"}, //0x0020
+    {SDL_WINDOW_MINIMIZED, "MIN"}, //0x0040
+    {SDL_WINDOW_MAXIMIZED, "MAX"}, //0x0080
+    {SDL_WINDOW_INPUT_GRABBED, "GRABBED"}, //0x0100
+    {SDL_WINDOW_INPUT_FOCUS, "FOCUS"}, //0x0200
+    {SDL_WINDOW_MOUSE_FOCUS, "MOUSE"}, //0x0400
+    {SDL_WINDOW_FOREIGN, "FOREIGN"}, //0x0800
+    {SDL_WINDOW_FULLSCREEN_DESKTOP, "FULLDESK"}, //0x1001
 //    {~(SDL_WINDOW_FULLSCREEN | SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_HIDDEN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_INPUT_GRABBED | SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS | SDL_WINDOW_FOREIGN), "????"},
+//    SDL_WINDOW_ALLOW_HIGHDPI = 0x00002000,      /**< window should be created in high-DPI mode if supported. On macOS NSHighResolutionCapable must be set true in the application's Info.plist for this to have any effect. */
+//    SDL_WINDOW_MOUSE_CAPTURE = 0x00004000,      /**< window has mouse captured (unrelated to INPUT_GRABBED) */
+//    SDL_WINDOW_ALWAYS_ON_TOP = 0x00008000,      /**< window should always be above others */
+//    SDL_WINDOW_SKIP_TASKBAR  = 0x00010000,      /**< window should not be added to the taskbar */
+//    SDL_WINDOW_UTILITY       = 0x00020000,      /**< window should be treated as a utility window */
+//    SDL_WINDOW_TOOLTIP       = 0x00040000,      /**< window should be treated as a tooltip */
+//    SDL_WINDOW_POPUP_MENU    = 0x00080000,      /**< window should be treated as a popup menu */
+//    SDL_WINDOW_VULKAN        = 0x10000000 
 };
 
 
@@ -634,10 +656,14 @@ public: //factory methods:
         SDL_Window* wnd;
         SDL_Renderer* rndr;
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
-        if (!WantRenderer)
-            return SDL_AutoWindow(SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP), NVL(srcline, SRCLINE)); //std::forward<ARGS>(args) ...), //no-perfect fwd
-        else
-            return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
+        Uint32 def_flags = isRPi()? SDL_WINDOW_FULLSCREEN_DESKTOP: SDL_WINDOW_RESIZABLE; //TODO
+//        if (!WantRenderer)
+//            return SDL_AutoWindow(SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN), NVL(srcline, SRCLINE)); //std::forward<ARGS>(args) ...), //no-perfect fwd
+//        else
+//            return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
+        wnd = SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
+        if (SDL_OK(wnd) && WantRenderer) rndr = SDL_CreateRenderer(wnd, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+        return SDL_AutoWindow(wnd, NVL(srcline, SRCLINE));
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
 //    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, NVL(srcline, SRCLINE)); }
@@ -722,13 +748,13 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "SDL_Window" << my_templargs() << "{" << FMT("wnd 0x%p ") << wnd;
+        ostrm << "SDL_Window" << my_templargs() << "{" << FMT("wnd 0x%p: ") << wnd;
         ostrm << wndw << " x " << wndh;
         ostrm << ", fmt " << SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
         ostrm << " bpp " << NVL(SDL_PixelFormatShortName(fmt)); //FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
         ostrm << ", flags " << flag_desc.str().substr(1); //FMT(", flags %s") << flag_desc.str().c_str() + 1;
 //        ostrm << *renderer(wnd); //FMT(", rndr 0x%p") << renderer(wnd);
-        ostrm << FMT(", rndr 0x%p ") << rndr << rndr? renderer_desc(info): "(none)";
+        ostrm << FMT(", rndr 0x%p ") << rndr << (rndr? renderer_desc(info): "(none)");
         ostrm << "}";
         return ostrm; 
     }
@@ -1199,7 +1225,7 @@ public: //ctors/dtors
 //    explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
-    explicit SDL_AutoTexture(SDL_Texture* ptr, SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_wnd(wnd, SRCLINE), /*m_shmbuf(??),*/ m_srcline(srcline) //CAUTION: AutoWindow ctor needs a window value; //SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
+    explicit SDL_AutoTexture(SDL_Texture* ptr, SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_wnd(wnd, NVL(srcline, SRCLINE)), /*m_shmbuf(??),*/ m_srcline(srcline) //CAUTION: AutoWindow ctor needs a window value; //SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
 //    (SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
 //        debug(RED_MSG "TODO: add shm pixel buf" ENDCOLOR_ATLINE(srcline));
@@ -1350,7 +1376,7 @@ public: //named arg variants
 
         struct UpdateParams
         {
-            const Uint32* pixels = 0; //no default unless WantPixelShmbuf
+            /*const*/ Uint32* pixels = 0; //no default unless WantPixelShmbuf
             const SDL_Rect* rect = NO_RECT;
             int pitch = 0;
             SrcLine srcline = 0;
@@ -1650,7 +1676,7 @@ void fullscreen_test()
     debug(PINK_MSG << "fullscreen_test start" << ENDCOLOR);
 //    SDL_AutoLib sdllib(SDL_INIT_VIDEO, SRCLINE);
 //give me the whole screen and don't change the resolution:
-    const int W = 3 * 24, H = 32; //1111;
+    const int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
 //    /*SDL_AutoWindow<true>*/ auto wnd(SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
 //    auto wnd(SDL_AutoWindow<true>::create(0, 0, 0, 0, 0, 0, SRCLINE));
 //    wnd.texture(W, H, SRCLINE);
@@ -1674,7 +1700,7 @@ void fullscreen_test()
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
         VOID SDL_Delay(2 sec);
-        for (int i = 0; i < W * H; ++i) myPixels[0][i] = (i & 3)? BLACK: palette[c]; //asRGBA(PINK);
+        for (int i = 0; i < W * H; ++i) myPixels[0][i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
 //TODO: combine
         VOID txtr.update(NAMED{ _.pixels = (Uint32*)myPixels; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //        VOID wnd.render(txtr.get(), false, SRCLINE); //put new texture on screen
@@ -1683,10 +1709,10 @@ void fullscreen_test()
 
 //pixel test:
     for (int i = 0; i < W * H; ++i) myPixels[0][i] = BLACK;
-    for (int x = 0 + W-4; x < W; ++x)
-        for (int y = 0 + H-4; y < H; ++y)
+    for (int x = 0 + std::max(W-4, 0); x < W; ++x)
+        for (int y = 0 + std::max(H-4, 0); y < H; ++y)
         {
-            VOID SDL_Delay(0.1 sec);
+            VOID SDL_Delay(0.5 sec);
             myPixels[y][x] = palette[(x + y) % SIZEOF(palette)];
 //TODO: combine
             VOID txtr.update(NAMED{ _.pixels = (Uint32*)myPixels; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
@@ -1699,6 +1725,9 @@ void fullscreen_test()
 //int main(int argc, const char* argv[])
 void unit_test()
 {
+    debug(BLUE_MSG << FMT("75%% 256 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
+    debug(BLUE_MSG << FMT("75%% white 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
+
     lib_test();
 //    surface_test();
 //    window_test();

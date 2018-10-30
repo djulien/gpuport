@@ -70,6 +70,7 @@
 
 
 //keep a little extra info in shm:
+//uses 24 bytes on Intel, 16 bytes on ARM (Rpi)
 #define SHM_MAGIC  0xfeedbeef //marker to detect valid shmem block
 typedef struct ShmHdr
 {
@@ -263,6 +264,7 @@ class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Win
 {
 public:
 //    const key_t KEY_NONE = -2;
+//TODO: use "new shmalloc()" to call ctor on shm directly
     explicit AutoShmary(size_t ents, key_t key, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
     {
         if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
@@ -297,6 +299,7 @@ public: //operators
 //    const key_t key;
 //    const bool existed;
 public: //methods
+    TYPE* ptr() const { return m_ptr; }
     size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
