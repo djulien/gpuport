@@ -259,7 +259,7 @@ private: //data members
 //defers cleanup until process exit in case other threads or processes are using shmbuf
 //thread safe
 //NOTE: no need for std::unique_ptr<> or std::shared_ptr<> since underlying memory itself is shared
-template <typename TYPE = uint8_t, bool WANT_MUTEX = false>
+template <typename TYPE = uint8_t, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
 class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 public:
@@ -299,12 +299,13 @@ public: //operators
 //    const key_t key;
 //    const bool existed;
 public: //methods
+//    PTRTYPE& ptr() /*const*/ { return m_ptr; }
     TYPE* ptr() const { return m_ptr; }
     size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
 private: //data members
-    TYPE* const m_ptr; //doesn't change after ctor
+    TYPE* /*const*/ m_ptr; //doesn't change after ctor
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {

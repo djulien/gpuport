@@ -63,6 +63,9 @@
 #ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 #endif
+//template version from http://www.cplusplus.com/forum/general/4125/
+//template< typename T, size_t N >
+//size_t ArraySize( T (& const)[ N ] ) { return N; }
 
 
 //(int) "/"" gives floor(), use this to give ceiling():
@@ -167,8 +170,8 @@ static UNPACKED& unpack(UNPACKED& params, CALLBACK&& named_params)
 class InOutDebug
 {
 public:
-    InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
-    ~InOutDebug() { debug(BLUE_MSG << m_label << ": out after %ld msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
+    explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
+    virtual ~InOutDebug() { debug(BLUE_MSG << m_label << ": out after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
 public: //methods
     double restart() //my_elapsed_msec(bool restart = false)
     {
@@ -748,7 +751,8 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "SDL_Window" << my_templargs() << "{" << FMT("wnd %p: ") << wnd;
+        ostrm << "SDL_Window" << my_templargs();
+        ostrm << "{" << FMT("wnd %p: ") << wnd;
         ostrm << wndw << " x " << wndh;
         ostrm << ", fmt " << SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
         ostrm << " bpp " << NVL(SDL_PixelFormatShortName(fmt)); //FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
@@ -956,7 +960,7 @@ private: //members
 //    }
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
-        static std::string m_templ_args(TEMPL_ARGS); //only used for debug msgs
+        static std::string m_templ_args(TEMPL_ARGS), dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
     }
 };

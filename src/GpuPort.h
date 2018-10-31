@@ -38,35 +38,37 @@ class GpuPort
 //    using PIXEL = Uint32;
 //    using UnivPadLen = cache_pad(H * sizeof(PIXEL)); //univ buf padded up to cache size (for better memory performance while rendering pixels)
 //    using H_PAD = UnivPadLen / sizeof(PIXEL); //effective univ len
-    using ROWTYPE = NODEVAL[H_PAD]; //padded out to cache row size
+//    using ROWTYPE = NODEVAL[H_PAD]; //padded out to cache row size
 //    using BUFTYPE = ROWTYPE[W];
+//    typedef ROWTYPE NODEBUFTYPE[W]; //2D W x H_PAD
+    using NODEBUFTYPE = NODEVAL[W][H_PAD]; //2D W x H_PAD
 public: //ctors/dtors
-    GpuPort(int clock, SrcLine srcline = 0): Clock(clock), FPS(clock / 3 / BPN / H ), //NUM_UNIV(W), UNIV_LEN(H), 
-//CAUTION: dcl order determines execution order, not occurrence order here!
+    GpuPort(int clock, key_t key = 0, SrcLine srcline = 0): Clock(clock), FPS(clock / 3 / BPN / H ), //NUM_UNIV(W), UNIV_LEN(H), 
+//CAUTION: dcl order determines init order, not occurrence order here!
         inout("GpuPort init/exit", SRCLINE), 
         m_txtr(SDL_AutoTexture::create(NAMED{ _.w = 3 * W; _.h = H; _.srcline = NVL(srcline, SRCLINE); })), 
 //        inout2("order check 2", SRCLINE), 
-        m_shmbuf(W, 0, NVL(srcline, SRCLINE)), 
+        m_shmbuf(1, key, NVL(srcline, SRCLINE)), 
 //        inout3("order check 3", SRCLINE),
-        nodes(m_shmbuf.ptr()), //(ROWTYPE*)m_shmbuf),
+        nodes(*m_shmbuf.ptr()), //(ROWTYPE*)m_shmbuf),
 //        inout4("order check 4", SRCLINE),
         m_srcline(NVL(srcline, SRCLINE)) //m_univlen(cache_pad(H * sizeof(pixels[0]))), m_shmbuf(W * m_univlen / sizeof(pixels[0]),
     {
 //        if (!m_txtr.) exc(RED_MSG "texture/wnd alloc failed");
-        if (!m_shmbuf.ptr()) exc(RED_MSG "pixel buf alloc failed");
+//        if (!m_shmbuf.ptr()) exc(RED_MSG "pixel buf alloc failed");
         debug(GREEN_MSG << "ctor " << *this << ", init took " << inout.restart() << " msec" << ENDCOLOR_ATLINE(m_srcline));
 //debug(CYAN_MSG "&clock %p, &fps %p, &num univ %p, &univ len %p, &inout %p, &txtr %p, &pixbits[0] %p, &shmbuf %p, shmbuf ptr %p vs %p, &nodes[0][0] %p, &inout2 %p" ENDCOLOR, 
 // &Clock, &FPS, &NUM_UNIV, &UNIV_LEN, &inout, &m_txtr, &m_pixbits[0], &m_shmbuf, m_shmbuf.ptr(), (ROWTYPE*)m_shmbuf, &nodes[0][0], &inout2);
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
     }
     virtual ~GpuPort() { debug(RED_MSG << "dtor " << *this << ", lifespan " << inout.restart() << " msec" << ENDCOLOR_ATLINE(m_srcline)); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort& that)
     {
         ostrm << "GpuPort" << my_templargs(); //TEMPL_ARGS;
-        ostrm << FMT("\n{%p: ") << &that;
+        ostrm << "{" << FMT("%p: ") << &that;
         ostrm << FMT("clock %2.1f MHz") << that.Clock / 1e6;
-        ostrm << ", " << that.NUM_UNIV << " x " << that.UNIV_LEN << " (" << (that.NUM_UNIV * that.UNIV_LEN) << ") => " << H_PAD << " (" << (W * H_PAD) << ")";
+        ostrm << ", " << W /*NUM_UNIV*/ << " x " << H /*UNIV_LEN*/ << " (" << (W * H) << ") => " << H_PAD << " (" << (W * H_PAD) << ")";
 //        ostrm << ", univ pad len " << UnivPadLen;
         ostrm << ", bits/node " << BPN << " (3x)";
         ostrm << FMT(", fps %4.3f") << that.FPS;
@@ -79,11 +81,6 @@ public: //operators
         ostrm << "}";
         return ostrm;        
     }
-private: //
-//to look at shm: ipcs -m 
-//detailde info:  ipcs -m -i <shmid>
-//to delete shm: ipcrm -M <key>
-    AutoShmary<ROWTYPE, false> m_shmbuf; //PIXEL[H_PAD] //CAUTION: must occur 
 public: //data members
     enum BlendMode: int
     {
@@ -98,13 +95,13 @@ public: //data members
     const int Clock;
     const float FPS;
 //        FPS(clock / 3 / BPN / H ), 
-    STATIC const unsigned NUM_UNIV = W, UNIV_LEN = H; //technically these can be static, but that requires dangling dcl so just make them members
-    /*BUFTYPE&*/ ROWTYPE* const& /*const*/ nodes; //CAUTION: pivoted so nodes within each univ (column) are adjacent (for better cache performance); NOTE: "const" ref needed for rvalue
+    STATIC const unsigned Width = W, Height = H; //NUM_UNIV = W, UNIV_LEN = H; //technically these can be static, but that requires dangling dcl so just make them members
+//    /*BUFTYPE&*/ ROWTYPE* const& /*const*/ nodes; //CAUTION: pivoted so nodes within each univ (column) are adjacent (for better cache performance); NOTE: "const" ref needed for rvalue
 public: //methods
 //    float fps() const { return m_clock / 3; }
     void fill(NODEVAL color = BLACK, /*TODO: BlendMode mode = None,*/ SrcLine srcline = 0)
     {
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
         InOutDebug inout("gpu port fill", SRCLINE);
 //no        VOID m_txtr.render(color, NVL(srcline, SRCLINE));
 //        auto elapsed = -elapsed_msec();
@@ -113,11 +110,11 @@ checknodes(SRCLINE);
 //        for (int x = 0; x < W; ++x)
 //            for (int y = 0; y < H; ++y) //CAUTION: leaves gaps (H_PAD vs. H)
 //                pixels[x][y] = color;
-        if (&nodes[0][W * H_PAD] != &nodes[W][0]) exc("&nodes[0][%d x %d = %d] %p != &nodes[%d][0] %p", W, H_PAD, W * H_PAD, &nodes[0][W * H_PAD], W, &nodes[W][0]);
+//        if (&nodes[0][W * H_PAD] != &nodes[W][0]) exc("&nodes[0][%d x %d = %d] %p != &nodes[%d][0] %p", W, H_PAD, W * H_PAD, &nodes[0][W * H_PAD], W, &nodes[W][0]);
         debug(BLUE_MSG << *this << ENDCOLOR);
         debug(BLUE_MSG "&nodes[0][0] = %p, &[1][0] = %p, [%d][0] = %p" ENDCOLOR, &nodes[0][0], &nodes[1][0], W, &nodes[W][0]);
         for (int i = 0; i < W * H_PAD; ++i) nodes[0][i] = color; //NOTE: fills in H..H_PAD gap as well for simplicity
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
 //        elapsed += elapsed_msec();
 //        debug(BLUE_MSG << "fill all %d x %d = %d pixels with 0x%x took %ld msec" << ENDCOLOR_ATLINE(srcline), W, H, W * H, elapsed);
     }
@@ -131,13 +128,13 @@ checknodes(SRCLINE);
 #endif
     void refresh(SrcLine srcline = 0)
     {
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
         InOutDebug inout("gpu port refresh", SRCLINE);
         debug(BLUE_MSG << *this << ENDCOLOR);
         VOID bitbang(nodes, m_pixbits, NVL(srcline, SRCLINE));
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
         VOID m_txtr.update(NAMED{ _.pixels = m_pixbits; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
-checknodes(SRCLINE);
+//checknodes(SRCLINE);
     }
 public: //static utility methods
 #if 0
@@ -164,7 +161,7 @@ public: //static utility methods
 #endif
 private: //helpers
 //PIXEL[H_PAD]* const& pixels;
-    static void bitbang(ROWTYPE* nodes, Uint32* pixbits, SrcLine srcline = 0)
+    static void bitbang(NODEBUFTYPE& nodes, Uint32* pixbits, SrcLine srcline = 0)
     {
         InOutDebug inout("gpu port bitbang", SRCLINE);
 //        auto timer = -elapsed_msec();
@@ -181,13 +178,15 @@ private: //helpers
 //        timer += elapsed_msec();
 //        debug(BLUE_MSG "bitbang %d x %d took %ld msec" << ENDCOLOR_ATLINE(srcline), W, H, timer);
     }
+#if 0
     void checknodes(SrcLine srcline = 0)
     {
-        static void* svnodes = 0;
-        if (&nodes[0][0] == svnodes) return;
+        static NODEVAL* svnodes = 0;
+        if (&nodes[0][0] == svnodes) { debug(YELLOW_MSG "nodes stable at %p" ENDCOLOR_ATLINE(srcline), &nodes[0][0]); return; }
         if (svnodes) exc_soft("nodes moved from %p to %p @%s?", svnodes, &nodes[0][0], NVL(srcline, SRCLINE));
         svnodes = &nodes[0][0];
     }
+#endif
 private: //data members
 //    Uint32* m_shmptr;
 //    int m_clock;
@@ -195,15 +194,21 @@ private: //data members
     InOutDebug inout; //put this before AutoTexture
     SDL_AutoTexture m_txtr;
     Uint32 m_pixbits[3 * W * H];
-//    AutoShmary<ROWTYPE, false> m_shmbuf; //PIXEL[H_PAD]
-//public:
-//    /*BUFTYPE&*/ ROWTYPE* const& /*const*/ nodes; //CAUTION: pivoted so nodes within each univ (column) are adjacent (for better cache performance); NOTE: "const" ref needed for rvalue
+//to look at shm: ipcs -m 
+//detailde info:  ipcs -m -i <shmid>
+//to delete shm: ipcrm -M <key>
+    AutoShmary<NODEBUFTYPE, false> m_shmbuf; //PIXEL[H_PAD] //CAUTION: must occur before nodes
+public:
+//    InOutDebug inout3; //inout4, inout2, inout3; //check init order
+//wrong!    /*BUFTYPE&*/ ROWTYPE* const& /*const*/ nodes; //CAUTION: pivoted so nodes within each univ (column) are adjacent (for better cache performance); NOTE: "const" ref needed for rvalue
+//    ROWTYPE (&nodes)[W]; //ref to array of W ROWTYPEs; CAUTION: "()" required
+    NODEBUFTYPE& nodes; //CAUTION: must come after m_shmbuf (init order)
 private:
-//    InOutDebug inout4, inout2, inout3; //check init order
+//    InOutDebug inout3; //inout4, inout2, inout3; //check init order
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
-        static std::string m_templ_args(TEMPL_ARGS); //only used for debug msgs
+        static std::string m_templ_args(TEMPL_ARGS), dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
     }
 };
@@ -231,13 +236,21 @@ private:
 //int main(int argc, const char* argv[])
 void unit_test()
 {
+    const int NUM_UNIV = 30, UNIV_LEN = 100; //24, 1111
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE, dimARGB(0.75, WHITE), dimARGB(0.25, WHITE)};
-    const int NUM_UNIV = 3, UNIV_LEN = 4; //24, 1111
 
-    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, SRCLINE);
+    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, 0, SRCLINE);
 //    Uint32* pixels = gp.Shmbuf();
 //    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it
+//    debug(CYAN_MSG "&nodes[0] %p, &nodes[0][0] = %p, sizeof gp %zu, sizeof nodes %zu" ENDCOLOR, &gp.nodes[0], &gp.nodes[0][0], sizeof(gp), sizeof(gp.nodes));
+
+    for (int x = 0; x < gp.Width /*NUM_UNIV*/; ++x)
+        for (int y = 0; y < gp.Height /*UNIV_LEN*/; ++y)
+            gp.nodes[x][y] = palette[(x + y) % SIZEOF(palette)]; //((x + c) & 1)? BLACK: palette[(y + c) % SIZEOF(palette)]; //((x + y) & 3)? BLACK: palette[c % SIZEOF(palette)];
+    gp.refresh(SRCLINE);
+    VOID SDL_Delay(10 sec);
+    return;
 
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
@@ -250,9 +263,9 @@ void unit_test()
 //    debug(BLUE_MSG << "GpuPort" << ENDCOLOR);
     for (int c;; ++c)
 //    {
-        for (int x = 0; x < gp.NUM_UNIV; ++x)
+        for (int x = 0; x < gp.Width /*NUM_UNIV*/; ++x)
 //        {
-            for (int y = 0; y < gp.UNIV_LEN; ++y)
+            for (int y = 0; y < gp.Height /*UNIV_LEN*/; ++y)
 {
                 Uint32 color = palette[c % SIZEOF(palette)]; //((x + c) & 1)? BLACK: palette[(y + c) % SIZEOF(palette)]; //((x + y) & 3)? BLACK: palette[c % SIZEOF(palette)];
 if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @%p = 0x%x...\n", timestamp().c_str(), x, y, &gp.nodes[x][y], color); fflush(stdout);
