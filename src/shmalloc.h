@@ -31,7 +31,7 @@
 #ifndef _SHMALLOC_H
 #define _SHMALLOC_H
 
-#include <cstdlib> //atexit()
+#include <cstdlib> //atexit()0.093443 msec  
 #include <sys/shm.h> //shmctl(), shmget(), shmat(), shmdt(), shmid_ds
 //TODO: convert to Posix shm api:
 //#include <sys/mman.h> //shm_*()
@@ -49,7 +49,7 @@
 #include "debugexc.h" //debug(), TEMPL_ARGS
 #include "elapsed.h" //timestamp()
 #include "srcline.h" //SrcLine, SRCLINE
-#include "str-helpers.h" //NVL()
+#include "str-helpers.h" //NVL(), plural()
 #include "ostrfmt.h" //FMT()
 
 #ifndef STATIC
@@ -237,7 +237,7 @@ private: //helper methods
     static void cleanup()
     {
         SrcLine srcline = 0; //TODO: where to get this?
-        debug(CYAN_MSG "AutoShmary: clean up %d shm ptrs" ENDCOLOR_ATLINE(srcline), all().size());
+        debug(CYAN_MSG "AutoShmary: clean up %d shm ptr%s" ENDCOLOR_ATLINE(srcline), all().size(), plural(all().size()));
         for (auto it = all().begin(); it != all().end(); ++it) shmfree(*it);
     }
 private: //data members

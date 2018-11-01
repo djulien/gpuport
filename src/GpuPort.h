@@ -75,6 +75,7 @@ public: //operators
         ostrm << ", h/w mux " << HWMUX;
         ostrm << FMT(", nodes %p") << &that.nodes[0][0]; //FMT(" pixels ") << &me.pixels;
         ostrm << FMT("..%p") << &that.nodes[W][0];
+        ostrm << "=+" << &that.nodes[W][0] - &that.nodes[0][0];
         ostrm << ", shmbuf " << that.m_shmbuf;
 //        ostrm << ", pixels " << that.pixels;
 //        ostrm << ", pixel buflen " << me.pixels.
@@ -128,6 +129,7 @@ public: //methods
 #endif
     void refresh(SrcLine srcline = 0)
     {
+
 //checknodes(SRCLINE);
         InOutDebug inout("gpu port refresh", SRCLINE);
         debug(BLUE_MSG << *this << ENDCOLOR);
@@ -135,6 +137,10 @@ public: //methods
 //checknodes(SRCLINE);
         VOID m_txtr.update(NAMED{ _.pixels = m_pixbits; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
 //checknodes(SRCLINE);
+#if 0 //TODO
+        render_timestamp = times.previous; //now (presentation time)
+        ++numfr;
+#endif
     }
 public: //static utility methods
 #if 0
@@ -245,11 +251,15 @@ void unit_test()
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it
 //    debug(CYAN_MSG "&nodes[0] %p, &nodes[0][0] = %p, sizeof gp %zu, sizeof nodes %zu" ENDCOLOR, &gp.nodes[0], &gp.nodes[0][0], sizeof(gp), sizeof(gp.nodes));
 
+    debug(BLUE_MSG << timestamp() << "render" << ENDCOLOR);
     for (int x = 0; x < gp.Width /*NUM_UNIV*/; ++x)
         for (int y = 0; y < gp.Height /*UNIV_LEN*/; ++y)
             gp.nodes[x][y] = palette[(x + y) % SIZEOF(palette)]; //((x + c) & 1)? BLACK: palette[(y + c) % SIZEOF(palette)]; //((x + y) & 3)? BLACK: palette[c % SIZEOF(palette)];
+    debug(BLUE_MSG << timestamp() << "refresh" << ENDCOLOR);
     gp.refresh(SRCLINE);
+    debug(BLUE_MSG << timestamp() << "wait" << ENDCOLOR);
     VOID SDL_Delay(10 sec);
+    debug(BLUE_MSG << timestamp() << "quit" << ENDCOLOR);
     return;
 
     for (int c = 0; c < SIZEOF(palette); ++c)

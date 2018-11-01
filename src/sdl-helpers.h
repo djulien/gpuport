@@ -203,7 +203,7 @@ private: //data members
 #define DONT_CARE  0
 #define NO_RECT  NULL
 #define NO_PARENT  NULL
-//#define FIRST_MATCH  -1
+#define FIRST_MATCH  -1
 //#define THIS_THREAD  NULL
 //#define UNDEF_EVTID  0
 
@@ -242,7 +242,7 @@ inline bool SDL_OK(void* ptr) { return SDL_OK(ptr? SDL_Success: SDL_GenericError
 
 //timing stats:
 inline uint64_t now() { return SDL_Ticks(); }
-inline double elapsed(uint64_t started, int scaled = 1) { return (double)(now() - started) * scaled / SDL_TickFreq(); } //Freq = #ticks/second
+inline double elapsed(uint64_t started, int scaled = 1) { started = now() - started(); return scaled? (double)started * scaled / SDL_TickFreq(): started; } //Freq = #ticks/second
 //inline double elapsed_usec(uint64_t started)
 //{
 ////    static uint64_t tick_per_usec = SDL_TickFreq() / 1000000;
@@ -390,23 +390,24 @@ const std::map<Uint32, const char*> ColorNames =
 //readable names (mainly for debug msgs):
 const std::map<Uint32, const char*> SDL_SubSystemNames =
 {
-    {SDL_INIT_TIMER, "Timer"},
-    {SDL_INIT_AUDIO, "Audio"},
-    {SDL_INIT_VIDEO, "Video"},
-    {SDL_INIT_JOYSTICK, "Joystick"},
-    {SDL_INIT_HAPTIC, "Haptic"}, //force feedback subsystem
-    {SDL_INIT_GAMECONTROLLER, "Game Controller"},
-    {SDL_INIT_EVENTS, "Events"},
-    {SDL_INIT_EVERYTHING, "all"},
+    {SDL_INIT_TIMER, "Timer"}, //0x0001
+    {SDL_INIT_AUDIO, "Audio"}, //0x0010
+    {SDL_INIT_VIDEO, "Video"}, //0x0020
+    {SDL_INIT_JOYSTICK, "Joystick"}, //0x0200
+    {SDL_INIT_HAPTIC, "Haptic"}, //0x1000; force feedback subsystem
+    {SDL_INIT_GAMECONTROLLER, "Game Controller"}, //0x2000
+    {SDL_INIT_EVENTS, "Events"}, //0x4000
+    {SDL_INIT_NOPARACHUTE, "NoParachute"}, //0x100000
+    {SDL_INIT_EVERYTHING, "all"}, //0x0x7231
     {~(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS | SDL_INIT_EVERYTHING), "????"},
 };
 
 const std::map<Uint32, const char*> SDL_RendererFlagNames =
 {
-    {SDL_RENDERER_SOFTWARE, "SW"},
-    {SDL_RENDERER_ACCELERATED, "ACCEL"},
-    {SDL_RENDERER_PRESENTVSYNC, "VSYNC"},
-    {SDL_RENDERER_TARGETTEXTURE, "TOTXR"},
+    {SDL_RENDERER_SOFTWARE, "SW"}, //0x01
+    {SDL_RENDERER_ACCELERATED, "ACCEL"}, //0x02
+    {SDL_RENDERER_PRESENTVSYNC, "VSYNC"}, //0x04
+    {SDL_RENDERER_TARGETTEXTURE, "TOTXR"}, //0x08
     {~(SDL_RENDERER_SOFTWARE | SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE), "????"},
 };
 
@@ -521,7 +522,7 @@ private: //helpers
         SDL_AutoLib* dummy = 0;
         debug_level(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
 //std::thread::hardware_concurrency()
-        debug_level(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi (likely)? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
+        debug_level(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
         debug_level(12, BLUE_MSG "%d video driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers(), plural(SDL_GetNumVideoDrivers()));
 //TMI?
         for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
@@ -553,7 +554,7 @@ private: //helpers
     {
         SrcLine srcline = 0; //TODO: where to get this?
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
-        debug(CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(srcline), inited, NVL(unmap(SDL_SubSystemNames, inited)));
+        debug(CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(srcline), inited, NVL(unmap(SDL_SubSystemNames, inited), "bits"));
         VOID SDL_Quit(); //all inited subsystems
     }
 #if 0
@@ -664,8 +665,8 @@ public: //factory methods:
 //            return SDL_AutoWindow(SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN), NVL(srcline, SRCLINE)); //std::forward<ARGS>(args) ...), //no-perfect fwd
 //        else
 //            return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
-        wnd = SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
-        if (SDL_OK(wnd) && WantRenderer) rndr = SDL_CreateRenderer(wnd, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+        wnd = SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN/*_DESKTOP*/ | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
+        if (SDL_OK(wnd) && WantRenderer) rndr = SDL_CreateRenderer(wnd, FIRST_MATCH, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
         return SDL_AutoWindow(wnd, NVL(srcline, SRCLINE));
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
@@ -800,7 +801,7 @@ public: //methods; mostly just wrappers for static utility methods
 //printf("reset here4\n"); fflush(stdout);
     }
     SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), NVL(srcline, SRCLINE)); }
-    void render(Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(get(), color, srcline); }
+    void clear(Uint32 color = BLACK, SrcLine srcline = 0) { VOID clear(get(), color, srcline); }
 //just use Named args rather than all these overloads:
 //    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, NVL(srcline, SRCLINE)); }
 //    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, NVL(srcline, SRCLINE)); }
@@ -850,12 +851,15 @@ public: //static utility methods
     static void virtsize(SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { VOID virtsize(renderer(wnd), w, h, srcline); }
     static void virtsize(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0)
     {
+//note about aspect ratio: https://forums.libsdl.org/viewtopic.php?p=38664
 //        SDL_Renderer* rndr = renderer(wnd); //get());
         debug(BLUE_MSG "set wnd render logical size to %d x %d" ENDCOLOR_ATLINE(srcline), w, h);
+//??        if (!SDL_OK(SDL_RenderSetIntegerScale(rndr, true))) SDL_exc("set render int scale", srcline);
         if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
     }
-    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
-    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
+//NOTE: leaves in-memory copy stale, so not too useful
+    static void clear(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID clear(renderer(wnd), color, srcline); }
+    static void clear(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
     {
 //printf("render color here1\n"); fflush(stdout);
 //        SDL_Renderer* rndr = renderer(wnd);
@@ -869,11 +873,19 @@ public: //static utility methods
     static void render(SDL_Window* wnd, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0) { VOID render(renderer(wnd), txtr, src, dest, clearfb, srcline); }
     static void render(SDL_Renderer* rndr, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
     {
+#if 0
+        uint64_t delta;
+        delta = now() - times.previous; times.previous += delta; times.caller += delta;
+        work();
+        delta = now() - times.previous; times.previous += delta; times.encode += delta;
+#endif
 //        SDL_Renderer* rndr = renderer(wnd);
+#if 1 //TODO: is this needed if entire buf is copied?
         if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear", srcline); //clear previous framebuffer
+#endif
 //        debug(BLUE_MSG "copy %s pixels from texture %p to %s pixels in window %p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
-        if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
-        VOID SDL_RenderPresent(rndr); //put new texture on screen
+        if (!SDL_OK(SDL_RenderCopy(rndr, txtr, src, dest))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
+        VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
     }
 //    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, NVL(srcline, SRCLINE)); }
     static void check(SDL_Window* wnd, int want_w = 0, int want_h = 0, Uint32 want_fmt = 0, SrcLine srcline = 0)
