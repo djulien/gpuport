@@ -37,6 +37,17 @@ inline const char* plural(int count, const char* suffix = "s", const char* singu
 }
 
 
+//skip over first part of string if it matches another:
+inline const char* skip_prefix(const char* str, const char* prefix)
+{
+//    size_t preflen = strlen(prefix);
+//    return (str && !strncmp(str, prefix, preflen))? str + preflen: str;
+    if (str)
+        while (*str == *prefix++) ++str;
+    return str;
+}
+
+
 //insert commas into a numeric string (for readability):
 //CAUTION: uses static data to preserve data after return; semaphore arbitrates a pool of 12 ret values
 const char* commas(int64_t val)

@@ -31,7 +31,9 @@
 
 //use template params for W, H to allow type-safe 2D array access:
 //NOTE: row pitch is rounded up to a multiple of cache size so there could be gaps
-template<unsigned W = 24, unsigned H = 1111, typename NODEVAL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
+//always use full screen height; clock determined by w / BPN
+//TODO: add vgroup
+template</*unsigned W = 24, unsigned H = 1111,*/ typename NODEVAL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 //template<unsigned W = 24, unsigned FPS = 30, typename PIXEL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PAD = cache_pad(H * sizeof(PIXEL)) / sizeof(PIXEL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 class GpuPort
 {
@@ -46,9 +48,11 @@ public: //ctors/dtors
     GpuPort(int clock, key_t key = 0, SrcLine srcline = 0): Clock(clock), FPS(clock / 3 / BPN / H ), //NUM_UNIV(W), UNIV_LEN(H), 
 //CAUTION: dcl order determines init order, not occurrence order here!
         inout("GpuPort init/exit", SRCLINE), 
-        m_txtr(SDL_AutoTexture::create(NAMED{ _.w = 3 * W; _.h = H; _.srcline = NVL(srcline, SRCLINE); })), 
+//TODO: store > 1 frame in texture and use rect to select?
+        m_txtr(SDL_AutoTexture::create(NAMED{ _.w = 3 * W; /*_.h = H;*/ _.srcline = NVL(srcline, SRCLINE); })), //always use as-is
 //        inout2("order check 2", SRCLINE), 
         m_shmbuf(1, key, NVL(srcline, SRCLINE)), 
+        Hclip({0, 0, 3 * W - 1, H}), //CRITICAL: clip last col (1/3 pixel) so it overlaps with H-sync
 //        inout3("order check 3", SRCLINE),
         nodes(*m_shmbuf.ptr()), //(ROWTYPE*)m_shmbuf),
 //        inout4("order check 4", SRCLINE),
@@ -198,6 +202,7 @@ private: //data members
 //    int m_clock;
 //    const size_t m_univlen; //univ buf padded up to cache size (for better memory performance while rendering pixels)
     InOutDebug inout; //put this before AutoTexture
+    SDL_Rect Hclip;
     SDL_AutoTexture m_txtr;
     Uint32 m_pixbits[3 * W * H];
 //to look at shm: ipcs -m 

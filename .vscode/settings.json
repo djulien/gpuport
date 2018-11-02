@@ -45,6 +45,7 @@
         "codecvt": "cpp",
         "optional": "cpp",
         "future": "cpp",
-        "iomanip": "cpp"
+        "iomanip": "cpp",
+        "*.ipp": "cpp"
     }
 }
