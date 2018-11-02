@@ -196,6 +196,10 @@ private: //data members
 
 
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
+//#ifndef NO_WANT_GL
+//#include <SDL_opengl.h>
+//#include <GL/gl.h>
+//#endif
 #include <SDL_endian.h> //SDL_BYTE_ORDER
 
 //friendlier names for SDL special param values:
@@ -242,12 +246,37 @@ inline bool SDL_OK(void* ptr) { return SDL_OK(ptr? SDL_Success: SDL_GenericError
 
 //timing stats:
 inline uint64_t now() { return SDL_Ticks(); }
-inline double elapsed(uint64_t started, int scaled = 1) { started = now() - started(); return scaled? (double)started * scaled / SDL_TickFreq(): started; } //Freq = #ticks/second
+inline double elapsed(uint64_t started, int scaled = 1) { started = now() - started; return scaled? (double)started * scaled / SDL_TickFreq(): started; } //Freq = #ticks/second
 //inline double elapsed_usec(uint64_t started)
 //{
 ////    static uint64_t tick_per_usec = SDL_TickFreq() / 1000000;
 //    return (double)(now() - started) * 1000000 / SDL_TickFreq(); //Freq = #ticks/second
 //}
+
+
+//C++ note on struct vs. typedef: https://stackoverflow.com/questions/612328/difference-between-struct-and-typedef-struct-in-c
+typedef struct SDL_EnhDisplayMode: public SDL_DisplayMode { int num_disp; } SDL_EnhDisplayMode;
+
+//get current (prior to SDL) screen config:
+const SDL_EnhDisplayMode* ScreenInfo(SrcLine srcline = 0)
+{
+    const int FIRST_DISP = 0;
+    static SDL_EnhDisplayMode dm;
+    if (!SDL_OK(SDL_GetDesktopDisplayMode(FIRST_DISP, &dm))) exc("get desktop display mode");
+    if (!SDL_OK(dm.num_disp = SDL_GetNumVideoDisplays())) exc("get #displays");
+//    debug(BLUE_MSG "screen info: %d x %d, refresh %d Hz, fmt %d bpp %s" ENDCOLOR_ATLINE(srcline), dm.w, dm.h, dm.refresh_rate, SDL_BITSPERPIXEL(dm.format), NVL(SDL_PixelFormatShortName(fmt)));
+    return &dm;
+}
+std::ostream& operator<<(std::ostream& ostrm, const SDL_EnhDisplayMode& that)
+{
+    ostrm << "SDL_DisplayMode";
+    ostrm << "{" << that.num_disp << " disp" << plural(that.num_disp) << ", ";
+    ostrm << that.w << " x " << that.h << ", ";
+    ostrm << that.refresh_rate << " Hz, ";
+    ostrm << "fmt " << SDL_BITSPERPIXEL(that.format) << " bpp " << NVL(SDL_PixelFormatShortName(that.format));
+    ostrm << "}";
+    return ostrm;
+}
 
 
 //fwd refs:
@@ -666,8 +695,17 @@ public: //factory methods:
 //        else
 //            return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
         wnd = SDL_CreateWindow(title? title: "GpuPort", x? x: SDL_WINDOWPOS_UNDEFINED, y? y: SDL_WINDOWPOS_UNDEFINED, w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN/*_DESKTOP*/ | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
-        if (SDL_OK(wnd) && WantRenderer) rndr = SDL_CreateRenderer(wnd, FIRST_MATCH, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+        if (SDL_OK(wnd) && WantRenderer)
+        {
+            rndr = SDL_CreateRenderer(wnd, FIRST_MATCH, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+            if (!SDL_OK(rndr)) SDL_exc("cre rndr");
+//to avoid letter boxing during scaling: 
+//https://www.gamedev.net/articles/programming/engines-and-middleware/stretching-your-game-to-fit-the-screen-without-letterboxing-sdl2-r3547/
+            SDL_Rect rect = {0, 0, 10, 10};
+            if (!SDL_OK(SDL_RenderSetViewport(rndr, &rect))) SDL_exc("set rndr vwpt");
+        }
         return SDL_AutoWindow(wnd, NVL(srcline, SRCLINE));
+//!supported?        if (flags & SDL_WINDOW_OPENGL) //create GL context
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
 //    static SDL_AutoWindow/*&*/ fullscreen(SrcLine srcline = 0) { return fullscreen(0, NVL(srcline, SRCLINE)); }
@@ -806,7 +844,7 @@ public: //methods; mostly just wrappers for static utility methods
 //    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, NVL(srcline, SRCLINE)); }
 //    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, NVL(srcline, SRCLINE)); }
 //    void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
-    void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0) { VOID render(get(), txtr, src, dest, clearfb, srcline); }
+    void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0) { VOID render(get(), txtr, src, dest, /*clearfb,*/ srcline); }
 //    void update(void* pixels, SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
 //    {
 //TODO:
@@ -834,7 +872,7 @@ public: //named arg variants
             SDL_Texture* txtr; //no default
             const SDL_Rect* src = NO_RECT;
             const SDL_Rect* dest = NO_RECT;
-            bool clearfb = true;
+//            bool clearfb = true;
 //            Uint32 color = BLACK;
             SrcLine srcline = 0;
         };
@@ -846,7 +884,7 @@ public: //named arg variants
     }
 private: //named arg variants
     static auto create(const CreateParams& params, Unpacked) { return create(params.title, params.x, params.y, params.w, params.h, params.flags, params.srcline); }
-    auto render(const RenderParams& params, Unpacked) { VOID render(params.txtr, params.src, params.dest, params.clearfb, params.srcline); }
+    auto render(const RenderParams& params, Unpacked) { VOID render(params.txtr, params.src, params.dest, /*params.clearfb,*/ params.srcline); }
 public: //static utility methods
     static void virtsize(SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { VOID virtsize(renderer(wnd), w, h, srcline); }
     static void virtsize(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0)
@@ -870,8 +908,8 @@ public: //static utility methods
         VOID SDL_RenderPresent(rndr); //flips texture to screen
 //printf("hello3 %p\n", rndr); fflush(stdout);
     }
-    static void render(SDL_Window* wnd, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0) { VOID render(renderer(wnd), txtr, src, dest, clearfb, srcline); }
-    static void render(SDL_Renderer* rndr, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
+    static void render(SDL_Window* wnd, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0) { VOID render(renderer(wnd), txtr, src, dest, /*clearfb,*/ srcline); }
+    static void render(SDL_Renderer* rndr, SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0)
     {
 #if 0
         uint64_t delta;
@@ -879,6 +917,7 @@ public: //static utility methods
         work();
         delta = now() - times.previous; times.previous += delta; times.encode += delta;
 #endif
+        bool clearfb = false;
 //        SDL_Renderer* rndr = renderer(wnd);
 #if 1 //TODO: is this needed if entire buf is copied?
         if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear", srcline); //clear previous framebuffer
@@ -1343,9 +1382,9 @@ public: //methods
     {
         if (!SDL_OK(SDL_SetTextureColorMod(get(), r, g, b))) SDL_exc("set texture color mod", srcline);
     }
-    void render(Uint32 color = BLACK, SrcLine srcline = 0) //{ VOID render(get(), color, srcline); }
+    void clear(Uint32 color = BLACK, SrcLine srcline = 0) //{ VOID render(get(), color, srcline); }
     {
-        VOID SDL_AutoWindow<>::render(m_wnd, color, NVL(srcline, SRCLINE));
+        VOID SDL_AutoWindow<>::clear(m_wnd, color, NVL(srcline, SRCLINE));
     }
 //use Named args rather than a bunch of overloads:
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
@@ -1354,11 +1393,11 @@ public: //methods
     {
 //        if (!pixels) pixels = m_shmbuf;
         if (!pitch) pitch = cached.w * sizeof(pixels[0]); //Uint32);
-        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
+//        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
         if (pitch != cached.w * sizeof(pixels[0])) exc(RED_MSG "pitch mismatch: expected %d, got d" ENDCOLOR_ATLINE(srcline), cached.w * sizeof(pixels[0]), pitch);
         if (!SDL_OK(SDL_UpdateTexture(get(), rect, pixels, pitch))) SDL_exc("update texture", srcline);
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
-        VOID SDL_AutoWindow<>::render(m_wnd, get(), NO_RECT, NO_RECT, false, SRCLINE); //put new texture on screen
+        VOID SDL_AutoWindow<>::render(m_wnd, get(), NO_RECT, NO_RECT, /*false,*/ SRCLINE); //put new texture on screen
     }
 //    std::enable_if<WantPixelShmbuf_copy, void> update(const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0) //SFINAE
 //    {
@@ -1470,6 +1509,13 @@ private: //member vars
     SDL_AutoWindow<true> m_wnd;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
+
+
+////////////////////////////////////////////////////////////////////////////////
+////
+/// OpenGL:
+//
+
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1689,24 +1735,15 @@ void sdl_api_test()
 //using "fully rendered frames" style
 void fullscreen_test()
 {
-    debug(PINK_MSG << "fullscreen_test start" << ENDCOLOR);
-//    SDL_AutoLib sdllib(SDL_INIT_VIDEO, SRCLINE);
-//give me the whole screen and don't change the resolution:
     const int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
-//    /*SDL_AutoWindow<true>*/ auto wnd(SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
-//    auto wnd(SDL_AutoWindow<true>::create(0, 0, 0, 0, 0, 0, SRCLINE));
-//    wnd.texture(W, H, SRCLINE);
+    debug(PINK_MSG << "fullscreen_%d x %d test start" << ENDCOLOR, W, H);
     /*SDL_AutoTexture<>*/ auto txtr(SDL_AutoTexture/*<true>*/::create(NAMED{ /*_.wnd = wnd;*/ _.w = W; _.h = H; SRCLINE; }));
-//    auto txtr(SDL_AutoTexture<>::create(wnd, W, H, 0, 0, SRCLINE));
-    VOID txtr.render(mixARGB(1, 2, BLACK, WHITE), SRCLINE);
-//    Uint32* myPixels = malloc
-    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
-//    memset(myPixels, 0, sizeof(myPixels));
-//    for (int x = 0; x < W; ++x)
-//        for (int y = 0; y < H; ++y)
-//            myPixels[y][x] = BLACK;
+    VOID txtr.clear(mixARGB(1, 2, BLACK, WHITE), SRCLINE);
+    VOID SDL_Delay(2 sec);
+
+    Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
 #if 0 //check if 1D index can be used instead of (X,Y); useful for fill() loops
-    myPixels[0][W] = RED;rcLine srcline = 0)
+    myPixels[0][W] = RED;
     myPixels[0][2 * W] = GREEN;
     myPixels[0][3 * W] = BLUE;
     debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
@@ -1715,40 +1752,98 @@ void fullscreen_test()
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
-        VOID SDL_Delay(2 sec);
         for (int i = 0; i < W * H; ++i) myPixels[0][i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
-//TODO: combine
-        VOID txtr.update(NAMED{ _.pixels = (Uint32*)myPixels; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
-//        VOID wnd.render(txtr.get(), false, SRCLINE); //put new texture on screen
+        debug(BLUE_MSG "0x%x => all pixels" ENDCOLOR, myPixels[0][0]);
+        VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        VOID SDL_Delay(2 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
 
 //pixel test:
     for (int i = 0; i < W * H; ++i) myPixels[0][i] = BLACK;
-    for (int x = 0 + std::max(W-4, 0); x < W; ++x)
-        for (int y = 0 + std::max(H-4, 0); y < H; ++y)
+    for (int y = 0 + std::max(H-5, 0), c = 0; y < H; ++y) //fill in GPU xfr order (for debug/test only)
+        for (int x = 0 + std::max(W-5, 0); x < W; ++x, ++c)
         {
+            myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
+            debug(BLUE_MSG "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
+            VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
             VOID SDL_Delay(0.5 sec);
-            myPixels[y][x] = palette[(x + y) % SIZEOF(palette)];
-//TODO: combine
-            VOID txtr.update(NAMED{ _.pixels = (Uint32*)myPixels; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
-//            VOID wnd.render(txtr, false, SRCLINE); //put new texture on screen
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
+}
+
+
+//from https://gist.github.com/jordandee/94b187bcc51df9528a2f
+//no-based on example code at https://wiki.libsdl.org/MigrationGuide
+//no-and https://wiki.libsdl.org/SDL_GL_SwapWindow?highlight=%28%5CbCategoryAPI%5Cb%29%7C%28SDLFunctionTemplate%29
+//no-using "OpenGL" style
+void gl_test()
+{
+#if 0
+    SDL_AutoLib sdl(SDL_INIT_VIDEO, SRCLINE);
+    SDL_Window* wnd = SDL_CreateWindow("SDL2/OpenGL Demo", 30, 30, 640, 480, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE);
+    if (!SDL_OK(wnd)) SDL_exc("cre wnd");
+    SDL_GLContext glctx = SDL_GL_CreateContext(wnd);
+    if (!SDL_OK(glctx)) SDL_exc("cre gl ctx");
+    const int VSYNC = 1; //for updates synchronized with the vertical retrace
+    if !(SDL_OK(SDL_GL_SetSwapInterval(VSYNC))) SDL_exc("set swap intv"); //makes our buffer swap syncronized with the monitor's vertical refresh
+//??    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP); //SDL_WINDOW_FULLSCREEN ?  to preserve GL context when toggle windowed/fullscreen and back with OpenGL
+
+/* Clear context */
+//NOTE: default = double-buffered OpenGL contexts
+//    glClearColor(0, 0, 0, 1);
+//    glClear(GL_COLOR_BUFFER_BIT);
+/* <Extra drawing fuctions here> */ 
+
+/* Swap our buffer to display the current contents of buffer on screen */ 
+//    SDL_GL_SwapWindow(window);
+
+    for (;;)
+    {
+        static bool FullScreen = false;
+        static Uint32 WindowFlags = SDL_WINDOW_OPENGL;
+        bool running = true;
+        SDL_Event evt;
+        while (SDL_PollEvent(&evt))
+        {
+            if (evt.type == SDL_QUIT) running = false;
+            else if (evt.type == SDL_KEYDOWN)
+                switch (evt.key.keysym.sym)
+                {
+                    case SDLK_ESCAPE: running = false; break;
+                    case 'f':
+                        if (FullScreen = !FullScreen)
+                            SDL_SetWindowFullscreen(wnd, WindowFlags | SDL_WINDOW_FULLSCREEN_DESKTOP);
+                        else
+                            SDL_SetWindowFullscreen(wnd, WindowFlags);
+                        break;
+                    default: break;
+                }
+        }
+        glViewport(0, 0, WinWidth, WinHeight);
+        glClearColor(1.f, 0.f, 1.f, 0.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        SDL_GL_SwapWindow(wnd);
+        if (!running) break;
+    }
+#endif
 }
 
 
 //int main(int argc, const char* argv[])
 void unit_test()
 {
-    debug(BLUE_MSG << FMT("75%% 256 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
-    debug(BLUE_MSG << FMT("75%% white 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
+    debug(BLUE_MSG << FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
+    debug(BLUE_MSG << FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
+    debug(BLUE_MSG << *ScreenInfo(SRCLINE) << ENDCOLOR);
 
     lib_test();
 //    surface_test();
 //    window_test();
 //    sdl_api_test();
     fullscreen_test();
+    gl_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>
     debug(BLUE_MSG << "finish" << ENDCOLOR);

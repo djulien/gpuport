@@ -43,6 +43,7 @@ bool isRPi()
 }
 
 
+#if 0 //obsolete; just use SDL for this
 typedef struct WH { uint16_t w, h; } WH; //pack width, height into single word for easy return from functions
 
 //get screen width, height:
@@ -54,7 +55,7 @@ WH ScreenInfo()
 //NOTE: mutex not needed here, but std::atomic complains about deleted function
 //main thread will call first, so race conditions won't occur (benign anyway)
 //    static std::atomic<int> w = 0, h = {0};
-    static std::atomic<WH> wh = {0};
+    static std::atomic<WH> wh(0, 0);
 //    static std::mutex protect;
 //    std::lock_guard<std::mutex> lock(protect); //not really needed (low freq api), but just in case
 
@@ -96,6 +97,7 @@ WH ScreenInfo()
 #endif
     return wh;
 }
+#endif
 
 
 #endif //ndef _RPI_HELPERS_H
@@ -118,8 +120,6 @@ WH ScreenInfo()
 void unit_test()
 {
     debug(CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
-    WH wh = GetScreenConfig();
-    debug(BLUE_MSG "screen %d x %d" ENDCOLOR, wh.w, wh.h);
 //    return 0;
 }
 

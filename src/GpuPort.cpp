@@ -38,7 +38,28 @@
 //1d. upgrade node-gyp >= 3.6.2
 //     [sudo] npm explore npm -g -- npm install node-gyp@latest
 //3. config:
-//3a. edit /boot/config.txt
+//3a. edit /boot/config.txt, vdi overlay + screen res, disable_overscan=1 ?
+#if 0
+overscan_left=24
+overscan_right=24
+Overscan_top=10
+Overscan_bottom=24
+
+Framebuffer_width=480
+Framebuffer_height=320
+
+Sdtv_mode=2
+Sdtv_aspect=2
+
+resolution 82   1920x1080   60Hz    1080p
+
+hdmi_ignore_edid=0xa5000080
+hdmi_force_hotplug=1
+hdmi_boost=7
+hdmi_group=2
+hdmi_mode=82
+hdmi_drive=1
+#endif
 //3b. give RPi GPU 256 MB RAM (optional)
 
 

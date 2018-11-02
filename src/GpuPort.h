@@ -26,7 +26,7 @@
 /// High-level interface to GpuPort:
 //
 
-#define MHz  * 1e6
+#define MHz  *1e6
 
 
 //use template params for W, H to allow type-safe 2D array access:

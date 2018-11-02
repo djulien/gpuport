@@ -17,7 +17,7 @@ echo -e "${PINK}Unit testing '${TOTEST}' ...${ENDCOLOR}"
 OPT=3  #3 = max; 0 = none
 #CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
 CFLAGS="`sdl2-config --cflags` -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14 -x c++"
-CLIBS="`sdl2-config --libs`"
+CLIBS="`sdl2-config --libs`" #-lGL
 BIN="${BASH_SOURCE%.*}"
 rm $BIN 2> /dev/null
 set -x
