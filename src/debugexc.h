@@ -93,7 +93,7 @@ public: //operators
 
 
 //put desc/dump of object to debug:
-#define inspect_1ARG(thing)  inspect_2ARGS(thing, SRCLINE)
+#define inspect_1ARG(thing)  inspect_2ARGS(thing, 0)
 #define inspect_2ARGS(thing, srcline)  inspect_3ARGS(12, thing, srcline)
 #define inspect_3ARGS(level, thing, srcline)  debug_level(level, BLUE_MSG << thing << ENDCOLOR_ATLINE(srcline))
 #define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)

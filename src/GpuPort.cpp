@@ -23,7 +23,7 @@
 //1. Dependencies:
 //1a. install nvm
 //1b. install node v10.12.0  #or later; older versions might work; ymmv
-//1c. install git client
+//1c. install github client
 //1d. install SDL2 >=2.0.8 from libsdl.org; install from source recommended (repo versions tend to be older)
 //2. Create parent project
 //2a. create a folder + cd into it
@@ -34,6 +34,8 @@
 //2b. cd this folder
 //2c. npm install
 //2d. npm test  #dev mode test, optional
+
+
 
 //1d. upgrade node-gyp >= 3.6.2
 //     [sudo] npm explore npm -g -- npm install node-gyp@latest
@@ -88,7 +90,7 @@ hdmi_drive=1
  #pragma message("CAUTION: this file probably needs c++11 to compile correctly")
 #endif
 
-#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
+//#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
 
 //#define rdiv(n, d)  int(((n) + ((d) >> 1)) / (d))
 //#define divup(n, d)  int(((n) + (d) - 1) / (d))
