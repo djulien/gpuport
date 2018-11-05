@@ -825,12 +825,17 @@ private: //helpers
     static void first_time(/*const SDL_Lib* dummy,*/ SrcLine srcline = 0)
     {
         atexit(cleanup); //SDL_Quit); //defer cleanup in case caller wants more SDL later
+        TMI(srcline);
+    }
+//too much info:
+    static void TMI(SrcLine srcline = 0)
+    {
 //        SDL_AutoLib* dummy = 0;
 //        debug_level(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
 //std::thread::hardware_concurrency()
         SDL_version ver;
         VOID SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
-        debug_level(12, BLUE_MSG "SDL version %d.%d.%d, platform '%s', #cores %d, tick freq " << SDL_TickFreq() << ", ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, NVL(SDL_GetPlatform()), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+        debug_level(12, BLUE_MSG "SDL version %d.%d.%d, platform '%s', #cores %d, tick freq %s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, NVL(SDL_GetPlatform()), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_TickFreq()), commas(SDL_GetSystemRAM()), isRPi());
 //        debug_level(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
 //TMI?
         debug_level(12, BLUE_MSG "%d video display%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDisplays(), plural(SDL_GetNumVideoDisplays()));
