@@ -13,10 +13,16 @@
 #include <atomic> //std::atomic. std::memory_order
 #include <sys/stat.h> //struct stat
 #include <stdint.h> //uint*_t
+#include <ostream> //std::ostream
 
 #include "debugexc.h" //debug()
 #include "srcline.h" //SrcLine, SRCLINE
 #include "ostrfmt.h" //FMT()
+
+
+#ifndef STATIC
+ #define STATIC //dummy keyword for readability
+#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -63,8 +69,11 @@ bool isRPi()
 //vcgencmd version
 //vcgencmd hdmi_timings  #https://www.raspberrypi.org/documentation/configuration/config-txt/video.md
 
-typedef struct ScreenConfig
+//central timing parameters:
+//xres + yres (including front porch + sync + back porch) and pixel clock determine all other timing
+/*typedef*/ struct ScreenConfig
 {
+    int screen = -1; //which screen (if multiple monitors)
 //    double rowtime; //= (double)scfg->mode_line.htotal / scfg->dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
 //    double frametime; //= (double)scfg->mode_line.htotal * scfg->mode_line.vtotal / scfg->dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
 //    int xres; //retval->Set(JS_STR(iso, "xres"), JS_INT(iso, scfg->mode_line.hdisplay)); //vinfo.xres));
@@ -78,11 +87,35 @@ typedef struct ScreenConfig
 //    float rowtime_usec; //retval->Set(JS_STR(iso, "rowtime_usec"), JS_FLOAT(iso, 1000000 * rowtime));
 //    float frametime_msec; //retval->Set(JS_STR(iso, "frametime_msec"), JS_FLOAT(iso, 1000 * frametime));
 //    float fps; //retval->Set(JS_STR(iso, "fps"), JS_FLOAT(iso, 1 / frametime));
-    int hcount[4]; //hdisplay + front porch + hsync + back porch = htotal
-    int vcount[4]; //vdisplay + front porch + vsync + back porch = vtotal
-    int aspect_ratio;
-    int frame_rate;
-} ScreenConfig;
+    int hdisplay, hlead, hsync, htrail, htotal; //hcount[4]; //hdisplay + front porch + hsync + back porch = htotal
+    int vdisplay, vlead, vsync, vtrail, vtotal; //vcount[4]; //vdisplay + front porch + vsync + back porch = vtotal
+    int aspect_ratio; //configured, not calculated
+    int frame_rate; //configured, not calculated
+//calculated fields:
+    double aspect() const { return (double)htotal / vtotal; }
+    double rowtime() const { return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
+    double frametime() const { return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    double fps() const { return (double)1 / frametime(); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+//operators:
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that)
+    {
+//    std::ostringstream ss;
+//    if (!rect) ss << "all";
+//    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
+//    return ss.str();
+//    ostrm << "SDL_Rect";
+        ostrm << "{screen# " << that.screen;
+        ostrm << ", " << (that.dot_clock / 1000) << " Mhz";
+        ostrm << ", hres " << that.hdisplay << " + " << that.hlead << "+" << that.hsync << "+" << that.htrail << " = " << that.htotal;
+        ostrm << ", vres " << that.vdisplay << " + " << that.vlead << "+" << that.vsync << "+" << that.vtrail << " = " << that.vtotal;
+        ostrm << ", aspect " << that.aspect_ratio << FMT(" (config) %4.3f (actual)") << that.aspect();
+        ostrm << FMT(", row %4.3f usec") << (that.rowtime() * 1e6);
+        ostrm << FMT(", frame %4.3f msec") << (that.frametime() * 1e3);
+        ostrm << ", fps " << that.frame_rate << FMT(" (config) %4.3f (actual)") << that.fps();
+        ostrm << "}";
+        return ostrm;
+    }
+}; //ScreenConfig;
 
 
 #ifdef RPI_NO_X
@@ -111,15 +144,16 @@ typedef struct ScreenConfig
  } ScreenConfig;
 #endif
 
- bool read_config(ScreenConfig* cfg, SrcLine srcline = 0)
+ bool read_config(int which, ScreenConfig* cfg, SrcLine srcline = 0)
  {
+//    cfg->screen = -1;
+    if (which) { exc_soft(RED_MSG "TODO: get screen#%d config" ENDCOLOR_ATLINE(srcline), which); return false; }
+    int lines = 0;
     std::string str; 
     std::ifstream file("/boot/config.txt"); //TODO: read from memory; config file could have multiple (conditional) entries
-    cfg->dot_clock = 0;
-    int lines = 0;
     while (std::getline(file, str))
     {
-        if (!lines++) str = "hdmi_timings=1488 0 12 12 24   1104 0 12 12 24    0 0 0 30 0 50000000 1";
+        if (!lines++) str = "hdmi_timings=1488 0 12 12 24   1104 0 12 12 24    0 0 0 30 0 50000000 1"; //DEV ONLY
 //printf("got line: '%s'\n", str.c_str()); fflush(stdout);
 //https://www.raspberrypi.org/documentation/configuration/config-txt/video.md
 //hdmi_ignore_edid=0xa5000080
@@ -174,16 +208,16 @@ typedef struct ScreenConfig
 //HDMI_ASPECT_21_9 = 7  
 //HDMI_ASPECT_64_27 = 8  
         int num_found = sscanf(str.c_str(), "hdmi_timings=%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
-            &cfg->hcount[0], //&h_active_pixels, //horizontal pixels (width)
+            &cfg->hdisplay, //&h_active_pixels, //horizontal pixels (width)
             &h_sync_polarity, //invert hsync polarity
-            &cfg->hcount[1], //&h_front_porch, //horizontal forward padding from DE acitve edge
-            &cfg->hcount[2], //&h_sync_pulse, //hsync pulse width in pixel clocks
-            &cfg->hcount[3], //&h_back_porch, //vertical back padding from DE active edge
-            &cfg->vcount[0], //&v_active_lines, //vertical pixels height (lines)
+            &cfg->hlead, //&h_front_porch, //horizontal forward padding from DE acitve edge
+            &cfg->hsync, //&h_sync_pulse, //hsync pulse width in pixel clocks
+            &cfg->htrail, //&h_back_porch, //vertical back padding from DE active edge
+            &cfg->vdisplay, //&v_active_lines, //vertical pixels height (lines)
             &v_sync_polarity, //invert vsync polarity
-            &cfg->vcount[1], //&v_front_porch, //vertical forward padding from DE active edge
-            &cfg->vcount[2], //&v_sync_pulse, //vsync pulse width in pixel clocks
-            &cfg->vcount[3], //&v_back_porch, //vertical back padding from DE active edge
+            &cfg->vlead, //&v_front_porch, //vertical forward padding from DE active edge
+            &cfg->vsync, //&v_sync_pulse, //vsync pulse width in pixel clocks
+            &cfg->vtrail, //&v_back_porch, //vertical back padding from DE active edge
             &v_sync_offset_a, //leave at zero
             &v_sync_offset_b, //leave at zero
             &pixel_rep, //leave at zero
@@ -193,7 +227,10 @@ typedef struct ScreenConfig
             &cfg->aspect_ratio); //The aspect ratio can be set to one of eight values (choose the closest for your screen):
 //        if (!str.compare(0, 13, "hdmi_timings="))
 //        debug(BLUE_MSG "get hdmi timing from: '%s'? %d" ENDCOLOR_ATLINE(srcline), str.c_str(), num_found);
-        if (num_found >= 16) cfg->dot_clock /= 1000; //continue (later entries overwrite earlier); //return true;
+        cfg->dot_clock /= 1000; //convert to KHz to reduce chances of arithmetic overflow;
+        cfg->htotal = cfg->hdisplay + cfg->hlead + cfg->hsync + cfg->htrail;
+        cfg->vtotal = cfg->vdisplay + cfg->vlead + cfg->vsync + cfg->vtrail;
+        if (num_found == 17) { cfg->screen = which; return true; } //continue (later entries overwrite earlier); //return true;
 //hdmi_timings=1488 0 12 12 24   1104 0 12 12 24    0 0 0 30 0 50000000 1
 //        cached.mode_line.hdisplay = h_active_pixels;
 //        cached.mode_line.vdisplay = v_active_lines;
@@ -222,7 +259,7 @@ typedef struct ScreenConfig
         return &cached;
 #endif
     }
-    return cfg->dot_clock; //false;
+    return false; //cfg->dot_clock;
  }
 
 #else //def RPI_NO_X
@@ -256,16 +293,21 @@ static void deleter(SDL_Window* ptr)
 //see https://stackoverflow.com/questions/1829706/how-to-query-x11-display-resolution
 //see https://tronche.com/gui/x/xlib/display/information.html#display
 //or use cli xrandr or xwininfo
- bool read_config(ScreenConfig* cfg, SrcLine srcline = 0)
+//NOTE: xrandr is the recommended api for multiple screens
+//xrandr --query
+// https://github.com/raboof/xrandr
+ bool read_config(int screen, ScreenConfig* cfg, SrcLine srcline = 0)
  {
 //BROKEN    auto_ptr<XDisplay> display = XOpenDisplay(NULL);
 //    memset(&scfg, 0, sizeof(*scfg));
 //    bool ok = false;
 //    XDisplay* display = XOpenDisplay(NULL);
     std::unique_ptr<XDisplay, std::function<void(XDisplay*)>> display(XOpenDisplay(NULL), XCloseDisplay);
-    debug(BLUE_MSG << FMT("got disp %p") << display.get() << ENDCOLOR_ATLINE(srcline));
+//    cfg->screen = -1;
     int num_screens = display.get()? ScreenCount(display.get()/*.cast*/): 0;
-    for (int i = 0; i < num_screens; ++i)
+    debug(BLUE_MSG << FMT("got disp %p") << display.get() << ", #screens: " << num_screens << ENDCOLOR_ATLINE(srcline));
+    int first = (screen != -1)? screen: 0, last = (screen != -1)? screen + 1: num_screens;
+    for (int i = first; i < last; ++i)
     {
 //        int dot_clock, mode_flags;
 //        XF86VidModeModeLine mode_line = {0};
@@ -300,16 +342,20 @@ static void deleter(SDL_Window* ptr)
 //         AppRes.field[VTotal].val);
 
 //       vinfo.left_margin, vinfo.right_margin, vinfo.upper_margin, vinfo.lower_margin, vinfo.hsync_len, vinfo.vsync_len,
-        cfg->hcount[0] = mode_line.hdisplay; //&h_active_pixels, //horizontal pixels (width)
-        cfg->hcount[1] = mode_line.hsyncstart - mode_line.hdisplay; //&h_front_porch, //horizontal forward padding from DE acitve edge
-        cfg->hcount[2] = mode_line.hsyncend - mode_line.hsyncstart; //&h_sync_pulse, //hsync pulse width in pixel clocks
-        cfg->hcount[3] = mode_line.htotal - mode_line.hsyncend; //&h_back_porch, //vertical back padding from DE active edge
-        cfg->vcount[0] = mode_line.vdisplay; //&v_active_lines, //vertical pixels height (lines)
-        cfg->vcount[1] = mode_line.vsyncstart - mode_line.vdisplay; //&v_front_porch, //vertical forward padding from DE active edge
-        cfg->vcount[2] = mode_line.vsyncend - mode_line.vsyncstart; //&v_sync_pulse, //vsync pulse width in pixel clocks
-        cfg->vcount[3] = mode_line.vtotal - mode_line.vsyncend; //&v_back_porch, //vertical back padding from DE active edge
-        cfg->aspect_ratio = 0;
-        cfg->frame_rate = mode_line.htotal * mode_line.vtotal / cfg->dot_clock;
+        cfg->hdisplay = mode_line.hdisplay; //&h_active_pixels, //horizontal pixels (width)
+        cfg->hlead = mode_line.hsyncstart - mode_line.hdisplay; //&h_front_porch, //horizontal forward padding from DE acitve edge
+        cfg->hsync = mode_line.hsyncend - mode_line.hsyncstart; //&h_sync_pulse, //hsync pulse width in pixel clocks
+        cfg->htrail = mode_line.htotal - mode_line.hsyncend; //&h_back_porch, //vertical back padding from DE active edge
+        cfg->vdisplay = mode_line.vdisplay; //&v_active_lines, //vertical pixels height (lines)
+        cfg->vlead = mode_line.vsyncstart - mode_line.vdisplay; //&v_front_porch, //vertical forward padding from DE active edge
+        cfg->vsync = mode_line.vsyncend - mode_line.vsyncstart; //&v_sync_pulse, //vsync pulse width in pixel clocks
+        cfg->vtrail = mode_line.vtotal - mode_line.vsyncend; //&v_back_porch, //vertical back padding from DE active edge
+        cfg->htotal = cfg->hdisplay + cfg->hlead + cfg->hsync + cfg->htrail;
+        cfg->vtotal = cfg->vdisplay + cfg->vlead + cfg->vsync + cfg->vtrail;
+//    int aspect_ratio;
+//    int frame_rate;
+        cfg->aspect_ratio = 0; //no config entry; //mode_line.hdisplay / mode_line.vdisplay;
+        cfg->frame_rate = 0; //no config entry; //mode_line.htotal * mode_line.vtotal / cfg->dot_clock;
 #if 0
         int hblank = cached.mode_line.htotal - cached.mode_line.hdisplay; //vinfo.left_margin + vinfo.hsync_len + vinfo.right_margin;
         int vblank = cached.mode_line.vtotal - cached.mode_line.vdisplay; //vinfo.upper_margin + vinfo.vsync_len + vinfo.lower_margin;
@@ -325,6 +371,7 @@ static void deleter(SDL_Window* ptr)
 //    close(fbfd);
 //        ok = true;
 //        Release(display); //XCloseDisplay(display);
+        cfg->screen = i;
         return true;
     }
 //    if (display) Release(display); //XCloseDisplay(display);
@@ -333,31 +380,33 @@ static void deleter(SDL_Window* ptr)
 #endif //def RPI_NO_X
 
 
-const ScreenConfig* getScreenConfig(SrcLine srcline = 0) //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
+const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
 {
-    static ScreenConfig cached = {0};
-    if (cached.dot_clock) return &cached; //return cached data; screen info won't change
-    if (!read_config(&cached, srcline))
+    static ScreenConfig cached;
+    if (cached.screen == which) return &cached; //return cached data; screen info won't change
+    if (!read_config(which, &cached, srcline))
     {
-        exc(RED_MSG "no video config found" ENDCOLOR_ATLINE(srcline));
-        cached.dot_clock = 0;
+        cached.screen = -1; //invalidate cache
+        exc(RED_MSG "video[%d] config not found" ENDCOLOR_ATLINE(srcline), which);
+//        cached.dot_clock = 0;
         return NULL;
     }
-    int hblank = cached.hcount[1] + cached.hcount[2] + cached.hcount[3], htotal = hblank + cached.hcount[0];
-    int vblank = cached.vcount[1] + cached.vcount[2] + cached.vcount[3], vtotal = vblank + cached.vcount[0];
+    int hblank = cached.hlead + cached.hsync + cached.htrail, htotal = hblank + cached.hdisplay;
+    int vblank = cached.vlead + cached.vsync + cached.vtrail, vtotal = vblank + cached.vdisplay;
     double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
     double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    debug_level(28, BLUE_MSG "hdmi timing: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
+    debug_level(28, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
 //            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
 //            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
 //            cached.mode_line.vsyncstart - cached.mode_line.vdisplay, cached.mode_line.vsyncend - cached.mode_line.vsyncstart, cached.mode_line.vtotal - cached.mode_line.vsyncend, cached.mode_line.vtotal - cached.mode_line.vdisplay, (double)100 * (cached.mode_line.vtotal - cached.mode_line.vdisplay) / cached.mode_line.vtotal, //vinfo.upper_margin, vinfo.lower_margin, vinfo.vsync_len,
 //            1000000 * rowtime, rowtime / 300000, 1000 * frametime, 1 / frametime);
-        cached.hcount[0], cached.vcount[0], (double)cached.hcount[0] / cached.vcount[0], cached.aspect_ratio, (double)cached.dot_clock / 1000,
-        cached.hcount[1], cached.hcount[2], cached.hcount[3], hblank, (double)100 * hblank / htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
-        cached.vcount[1], cached.vcount[2], cached.vcount[3], vblank, (double)100 * vblank / vtotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
+        cached.screen, cached.hdisplay, cached.vdisplay, (double)cached.hdisplay / cached.vdisplay, cached.aspect_ratio, (double)cached.dot_clock / 1000,
+        cached.hlead, cached.hsync, cached.htrail, hblank, (double)100 * hblank / htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
+        cached.vlead, cached.vsync, cached.vtrail, vblank, (double)100 * vblank / vtotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
         rowtime * 1e6, 100 * rowtime * 1e6 / 30, 1000 * frametime, 1 / frametime, cached.frame_rate);
     return &cached;
 }
+const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfig(0, srcline); }
 
 
 #if 0 //obsolete; just use SDL for this
@@ -406,7 +455,7 @@ WH ScreenInfo()
 //set reasonable values if can't get info:
     if (!wh.w || !wh.h)
     {
-        /*throw std::runtime_error*/ exc(RED_MSG "Can't get screen size" ENDCOLOR);
+        /*throw std::runtime_error*/ exc(RED_MSG "Can't get screen size" ENDCOLOR);Screenshot at 2018-11-05 08:28:23
         wh.w = 1536;
         wh.h = wh.w * 3 / 4; //4:3 aspect ratio
         myprintf(22, YELLOW_MSG "Using dummy display mode %dx%d" ENDCOLOR, wh.w, wh.h);
@@ -429,16 +478,26 @@ WH ScreenInfo()
 #ifdef WANT_UNIT_TEST
 #undef WANT_UNIT_TEST //prevent recursion
 
+//#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
+//#include "sdl-helpers.h"
 #include "msgcolors.h"
 #include "debugexc.h"
-
+#include "srcline.h"
 
 //int main(int argc, const char* argv[])
 void unit_test()
 {
     debug(CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
 //    return 0;
-    const ScreenConfig* cfg = getScreenConfig(SRCLINE); //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
+//    for (int screen = 0;; ++screen)
+//    SDL_AutoLib sdl(SDL_INIT_VIDEO, SRCLINE);
+//    debug(BLUE_MSG "get info for %d screens ..." ENDCOLOR, SDL_GetNumVideoDisplays());
+    for (int screen = 0; /*screen < SDL_GetNumVideoDisplays()*/; ++screen)
+    {
+        const ScreenConfig* cfg = getScreenConfig(screen, SRCLINE); //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
+//        if (!cfg) break;
+        INSPECT("ScreenConfig[" << screen << "]" << *cfg);
+    }
 }
 
 #endif //def WANT_UNIT_TEST

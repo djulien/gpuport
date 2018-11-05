@@ -7,6 +7,7 @@
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 
 #include "sdl-helpers.h"
+#include "rpi-helpers.h"
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
 #include "debugexc.h" //debug(), exc()
 #include "srcline.h" //SrcLine, TEMPL_ARGS
@@ -30,13 +31,81 @@
 
 #define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
 
+//timing constraints:
+//calculate 4th timing param given other 3
+#define VRES_LIMIT(clock, hres, fps)  ((clock) / (hres) / (fps))
+#define HRES_LIMIT(clock, vres, fps)  ((clock) / (vres) / (fps))
+#define FPS_LIMIT(clock, hres, vres)  ((clock) / (hres) / (vres))
+#define CLOCK_LIMIT(hres, vres, fps)  ((hres) * (vres) * (fps))
+
 
 //use template params for W, H to allow type-safe 2D array access:
 //NOTE: row pitch is rounded up to a multiple of cache size so there could be gaps
 //always use full screen height; clock determined by w / BPN
-//TODO: add vgroup
-template</*unsigned W = 24, unsigned H = 1111,*/ typename NODEVAL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0> //, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
+//kludge: use template arg as vres placeholder (depends on run-time config info)
+template</*unsigned W = 24, unsigned H = 1111,*/ typename NODEVAL = Uint32, unsigned NODEBITS = 24, unsigned HWMUX = 0, unsigned VMAX = VRES_LIMIT(52 MHz, * 1e6, 1536, 30)> //, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 //template<unsigned W = 24, unsigned FPS = 30, typename PIXEL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PAD = cache_pad(H * sizeof(PIXEL)) / sizeof(PIXEL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
+class GpuPort
+{
+//    const int W = NODEBITS * 3 - 1, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
+    using W = NODEBITS * 3 - 1; //last 1/3 node bit can overlap hsync
+    using H_PAD = cache_pad(VMAX * sizeof(NODEVAL)) / sizeof(NODEVAL);
+    using NODEBUF = NODEVAL[W][H_PAD]; //2D W x H_PAD
+    const int H;
+public: //ctors/dtors
+    GpuPort(int screen = 0, key_t shmkey = 0, int vgroup = 1, SrcLine srcline = 0): m_shmbuf(1, 0, NVL(srcline, SRCLINE)), m_started(now()), m_srcline(srcline)
+    {
+        const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
+        if (!cfg) exc(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
+        /*const int*/ H = divup(cfg->vdisplay, vgroup);
+        if (H > VMAX) exc(RED_MSG "video settings " << *cfg << ", vgroup " << vgroup << " require H " << H << " but only compiled for " << VMAX << ENDCOLOR_ATLINE(srcline));
+//video config => xres, yres, clock => W = NODEBITS * 3 - 1, H = vres / vgroup, fps = clock / xres / yres
+//        const int W = NODEBITS * 3 - 1, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
+        SDL_Size wh(W, H);
+        m_txtr = SDL_AutoTexture<>::create(NAMED{ _.wh = &wh; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); }));
+//        const double FPS = (double)m_cfg->dot_clock * 1e3 / m_
+        INSPECT(GREEN_MSG << "ctor " << *this, srcline);
+    }
+    virtual ~GpuPort() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
+//public: operators
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort& that)
+    {
+        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+        ostrm << "GpuPort" << my_templargs();
+        ostrm << "\n{cfg " << *that.m_cfg;
+        ostrm << ", txtr " << that.m_txtr;
+        ostrm << "}";
+        return ostrm; 
+    }
+public: //named arg variants
+        struct CtorParams
+        {
+            int screen = 0;
+            key_t shmkey = 0;
+            int vgroup = 1; //for DEV/debug to screen
+            SrcLine srcline = 0;
+        };
+        static struct CtorParams& ctor_params() { static struct CtorParams cp; return cp; } //static decl wrapper
+    template <typename CALLBACK>
+    GpuPort(CALLBACK&& named_params): GpuPort(unpack(ctor_params(), named_params), Unpacked{}) {} //perfect fwd to arg unpack
+private: //named arg variants
+    GpuPort(const CtorParams& params, Unpacked): GpuPort(params.screen, params.shmkey, params.srcline) {}
+private: //data members
+//    static int m_count = 0;
+    AutoShmary<NODEBUF, false> m_shmbuf; //PIXEL[H_PAD] //CAUTION: must occur before nodes
+    SDL_AutoTexture<> m_txtr;
+    elapsed_t m_started;
+    SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+    static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
+        return m_templ_args;
+    }
+};
+
+
+#if 0
+#define GpuPort GpuPort_other
 class GpuPort
 {
 //    using PIXEL = Uint32;
@@ -225,6 +294,8 @@ private:
         return m_templ_args;
     }
 };
+#endif
+
 
 #endif //ndef _GPU_PORT_H
 
@@ -254,13 +325,15 @@ void unit_test()
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE, dimARGB(0.75, WHITE), dimARGB(0.25, WHITE)};
 
 //    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, 0, SRCLINE);
-    GpuPort<> gp(SRCLINE); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
+    GpuPort<> gp(NAMED{ SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
 //    Uint32* pixels = gp.Shmbuf();
 //    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it
 //    debug(CYAN_MSG "&nodes[0] %p, &nodes[0][0] = %p, sizeof gp %zu, sizeof nodes %zu" ENDCOLOR, &gp.nodes[0], &gp.nodes[0][0], sizeof(gp), sizeof(gp.nodes));
     debug(CYAN_MSG << gp << ENDCOLOR);
+    SDL_Delay(2 sec);
 
+#if 0
     debug(BLUE_MSG << timestamp() << "render" << ENDCOLOR);
     for (int x = 0; x < gp.Width /*NUM_UNIV*/; ++x)
         for (int y = 0; y < gp.Height /*UNIV_LEN*/; ++y)
@@ -301,6 +374,7 @@ if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @%p = 0x%x...\n", timestamp()
 //        VOID SDL_Delay(1 sec);
 //        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
 //    }
+#endif
     debug(BLUE_MSG << "finish" << ENDCOLOR);
 //    return 0;
 }

@@ -50,9 +50,12 @@
 //these "functions" are macros to allow compiler folding and other optimizations
 
 //get #elements in array:
-#ifndef SIZEOF
+//#ifdef SIZEOF
+// #undef SIZEOF //avoid conflict
+//#endif
+//#ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
-#endif
+//#endif
 //template version from http://www.cplusplus.com/forum/general/4125/
 //template< typename T, size_t N >
 //size_t ArraySize( T (& const)[ N ] ) { return N; }
