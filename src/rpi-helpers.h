@@ -115,8 +115,12 @@ typedef struct ScreenConfig
  {
     std::string str; 
     std::ifstream file("/boot/config.txt"); //TODO: read from memory; config file could have multiple (conditional) entries
+    cfg->dot_clock = 0;
+    int lines = 0;
     while (std::getline(file, str))
     {
+        if (!lines++) str = "hdmi_timings=1488 0 12 12 24   1104 0 12 12 24    0 0 0 30 0 50000000 1";
+//printf("got line: '%s'\n", str.c_str()); fflush(stdout);
 //https://www.raspberrypi.org/documentation/configuration/config-txt/video.md
 //hdmi_ignore_edid=0xa5000080
 //dpi_group=2
@@ -187,9 +191,9 @@ typedef struct ScreenConfig
             &interlaced, //leave at zero
             &cfg->dot_clock, //&pixel_freq, //clock frequency (width*height*framerate)
             &cfg->aspect_ratio); //The aspect ratio can be set to one of eight values (choose the closest for your screen):
-        if (!str.compare(0, 13, "hdmi_timings="))
-            debug(BLUE_MSG "get hdmi timing from: '%s'? %d" ENDCOLOR_ATLINE(srcline), str.c_str(), num_found);
-        if (num_found == 17) return true;
+//        if (!str.compare(0, 13, "hdmi_timings="))
+//        debug(BLUE_MSG "get hdmi timing from: '%s'? %d" ENDCOLOR_ATLINE(srcline), str.c_str(), num_found);
+        if (num_found >= 16) cfg->dot_clock /= 1000; //continue (later entries overwrite earlier); //return true;
 //hdmi_timings=1488 0 12 12 24   1104 0 12 12 24    0 0 0 30 0 50000000 1
 //        cached.mode_line.hdisplay = h_active_pixels;
 //        cached.mode_line.vdisplay = v_active_lines;
@@ -218,7 +222,7 @@ typedef struct ScreenConfig
         return &cached;
 #endif
     }
-    return false;
+    return cfg->dot_clock; //false;
  }
 
 #else //def RPI_NO_X
@@ -333,12 +337,17 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) //ScreenConfig* scfg) /
 {
     static ScreenConfig cached = {0};
     if (cached.dot_clock) return &cached; //return cached data; screen info won't change
-    if (!read_config(&cached, srcline)) { cached.dot_clock = 0; return NULL; }
+    if (!read_config(&cached, srcline))
+    {
+        exc(RED_MSG "no video config found" ENDCOLOR_ATLINE(srcline));
+        cached.dot_clock = 0;
+        return NULL;
+    }
     int hblank = cached.hcount[1] + cached.hcount[2] + cached.hcount[3], htotal = hblank + cached.hcount[0];
     int vblank = cached.vcount[1] + cached.vcount[2] + cached.vcount[3], vtotal = vblank + cached.vcount[0];
     double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
     double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    debug_level(28, BLUE_MSG "hdmi_timings: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
+    debug_level(28, BLUE_MSG "hdmi timing: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
 //            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
 //            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
 //            cached.mode_line.vsyncstart - cached.mode_line.vdisplay, cached.mode_line.vsyncend - cached.mode_line.vsyncstart, cached.mode_line.vtotal - cached.mode_line.vsyncend, cached.mode_line.vtotal - cached.mode_line.vdisplay, (double)100 * (cached.mode_line.vtotal - cached.mode_line.vdisplay) / cached.mode_line.vtotal, //vinfo.upper_margin, vinfo.lower_margin, vinfo.vsync_len,
