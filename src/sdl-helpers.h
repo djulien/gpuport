@@ -50,9 +50,9 @@
 //these "functions" are macros to allow compiler folding and other optimizations
 
 //get #elements in array:
-//#ifdef SIZEOF
-// #undef SIZEOF //avoid conflict
-//#endif
+#ifdef SIZEOF
+ #undef SIZEOF //avoid conflict
+#endif
 #ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 #endif
@@ -223,6 +223,8 @@ protected: //data members
 //SDL_BlitSurface
 //SDL_LowerBlit
 //https://gamedev.stackexchange.com/questions/102870/rescale-pixel-art-scenery-before-rendering-in-sdl2
+//SDL render on separate thread:
+//https://github.com/vheuken/SDL-Render-Thread-Example/
 
 
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
@@ -1780,13 +1782,14 @@ public: //methods
 //use Named args rather than a bunch of overloads:
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
 //    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
+//    static const int NUM_STATS = 4;
+    double perf_stats[4]; //in case caller doesn't provide a place
     inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
     void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = 0, double* perf = 0, SrcLine srcline = 0)
     {
-        double stats[4];
-        if (!perf) perf = stats;
         SDL_Texture* txtr = get();
 //this is *the* main function; performance is important so measure it:
+        if (!perf) perf = &perf_stats[0];
         perf[0] = perftime(); //time caller spent rendering (sec); could be long (caller determines)
 //        if (!pixels) pixels = m_shmbuf;
 //        if (!pitch) pitch = cached.bounds.w * sizeof(pixels[0]); //Uint32);
@@ -1929,7 +1932,7 @@ public: //static helper methods
     static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
     {
         debug(BLUE_MSG "txtr xfr " << xfrlen << " from " << pixels << " to " << pxbuf << ENDCOLOR_ATLINE(srcline));
-        VOID memcpy(pxbuf, pixels, xfrlen);
+        VOID memcpy(pxbuf, pixels, xfrlen, NVL(srcline, SRCLINE));
     }
 private: //member vars
 //    SDL_AutoLib sdllib;
@@ -2202,7 +2205,7 @@ void fullscreen_test()
 #endif
 //primary color test:
     int numfr = 0;
-    double perf_stats[4+1], total_stats[SIZEOF(perf_stats)] = {0};
+    double perf_stats[SIZEOF(txtr.perf_stats) + 1], total_stats[SIZEOF(perf_stats)] = {0};
     debug(CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)" ENDCOLOR);
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
     for (int c = 0; c < SIZEOF(palette); ++c)

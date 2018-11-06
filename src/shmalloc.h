@@ -136,6 +136,12 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
     err_ret(ptr + 1, 0);
 }
+template <typename TYPE = uint8_t>
+TYPE* shmalloc_typed(size_t size = 1, key_t key = 0, SrcLine srcline = 0)
+{
+    return (TYPE*)shmalloc(sizeof(TYPE) * size, key, srcline);
+}
+//#define shmalloc  shmallc_typesafe
 
 
 key_t shmkey(void* addr, SrcLine srcline = 0)
@@ -346,6 +352,11 @@ void unit_test()
     shmfree(ptr2, SRCLINE);
     shmfree(ptr3, SRCLINE);
 #endif
+
+    uint32_t* ptr = shmalloc_typed<uint32_t>(4, 0, SRCLINE);
+    ptr[0] = 0x12345678;
+    debug(BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << ENDCOLOR);
+    shmfree(ptr);
 
     AutoShmary<> ary1(5, 0, SRCLINE);
     debug(BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
