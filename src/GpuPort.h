@@ -5,6 +5,7 @@
 
 #include <unistd.h> //sysconf()
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
+#include <algorithm> //std::min()
 
 #include "sdl-helpers.h"
 #include "rpi-helpers.h"
@@ -18,7 +19,7 @@
  #define rndup(num, den)  (((num) + (den) - 1) / (den) * (den))
 #endif
 
-#define CACHE_LEN  64 //CAUTION: use larger of RPi and RPi 2 to ensure fewer hits; //static size_t cache_len = sysconf(_SC_PAGESIZE);
+#define CACHE_LEN  64 //CAUTION: use larger of RPi and RPi 2 size to ensure fewer conflicts across processors; //static size_t cache_len = sysconf(_SC_PAGESIZE);
 #define cache_pad(raw_len)  rndup(raw_len, CACHE_LEN)
 
 
@@ -32,7 +33,7 @@
 #define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
 
 //timing constraints:
-//calculate 4th timing param given other 3
+//calculate 4th timing param using other 3 as constraints
 #define VRES_LIMIT(clock, hres, fps)  ((clock) / (hres) / (fps))
 #define HRES_LIMIT(clock, vres, fps)  ((clock) / (vres) / (fps))
 #define FPS_LIMIT(clock, hres, vres)  ((clock) / (hres) / (vres))
@@ -43,26 +44,43 @@
 //NOTE: row pitch is rounded up to a multiple of cache size so there could be gaps
 //always use full screen height; clock determined by w / BPN
 //kludge: use template arg as vres placeholder (depends on run-time config info)
-template</*unsigned W = 24, unsigned H = 1111,*/ typename NODEVAL = Uint32, unsigned NODEBITS = 24, unsigned HWMUX = 0, unsigned VMAX = VRES_LIMIT(52 MHz, * 1e6, 1536, 30)> //, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
+template<
+    int IOPINS = 24, //total #I/O pins available (h/w dependent)
+    int HWMUX = 0, //#I/O pins to use for external h/w mux
+    int NODEBITS = 24, //# bits to send for each WS281X node (protocol dependent)
+    int CLOCK = 52 MHz, //pixel clock speed (constrained by GPU)
+    int HTOTAL = 1536, //total x res (including blank time)
+    int FPS = 30, //target #frames/sec
+    typename NODEVAL = Uint32, //data type for node colors
+    typename XFRTYPE = Uint32, //data type for bit banged node bits (ARGB)
+    typename UNIVMAP = XFRTYPE, //cross-univ bitmaps
+//calculated values based on above constraints:
+//these must be defined here because they affect NODEBUF compile-time type
+    int XFRW = NODEBITS * 3 - 1, //last 1/3 of last node bit can overlap hsync so exclude it from display width
+    int XFRW_PAD = cache_pad(XFRW * sizeof(XFRTYPE)) / sizeof(XFRTYPE),
+    int VMAX = VRES_LIMIT(CLOCK, HTOTAL, FPS), //max univ len
+    int H_PAD = cache_pad(VMAX * sizeof(NODEVAL)) / sizeof(NODEVAL), //avoid cross-universe memory cache conflicts
+    int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX)> //max #univ with external h/w mux
+//, unsigned H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 //template<unsigned W = 24, unsigned FPS = 30, typename PIXEL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PAD = cache_pad(H * sizeof(PIXEL)) / sizeof(PIXEL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PAD = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 class GpuPort
 {
 //    const int W = NODEBITS * 3 - 1, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
-    using W = NODEBITS * 3 - 1; //last 1/3 node bit can overlap hsync
-    using H_PAD = cache_pad(VMAX * sizeof(NODEVAL)) / sizeof(NODEVAL);
-    using NODEBUF = NODEVAL[W][H_PAD]; //2D W x H_PAD
-    const int H;
+    using NODEBUF = NODEVAL[NUM_UNIV][H_PAD]; //fx rendered into 2D node (pixel) buffer
+//    using XFRBUF = NODEVAL[W][VMAX]; //node buf bit banged according to protocol; staging area for txtr xfr to GPU
 public: //ctors/dtors
-    GpuPort(int screen = 0, key_t shmkey = 0, int vgroup = 1, SrcLine srcline = 0): m_shmbuf(1, 0, NVL(srcline, SRCLINE)), m_started(now()), m_srcline(srcline)
+    explicit GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {}
+    GpuPort(int screen = 0, key_t shmkey = 0, int vgrp = 1, SrcLine srcline = 0): m_nodebuf(NVL(srcline, SRCLINE)), m_frinfo(NVL(srcline, SRCLINE)), m_started(now()), m_srcline(srcline)
     {
         const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
-        if (!cfg) exc(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
-        /*const int*/ H = divup(cfg->vdisplay, vgroup);
-        if (H > VMAX) exc(RED_MSG "video settings " << *cfg << ", vgroup " << vgroup << " require H " << H << " but only compiled for " << VMAX << ENDCOLOR_ATLINE(srcline));
+        if (!cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
+        m_frtime = cfg->frame_time();
+        const int UNIV_LEN = divup(cfg->vdisplay, vgrp);
+        if (UNIV_LEN > VMAX) exc_hard(RED_MSG "video settings " << *cfg << ", vgroup " << vgrp << " require univ len " << UNIV_LEN << " exceeding max " << VMAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
 //video config => xres, yres, clock => W = NODEBITS * 3 - 1, H = vres / vgroup, fps = clock / xres / yres
-//        const int W = NODEBITS * 3 - 1, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
-        SDL_Size wh(W, H);
-        m_txtr = SDL_AutoTexture<>::create(NAMED{ _.wh = &wh; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); }));
+//        const int W = NODEBITS * 3 - 1; //, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
+        SDL_Size wh(XFRW, UNIV_LEN); //, wh_pad(XFRW_PAD, UNIV_LEN);
+        m_txtr = SDL_AutoTexture<>::create(NAMED{ _.wh = &wh; _.w_pad = XFRW_PAD; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); });
 //        const double FPS = (double)m_cfg->dot_clock * 1e3 / m_
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
     }
@@ -72,10 +90,36 @@ public: //ctors/dtors
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
         ostrm << "GpuPort" << my_templargs();
-        ostrm << "\n{cfg " << *that.m_cfg;
+//        ostrm << "\n{cfg " << *that.m_cfg;
+        ostrm << "\n{" << &that;
+        ostrm << ", fr time " << that.m_frtime;
+        ostrm << ", frinfo " << that.m_frinfo;
+        ostrm << ", nodebuf " << that.m_nodebuf;
+//        ostrm << ", xfrbuf[" << W << " x " << V
         ostrm << ", txtr " << that.m_txtr;
         ostrm << "}";
         return ostrm; 
+    }
+public: //methods
+    void ready(UNIVMAP more, SrcLine srcline = 0) //mark universe(s) as ready/rendered
+    {
+#define NUM_THREAD  1
+#if NUM_THREAD > 1
+        if ((m_frinfo->bits |= more) != ALL_UNIV) //wait for others to finish
+        {
+            if (NUM_THREAD > 1) sluz(m_frinfo->bits, NVL(srcline, SRCLINE)); //sleep until frame is rendered
+            return;
+        }
+#endif
+//all universes rendered; send to GPU:
+        perf_stats[0] = m_txtr.perftime(); //caller's render time
+//        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
+//        perf_stats[1] = m_txtr.perftime(); //bitbang time
+        m_frinfo->bits = 0;
+        if (NUM_THREAD > 1) wake_others(NVL(srcline, SRCLINE)); //let other threads/processes overwrite nodebuf while xfrbuf is going to GPU
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/&m_nodebuf[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo->times[i] += perf_stats[i];
+        m_frinfo->nexttime = m_frinfo->numfr++ * m_frtime; //m_cfg->frame_time();
     }
 public: //named arg variants
         struct CtorParams
@@ -90,11 +134,54 @@ public: //named arg variants
     GpuPort(CALLBACK&& named_params): GpuPort(unpack(ctor_params(), named_params), Unpacked{}) {} //perfect fwd to arg unpack
 private: //named arg variants
     GpuPort(const CtorParams& params, Unpacked): GpuPort(params.screen, params.shmkey, params.srcline) {}
+private: //helpers
+//    void bitbang(SrcLine srcline = 0) //m_nodebuf, m_xfrbuf)
+//    {
+////        using NODEBUF = NODEVAL[NUM_UNIV][H_PAD]; //fx rendered into 2D node (pixel) buffer
+//        SDL_Size wh(NUM_UNIV, m_txtr->wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
+//        debug(BLUE_MSG "bit bang " << wh << " node buf => " << m_txtr->wh << " txtr" ENDCOLOR_ATLINE(srcline));
+//    }
+//template <typename PXTYPE = Uint32>
+//class mySDL_AutoTexture_bitbang: public mySDL_AutoTexture<PXTYPE>
+//override txtr xfr with bit banging:
+//txtr needs to be locked to update anyway, so just bit bang into txtr rather than an additional buffer + mem xfr
+    class txtr_bb: public SDL_AutoTexture<XFRTYPE>
+    {
+        using super = SDL_AutoTexture<XFRTYPE>;
+//        const SDL_Size m_wh;
+public: //ctors/dtors
+        template <typename ... ARGS>
+        explicit txtr_bb(/*int w, int h,*/ ARGS&& ... args): super(std::forward<ARGS>(args) ...) {} //perfect fwd
+public: //static helper methods
+        static void xfr(void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline = 0) //h * pitch(NUM_UNIV)
+        {
+//            VOID memcpy(pxbuf, pixels, xfrlen);
+//            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
+//            int wh = xfrlen; //TODO
+            SDL_Size wh_bb(NUM_UNIV, H_PAD), wh_txtr(XFRW_PAD, xfrlen / XFRW_PAD / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PAD, not XFRW
+            debug(BLUE_MSG "bit bang xfr " << wh_bb << " node buf => " << wh_txtr << " txtr, limit " << std::min(wh_bb.h, wh_txtr.h) << " rows" ENDCOLOR_ATLINE(srcline));
+        }
+    };
 private: //data members
 //    static int m_count = 0;
-    AutoShmary<NODEBUF, false> m_shmbuf; //PIXEL[H_PAD] //CAUTION: must occur before nodes
-    SDL_AutoTexture<> m_txtr;
-    elapsed_t m_started;
+//    XFRBUF m_xfrbuf; //just use txtr
+    double m_frtime;
+    double perf_stats[1+4]; //add one entry for my own internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+    struct FrameInfo
+    {
+        std::mutex mutex;
+        std::atomic<UNIVMAP> bits; //one ready bit for each universe
+        std::atomic<uint32_t> nexttime; //time of next frame (msec)
+        std::atomic<uint32_t> numfr; //# of next frame
+        uint64_t times[SIZEOF(perf_stats)]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
+    }; //FrameInfo;
+    static const UNIVMAP ALL_UNIV = (1 << NUM_UNIV) - 1;
+//    const int H;
+//    const ScreenConfig cfg;
+    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
+    AutoShmary<NODEBUF, false> m_nodebuf; //initialized to 0
+    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
+    const elapsed_t m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
@@ -102,6 +189,190 @@ private: //data members
         return m_templ_args;
     }
 };
+
+
+#if 0
+//encode (24-bit pivot):
+//CAUTION: expensive CPU loop here
+//NOTE: need pixel-by-pixel copy for several reasons:
+//- ARGB -> RGBA (desirable)
+//- brightness limiting (recommended)
+//- blending (optional)
+//- 24-bit pivots (required, non-dev mode)
+//        memset(pixels, 4 * this->w * this->h, 0);
+//TODO: perf compare inner/outer swap
+//TODO? locality of reference: keep nodes within a universe close to each other (favors caller)
+    void encode(uint32_t* src, uint32_t* dest) //fill = BLACK)
+    {
+        if (!src) return;
+//        uint32_t* pxbuf32 = reinterpret_cast<uint32_t*>(this->pxbuf.cast->pixels);
+        uint64_t start = now();
+//myprintf(22, "paint pxbuf 0x%x pxbuf32 0x%x" ENDCOLOR, toint(this->pxbuf.cast->pixels), toint(pxbuf32));
+#if 0 //test
+        for (int y = 0, yofs = 0; y < this->univ_len; ++y, yofs += TXR_WIDTH) //outer
+            for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+            {
+//if (!y || (y >= this->univ_len - 1) || !x3 || (x3 >= TXR_WIDTH - 3)) myprintf(22, "px[%d] @(%d/%d,%d/%d)" ENDCOLOR, yofs + x3, y, this->univ_len, x3, TXR_WIDTH);
+                pxbuf32[yofs + x3 + 0] = RED;
+                pxbuf32[yofs + x3 + 1] = GREEN;
+                if (x3 < TXR_WIDTH - 1) pxbuf32[yofs + x3 + 2] = BLUE;
+            }
+        return;
+#endif
+#if 0 //NO; RAM is slower than CPU
+        uint32_t rowbuf[TXR_WIDTH + 1], start_bits = this->WantPivot? WHITE: BLACK;
+//set up row template with start bits, cleared data + stop bits:
+        for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+        {
+            rowbuf[x3 + 0] = start_bits; //WHITE; //start bits
+            rowbuf[x3 + 1] = BLACK; //data bits (will be overwritten with pivoted color bits)
+            rowbuf[x3 + 2] = BLACK; //stop bits (right-most overlaps H-blank)
+        }
+//            memcpy(&pxbuf32[yofs], rowbuf, TXR_WIDTH * sizeof(uint32_t)); //initialze start, data, stop bits
+#endif
+//univ types:
+//WS281X: send 1 WS281X node (24 bits) per display row, up to #display rows on screen per frame
+//SSR: send 2 bytes per display row, multiples of 3 * 8 * 7 + 2 == 170 bytes (85 display rows) per frame
+//OR? send 3 bytes per display row, multiples of 57 display rows
+//*can't* send 4 bytes per display row; PIC can only rcv 3 bytes per WS281X
+//72 display pixels: H-sync = start bit or use inverters?
+//        uint32_t leading_edges = BLACK;
+//        for (uint32_t x = 0, xmask = 0x800000; (int)x < this->num_univ; ++x, xmask >>= 1)
+//            if (UTYPEOF(this->UnivTypes[(int)x]) == WS281X) leading_edges |= xmask; //turn on leading edge of data bit for GPIO pins for WS281X only
+//myprintf(22, BLUE_MSG "start bits = 0x%x (based on univ type)" ENDCOLOR, leading_edges);
+//        bool rbswap = isRPi();
+        col_debug();
+        for (int y = 0, yofs = 0; y < this->univ_len; ++y, yofs += TXR_WIDTH) //outer
+        {
+//initialize 3x signal for this row of 24 WS281X pixels:
+//            for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+//            {
+//                pxbuf32[yofs + x3 + 0] = leading_edges; //WHITE;
+//                pxbuf32[yofs + x3 + 1] = BLACK; //data bit body (will be overwritten with pivoted color bits)
+////                if (x3) pxbuf32[yofs + x3 - 1] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//                pxbuf32[yofs + x3 + 2] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//            }
+            memset(&dest[yofs], 0, TXR_WIDTH * sizeof(uint32_t));
+#if 1
+//pivot pixel data onto 24 parallel GPIO pins:
+//  WS281X = 1, PLAIN_SSR = 2, CHPLEX_SSR = 3,TYPEBITS = 0xF,
+// RGSWAP = 0x20, CHECKSUM = 0x40, POLARITY = 0x80};
+            if (!this->DEV_MODE)
+            {
+//NOTE: xmask loop assumes ARGB or ABGR fmt (A in upper byte)
+                for (uint32_t x = 0, xofs = 0, xmask = 0x800000; x < (uint32_t)this->num_univ; ++x, xofs += this->univ_len, xmask >>= 1)
+            	{
+                    uint24_t color_out = src[xofs + y]; //pixels? pixels[xofs + y]: fill;
+//TODO: make this extensible, move out to Javascript?
+                    switch (univ_types[x])
+                    {
+                        case WS281X | RGSWAP:
+                            color_out = ARGB2ABGR(color_out); //user-requested explicit R <-> G swap
+//fall thru
+                        case WS281X:
+//                            if (!A(color) || (!R(color) && !G(color) && !B(color))) continue; //no data to pivot
+                            color_out = limit(color_out); //limit brightness/power
+//no                            color = ARGB2ABGR(color); //R <-> G swap doesn't need to be automatic for RPi; user can swap GPIO pins
+//24 WS281X data bits spread across 72 screen pixels = 3 pixels per WS281X data bit:
+                            for (int bit3 = 0; bit3 < TXR_WIDTH; bit3 += 3, color_out <<= 1)
+                            {
+                                dest[yofs + bit3 + 0] |= xmask; //leading edge = high
+                                if (color_out & 0x800000) dest[yofs + bit3 + 1] |= xmask; //set data bit
+//                                pxbuf32[yofs + bit3 + 2] &= ~xmask; //trailing edge = low
+                            }
+//                            row_debug("ws281x", yofs, xmask, x);
+                            break;
+                        case PLAIN_SSR:
+                        case PLAIN_SSR | CHECKSUM:
+                        case PLAIN_SSR | POLARITY:
+                        case PLAIN_SSR | CHECKSUM | POLARITY:
+                            return_void(err(RED_MSG "GpuCanvas.Encode: Plain SSR TODO" ENDCOLOR));
+                            break;
+                        case CHPLEX_SSR:
+                        case CHPLEX_SSR | CHECKSUM:
+                        case CHPLEX_SSR | POLARITY:
+                        case CHPLEX_SSR | CHECKSUM | POLARITY:
+                        { //kludge: extra scope to avoid "jump to case label" error
+//cfg + chksum + 8 * 7 * (delay, rowmap, colmap) == 170 bytes @ 2 bytes / row == 85 display rows of data
+//NOTE: disp size expands; can't display all rows; last ctlr might be partial
+#define BYTES_PER_DISPROW  2
+#define CHPLEX_DISPROWS  divup(1 + 1 + 3 * NUM_SSR * (NUM_SSR - 1), BYTES_PER_DISPROW) //85
+#define CHPLEX_CTLRLEN  (NUM_SSR * (NUM_SSR - 1))
+                            int ctlr_ofs = y % CHPLEX_DISPROWS, ctlr_adrs = y / CHPLEX_DISPROWS;
+                            if (!ctlr_ofs) //get another display list
+                            {
+                                this->encoders[x].cast->init_list();
+                                no_myprintf(14, BLUE_MSG "GpuCanvas: enc[%d, %d] aggregate rows %d..%d" ENDCOLOR, x, y, ctlr_adrs * CHPLEX_CTLRLEN, (ctlr_adrs + 1) * CHPLEX_CTLRLEN - 1);
+                                for (int yy = ctlr_adrs * CHPLEX_CTLRLEN; (yy < this->univ_len) && (yy < (ctlr_adrs + 1) * CHPLEX_CTLRLEN); ++yy)
+                                {
+                                    color_out = src[xofs + yy]; //pixels? pixels[xofs + yy]: fill;
+                                    uint8_t brightness = std::max<int>(Rmask(color_out) >> 16, std::max<int>(Gmask(color_out) >> 8, Bmask(color_out))); //use strongest color element
+                                    no_myprintf(14, BLUE_MSG "pixel[%d] 0x%x -> br %d" ENDCOLOR, xofs + yy, color_out, brightness);
+                                    this->encoders[x].cast->insert(brightness);
+                                }
+                                this->encoders[x].cast->resolve_conflicts();
+                                no_myprintf(14, BLUE_MSG "GpuCanvas: enc[%d, %d] aggregated into %d disp evts" ENDCOLOR, x, y, this->encoders[x].cast->disp_count);
+                            }
+//2 bytes serial data = 2 * (1 start + 8 data + 1 stop + 2 pad) = 24 data bits spread across 72 screen pixels = 3 pixels per serial data bit:
+//pkt contents: ssr_cfg, checksum, display list (brightness, row map, col map)
+//                            uint8_t byte_even = (ctlr_ofs < 0)? (uint8_t)univ_types[x]: ((uint8_t*)(&this->encoders[x].cast->DispList[0].delay)[2 * ctlr_ofs + 0];
+//                            uint8_t byte_odd = (ctlr_ofs < 0)? this->encoders[x].cast->checksum: (this->encoders[x].cast->DispList[2 * ctlr_ofs + 1];
+                            uint8_t byte_even = !ctlr_ofs? (uint8_t)univ_types[x]: this->encoders[x].cast->DispList[2 * ctlr_ofs - 2];
+                            uint8_t byte_odd = !ctlr_ofs? this->encoders[x].cast->checksum ^ (uint8_t)univ_types[x]: this->encoders[x].cast->DispList[2 * ctlr_ofs - 1]; //CAUTION: incl univ type in checksum
+                            color_out = 0x800000 | (byte_even << (12+3)) | 0x800 | (byte_odd << 3); //NOTE: inverted start + stop bits; using 3 stop bits
+//myprintf(14, BLUE_MSG "even 0x%x, odd 0x%x -> color_out 0x%x" ENDCOLOR, byte_even, byte_odd, color_out);
+                            for (int bit3 = 0; bit3 < TXR_WIDTH; bit3 += 3, color_out <<= 1)
+                                if (color_out & 0x800000) //set data bit
+                                {
+                                    dest[yofs + bit3 + 0] |= xmask;
+                                    dest[yofs + bit3 + 1] |= xmask;
+                                    dest[yofs + bit3 + 2] |= xmask;
+                                }
+//                            row_debug("chplex", yofs, xmask, x);
+                            break;
+                        }
+                        default:
+                            return_void(err(RED_MSG "GpuCanvas.Encode: Unknown universe type[%d]: %d flags 0x%x" ENDCOLOR, x, univ_types[x] & TYPEBITS, univ_types[x] & ~TYPEBITS));
+                            break;
+                    }
+            	}
+//                row_debug("aggregate", yofs);
+                continue; //next row
+            }
+#endif
+//just copy pixels as-is (dev/debug only):
+            bool rbswap = isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
+            for (int x = 0, x3 = 0, xofs = 0; x < this->num_univ; ++x, x3 += 3, xofs += this->univ_len)
+            {
+                uint32_t color = src[xofs + y]; //pixels? pixels[xofs + y]: fill;
+                if (rbswap) color = ARGB2ABGR(color);
+                dest[yofs + x3 + 0] = dest[yofs + x3 + 1] = dest[yofs + x3 + 2] = color;
+            }
+        }
+//        if (this->WantPivot) dump("canvas", pixels, elapsed(start));
+    }
+    void col_debug()
+    {
+return; //dump to file instead
+        char buf[12 * TXR_WIDTH / 3 + 1], *bp = buf;
+        for (int x = 0; x < TXR_WIDTH / 3; ++x)
+            bp += sprintf(bp, ", %d + 0x%x", this->univ_types[x] & TYPEBITS, this->univ_types[x] & ~TYPEBITS & 0xFF);
+        *bp = '\0';
+        myprintf(18, BLUE_MSG "Encode: pivot? %d, utypes %s" ENDCOLOR, !this->DEV_MODE, buf + 2);
+    }
+    void row_debug(const char* desc, int yofs, uint32_t xmask = 0, int col = -1)
+    {
+return; //dump to file instead
+        uint32_t* pxbuf32 = NULL; //TODO: reinterpret_cast<uint32_t*>(this->pxbuf.cast->pixels);
+//        char buf[2 * TXR_WIDTH / 3 + 1], *bp = buf;
+        char buf[10 * TXR_WIDTH + 1], *bp = buf + (xmask? 1: 0);
+        for (int x = 0; x < TXR_WIDTH; ++x)
+            if (!xmask) bp += sprintf(bp, (pxbuf32[yofs + x] < 10)? ", %d": ", 0x%x", pxbuf32[yofs + x]); //show hex value (all bits) for each bit
+            else if (!(x % 3)) bp += sprintf(bp, " %d", ((pxbuf32[yofs + x + 0] & xmask)? 4: 0) + ((pxbuf32[yofs + x + 1] & xmask)? 2: 0) + ((pxbuf32[yofs + x + 2] & xmask)? 1: 0)); //show as 1 digit per bit
+        *bp = '\0';
+        myprintf(18, BLUE_MSG "Encode: %s[%d] row[%d/%d]: %s" ENDCOLOR, desc, col, yofs / TXR_WIDTH, this->univ_len, buf + 2);
+    }
+#endif
 
 
 #if 0
@@ -325,7 +596,7 @@ void unit_test()
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE, dimARGB(0.75, WHITE), dimARGB(0.25, WHITE)};
 
 //    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, 0, SRCLINE);
-    GpuPort<> gp(NAMED{ SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
+    GpuPort<> gp(NAMED{ _.screen = 0; _.vgroup = 1; SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
 //    Uint32* pixels = gp.Shmbuf();
 //    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it

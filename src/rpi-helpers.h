@@ -93,9 +93,9 @@ bool isRPi()
     int frame_rate; //configured, not calculated
 //calculated fields:
     double aspect() const { return (double)htotal / vtotal; }
-    double rowtime() const { return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
-    double frametime() const { return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    double fps() const { return (double)1 / frametime(); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    double row_time() const { return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
+    double frame_time() const { return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    double fps() const { return (double)1 / frame_time(); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
 //operators:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that)
     {
@@ -109,8 +109,8 @@ bool isRPi()
         ostrm << ", hres " << that.hdisplay << " + " << that.hlead << "+" << that.hsync << "+" << that.htrail << " = " << that.htotal;
         ostrm << ", vres " << that.vdisplay << " + " << that.vlead << "+" << that.vsync << "+" << that.vtrail << " = " << that.vtotal;
         ostrm << ", aspect " << that.aspect_ratio << FMT(" (config) %4.3f (actual)") << that.aspect();
-        ostrm << FMT(", row %4.3f usec") << (that.rowtime() * 1e6);
-        ostrm << FMT(", frame %4.3f msec") << (that.frametime() * 1e3);
+        ostrm << FMT(", row %4.3f usec") << (that.row_time() * 1e6);
+        ostrm << FMT(", frame %4.3f msec") << (that.frame_time() * 1e3);
         ostrm << ", fps " << that.frame_rate << FMT(" (config) %4.3f (actual)") << that.fps();
         ostrm << "}";
         return ostrm;
@@ -393,8 +393,8 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
     }
     int hblank = cached.hlead + cached.hsync + cached.htrail, htotal = hblank + cached.hdisplay;
     int vblank = cached.vlead + cached.vsync + cached.vtrail, vtotal = vblank + cached.vdisplay;
-    double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
-    double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+//    double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
+//    double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
     debug_level(28, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
 //            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
 //            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
@@ -403,7 +403,7 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
         cached.screen, cached.hdisplay, cached.vdisplay, (double)cached.hdisplay / cached.vdisplay, cached.aspect_ratio, (double)cached.dot_clock / 1000,
         cached.hlead, cached.hsync, cached.htrail, hblank, (double)100 * hblank / htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
         cached.vlead, cached.vsync, cached.vtrail, vblank, (double)100 * vblank / vtotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
-        rowtime * 1e6, 100 * rowtime * 1e6 / 30, 1000 * frametime, 1 / frametime, cached.frame_rate);
+        cached.row_time() * 1e6, 100 * cached.row_time() * 1e6 / 30, 1000 * cached.frame_time(), /*1 / cached.frame_time()*/ cached.fps(), cached.frame_rate);
     return &cached;
 }
 const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfig(0, srcline); }

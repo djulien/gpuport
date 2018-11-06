@@ -265,7 +265,8 @@ class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Win
 public:
 //    const key_t KEY_NONE = -2;
 //TODO: use "new shmalloc()" to call ctor on shm directly
-    explicit AutoShmary(size_t ents, key_t key, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
+    explicit AutoShmary(SrcLine srcline = 0): AutoShmary(1, 0, srcline) {}
+    AutoShmary(size_t ents = 1, key_t key = 0, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
     {
         if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;

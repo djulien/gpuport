@@ -53,9 +53,9 @@
 //#ifdef SIZEOF
 // #undef SIZEOF //avoid conflict
 //#endif
-//#ifndef SIZEOF
+#ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
-//#endif
+#endif
 //template version from http://www.cplusplus.com/forum/general/4125/
 //template< typename T, size_t N >
 //size_t ArraySize( T (& const)[ N ] ) { return N; }
@@ -204,7 +204,7 @@ public: //methods
         /*if (restart)*/ m_started = elapsed_msec();
         return retval;
     }
-private: //data members
+protected: //data members
     double m_started; //= -elapsed_msec();
     const char* m_label;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
@@ -265,6 +265,12 @@ inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second
 {
     elapsed_t delta = now() - started;
     started += delta; //reset to now() each time called
+    return scaled? (double)delta * scaled / SDL_TickFreq(): delta; //return actual time vs. #ticks
+}
+inline double elapsed(const elapsed_t& started, int scaled = 1) //Freq = #ticks/second
+{
+    elapsed_t delta = now() - started;
+//    started += delta; //reset to now() each time called
     return scaled? (double)delta * scaled / SDL_TickFreq(): delta; //return actual time vs. #ticks
 }
 //inline double elapsed_usec(uint64_t started)
@@ -800,7 +806,7 @@ public: //ctor/dtor
                     all().push_back(this); //cleanup() must be a static member, so make a list and do it all once at the time
                 }
     }
-    virtual ~mySDL_AutoLib() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started), m_srcline); } //debug(RED_MSG "mySDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
+    virtual ~mySDL_AutoLib() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //debug(RED_MSG "mySDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoLib& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -824,7 +830,7 @@ public: //operators
     }
 //public: //methods
 //    void quit()
-private: //helpers
+protected: //helpers
     static void first_time(/*const SDL_Lib* dummy,*/ SrcLine srcline = 0)
     {
         atexit(cleanup); //SDL_Quit); //defer cleanup in case caller wants more SDL later
@@ -897,7 +903,7 @@ private: //helpers
         debug_level(12, BLUE_MSG << dummy << ENDCOLOR_ATLINE(srcline));
     }
 #endif
-private: //data members
+protected: //data members
 //    static int m_count = 0;
     SDL_SubSystemFlags m_flags;
     elapsed_t m_started;
@@ -1008,7 +1014,7 @@ public: //ctors/dtors
         reset(wnd, NVL(srcline, SRCLINE)); //take ownership of window after checking
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
     }
-    virtual ~mySDL_AutoWindow() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started), m_srcline); } //debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
+    virtual ~mySDL_AutoWindow() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
     mySDL_AutoWindow(const mySDL_AutoWindow& that) { reset(((mySDL_AutoWindow)that).release()); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -1229,7 +1235,7 @@ public: //named arg variants
         struct RenderParams render_params;
         return render(unpack(render_params, named_params), Unpacked{});
     }
-private: //named arg variants
+protected: //named arg variants
     static auto create(const CreateParams& params, Unpacked) { return create(params.title, /*params.x, params.y, params.w, params.h,*/ params.rect, params.flags, params.srcline); }
     auto render(const RenderParams& params, Unpacked) { VOID render(params.txtr, params.src, params.dest, /*params.clearfb,*/ params.srcline); }
 public: //static utility methods
@@ -1344,7 +1350,7 @@ public: //static utility methods
         if (!SDL_OK(rndr)) SDL_exc("can't get renderer for window", /*want_throw,*/ srcline);
         return rndr;
     }
-//private: //static helpers
+//protected: //static helpers
     static void deleter(SDL_Window* ptr)
     {
         if (!ptr) return;
@@ -1376,7 +1382,7 @@ public: //static utility methods
         debug(RED_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
         VOID SDL_DestroyRenderer(rndr);
     }
-private: //members
+protected: //members
 //    SDL_AutoLib sdllib;
     elapsed_t m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
@@ -1661,7 +1667,7 @@ public: //ctors/dtors
         reset(txtr, NVL(srcline, SRCLINE)); //take ownership of window after checking
         debug(GREEN_MSG "SDL_AutoTexture(%p) ctor txtr %p, wnd %p" ENDCOLOR_ATLINE(srcline), /*TEMPL_ARGS.c_str(),*/ this, txtr, wnd);
     }
-    virtual ~mySDL_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << elapsed(m_started), m_srcline); }
+    virtual ~mySDL_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
 //    SDL_AutoTexture(const SDL_AutoTexture& that) { *this = that; } //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -1684,7 +1690,7 @@ public: //factory methods:
     }
 //    static SDL_AutoTexture/*&*/ streaming(/*SDL_Renderer* rndr*/ SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { return streaming(/*rndr*/ wnd, w, h, 0, 0, NVL(srcline, SRCLINE)); }
 #endif
-    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = MAKE_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
+    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = MAKE_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, int w_pad = 0, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
     {
 //        bool wnd_owner = false;
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
@@ -1708,7 +1714,8 @@ public: //factory methods:
 //        if (!SDL_OK(rndr)) SDL_exc("get window renderer", srcline);
 //        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
         VOID SDL_AutoWindow<>::virtsize(wnd, &wh, NVL(srcline, SRCLINE));
-        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ wh.w, wh.h), wnd, NVL(srcline, SRCLINE));
+        if (!w_pad) w_pad = wh.w; //use actual for window width, pad pitch for txtr
+        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ w_pad/*? w_pad: wh.w*/, wh.h), wnd, NVL(srcline, SRCLINE));
 //        auto retval = SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w? w: DONT_CARE, h? h: DONT_CARE), /*wnd,*/ NVL(srcline, SRCLINE));
 //        /*if (wnd_owner)*/ retval.m_wnd.reset(wnd); //take ownership; TODO: allow caller to keep ownership?
 //        return retval;
@@ -1794,7 +1801,7 @@ public: //methods
 //        exc_soft(RED_MSG "TODO: leave locked?" ENDCOLOR);
         if (!SDL_OK(SDL_LockTexture(txtr, rect, &pxbuf, &pitch))) SDL_exc("lock texture");
 //        if (pitch != m_cached.pitch) exc("")
-        memcpy(pxbuf, pixels, m_cached.wh.h * m_cached.pitch);
+        VOID xfr(pxbuf, pixels, m_cached.wh.h * m_cached.pitch, NVL(srcline, SRCLINE));
         VOID SDL_UnlockTexture(txtr);
 #endif
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
@@ -1829,6 +1836,7 @@ public: //named arg variants
             CONST SDL_Window* wnd = MAKE_WINDOW; //(SDL_Window*)-1; //special value to create new window
   //          int w = 0, h = 0;
             const SDL_Size* wh = NO_SIZE;
+            int w_pad = 0;
 //            int& w = size.w; //allor caller to set individually as well
 //            int& h = size.h;
             SDL_Format fmt = NO_FORMAT;
@@ -1860,9 +1868,9 @@ public: //named arg variants
         struct UpdateParams update_params;
         VOID update(unpack(update_params, named_params), Unpacked{});
     }
-private: //named arg variant helpers
+protected: //named arg variant helpers
     auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.perf, params.srcline); }
-    static auto create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.fmt, params.access, params.srcline); }
+    static auto create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_pad, params.fmt, params.access, params.srcline); }
 public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
 //    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
@@ -1917,6 +1925,11 @@ public: //static helper methods
 //[](SDL_Surface* surf){ 
         debug(BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
         VOID SDL_DestroyTexture(ptr);
+    }
+    static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
+    {
+        debug(BLUE_MSG "txtr xfr " << xfrlen << " from " << pixels << " to " << pxbuf << ENDCOLOR_ATLINE(srcline));
+        VOID memcpy(pxbuf, pixels, xfrlen);
     }
 private: //member vars
 //    SDL_AutoLib sdllib;
