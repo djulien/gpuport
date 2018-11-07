@@ -96,6 +96,7 @@ bool isRPi()
     double row_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
     double frame_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
     double fps(SrcLine srcline = 0) const { return (double)1 / frame_time(srcline); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+//check for null ptr (can happen with dynamically allocated memory):
     void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline)); }
 //operators:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that)
@@ -146,6 +147,8 @@ bool isRPi()
  } ScreenConfig;
 #endif
 
+//kludge: for now read it from config file
+//TODO: read actual values from memory
  bool read_config(int which, ScreenConfig* cfg, SrcLine srcline = 0)
  {
 //    cfg->screen = -1;
@@ -270,6 +273,9 @@ bool isRPi()
  #include <memory> //std::unique_ptr<>
  #define XScreen  Screen //avoid confusion
  #define XDisplay  Display //avoid confusion
+#ifdef SIZEOF
+ #undef SIZEOF //avoid conflict with xf86 def
+#endif
 
 // #pragma message("X11")
 

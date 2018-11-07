@@ -38,7 +38,7 @@
 //#define RET_VOID
 
 
-//accept variable #3 macro args:
+//accept variable # up to 3 - 4 macro args:
 #ifndef UPTO_3ARGS
  #define UPTO_3ARGS(one, two, three, four, ...)  four
 #endif
@@ -50,9 +50,9 @@
 //these "functions" are macros to allow compiler folding and other optimizations
 
 //get #elements in array:
-#ifdef SIZEOF
- #undef SIZEOF //avoid conflict
-#endif
+//#ifdef SIZEOF
+// #undef SIZEOF //avoid conflict with X11
+//#endif
 #ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 #endif
@@ -1848,7 +1848,7 @@ public: //named arg variants
             SrcLine srcline = 0;
         };
     template <typename CALLBACK>
-    static auto create(CALLBACK&& named_params)
+    static /*auto*/ mySDL_AutoTexture create(CALLBACK&& named_params)
     {
         struct CreateParams create_params;
         return create(unpack(create_params, named_params), Unpacked{});
@@ -1873,7 +1873,7 @@ public: //named arg variants
     }
 protected: //named arg variant helpers
     auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.perf, params.srcline); }
-    static auto create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_pad, params.fmt, params.access, params.srcline); }
+    static /*auto*/ mySDL_AutoTexture create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_pad, params.fmt, params.access, params.srcline); }
 public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
 //    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
@@ -2217,7 +2217,7 @@ void fullscreen_test()
         debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0], perf_stats[1], perf_stats[2], perf_stats[3], perf_stats[4]);
         for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
         ++numfr;
-        VOID SDL_Delay(2 sec);
+        VOID SDL_Delay(1 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
     debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr, total_stats[1] / numfr, total_stats[2] / numfr, total_stats[3] / numfr, total_stats[4] / numfr);
@@ -2236,7 +2236,7 @@ void fullscreen_test()
             debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0], perf_stats[1], perf_stats[2], perf_stats[3], perf_stats[4]);
             for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
             ++numfr;
-            VOID SDL_Delay(0.5 sec);
+            VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
     debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr, total_stats[1] / numfr, total_stats[2] / numfr, total_stats[3] / numfr, total_stats[4] / numfr);
