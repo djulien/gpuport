@@ -1932,7 +1932,7 @@ public: //static helper methods
     static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
     {
         debug(BLUE_MSG "txtr xfr " << xfrlen << " from " << pixels << " to " << pxbuf << ENDCOLOR_ATLINE(srcline));
-        VOID memcpy(pxbuf, pixels, xfrlen, NVL(srcline, SRCLINE));
+        VOID memcpy(pxbuf, pixels, xfrlen);
     }
 private: //member vars
 //    SDL_AutoLib sdllib;

@@ -92,10 +92,11 @@ bool isRPi()
     int aspect_ratio; //configured, not calculated
     int frame_rate; //configured, not calculated
 //calculated fields:
-    double aspect() const { return (double)htotal / vtotal; }
-    double row_time() const { return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
-    double frame_time() const { return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    double fps() const { return (double)1 / frame_time(); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    double aspect(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal / vtotal; }
+    double row_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal / dot_clock / 1000; } //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
+    double frame_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    double fps(SrcLine srcline = 0) const { return (double)1 / frame_time(srcline); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline)); }
 //operators:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that)
     {
@@ -104,6 +105,7 @@ bool isRPi()
 //    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
 //    return ss.str();
 //    ostrm << "SDL_Rect";
+        if (!&that) { ostrm << "{NULL}"; return ostrm; } //failed to load
         ostrm << "{screen# " << that.screen;
         ostrm << ", " << (that.dot_clock / 1000) << " Mhz";
         ostrm << ", hres " << that.hdisplay << " + " << that.hlead << "+" << that.hsync << "+" << that.htrail << " = " << that.htotal;

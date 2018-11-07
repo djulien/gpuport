@@ -1,0 +1,9 @@
+#!../player.js -a -b #comment
+{
+    a: 1,
+    b: 2,
+}
+{
+    "key": "key2",
+}
+#eof

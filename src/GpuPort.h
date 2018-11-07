@@ -7,6 +7,7 @@
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 #include <algorithm> //std::min()
 #include <unistd.h> //usleep()
+#include <thread> //std::thread::get_id()
 
 #include "sdl-helpers.h"
 #include "rpi-helpers.h"
@@ -29,7 +30,7 @@
 /// High-level interface to GpuPort:
 //
 
-#define MHz  *1e6
+#define MHz  *1000000 //must be int for template param; //*1e6
 
 #define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
 
@@ -69,25 +70,27 @@ class GpuPort
 {
 //    const int W = NODEBITS * 3 - 1, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
     using NODEROW = NODEVAL[H_PAD]; //universe
-    using NODEBUF = NODEVAL[NUM_UNIV + 1][H_PAD]; //caller-rendered 2D node (pixel) buffer; one extra row for frame info
+    using NODEBUF = NODEVAL[NUM_UNIV][H_PAD]; //caller-rendered 2D node (pixel) buffer
 //    using XFRBUF = NODEVAL[W][VMAX]; //node buf bit banged according to protocol; staging area for txtr xfr to GPU
 public: //ctors/dtors
     explicit GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {}
     GpuPort(int screen = 0, key_t shmkey = 0, int vgrp = 1, SrcLine srcline = 0):
-        m_nodebuf(shmalloc_typed<NODE_ROW>(sizeof(NODEBUF), key, NVL(srcline, SRCLINE)), shmfree),
-        FrameInfo(m_nodebuf.get()),
-        Nodes(m_nodebuf.get() + 1),
+        m_nodebuf(shmalloc_typed<NODEROW>(SIZEOF(NODEBUF) + 1, shmkey, NVL(srcline, SRCLINE)), shmfree), //one extra row for frame info
+        nodes(static_cast<NODEROW*>(m_nodebuf.get())[1]), //use first row for frame info
+        frinfo(static_cast<FrameInfo*>(m_nodebuf.get())[0]),
+        m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))),
+        frame_time(m_cfg->frame_time(NVL(srcline, SRCLINE))),
         m_started(now()),
         m_srcline(srcline)
     {
-        if (sizeof(FrameInfo) > sizeof(NODEROW)) exc_hard(RED_MSG << "FrameInfo " << sizeof(FrameInfo) << " too large for node buf row " << sizeof(NODEROW) << ENDCOLOR_ATLINE(srcline));
-        if (!&Nodes || !&FrameInfo) exc_hard(RED_MSG "missing ptrs" ENDCOLOR_ATLINE(srcline));
-        const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
-        if (!cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
-        if (!shmexisted(m_nodebuf.get())) m_owner = thrid(); //creator thread = owner
-        frame_time = cfg->frame_time();
-        const int UNIV_LEN = divup(cfg->vdisplay, vgrp);
-        if (UNIV_LEN > VMAX) exc_hard(RED_MSG "video settings " << *cfg << ", vgroup " << vgrp << " require univ len " << UNIV_LEN << " exceeding max " << VMAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
+        if (sizeof(frinfo) > sizeof(nodes[0] /*NODEROW*/)) exc_hard(RED_MSG << "FrameInfo " << sizeof(frinfo) << " too large for node buf row " << sizeof(nodes[0] /*NODEROW*/) << ENDCOLOR_ATLINE(srcline));
+        if (!&nodes || !&frinfo) exc_hard(RED_MSG "missing ptrs" ENDCOLOR_ATLINE(srcline));
+//        const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
+//        if (!cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
+//        frame_time = cfg->frame_time();
+        if (!shmexisted(m_nodebuf.get())) frinfo.owner = thrid(); //creator thread = owner
+        const int UNIV_LEN = divup(m_cfg->vdisplay, vgrp);
+        if (UNIV_LEN > VMAX) exc_hard(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgrp << " require univ len " << UNIV_LEN << " exceeding max " << VMAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
 //video config => xres, yres, clock => W = NODEBITS * 3 - 1, H = vres / vgroup, fps = clock / xres / yres
 //        const int W = NODEBITS * 3 - 1; //, H = divup(m_cfg->vdisplay, vgroup), H_PAD = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL); //pixel buf sizes
         SDL_Size wh(XFRW, UNIV_LEN); //, wh_pad(XFRW_PAD, UNIV_LEN);
@@ -104,9 +107,9 @@ public: //ctors/dtors
 //        ostrm << "\n{cfg " << *that.m_cfg;
         ostrm << "\n{" << &that;
         ostrm << ", fr time " << that.frame_time;
-        ostrm << ", owner? " << that.ismine() << " (" << that.m_owner << ")";
-        ostrm << ", frinfo #fr " << that.FrameInfo.numfr << ", next time " << that.FrameInfo.nexttime;
-        ostrm << ", nodebuf " << that.m_nodebuf << ", nodes at ofs " << sizeof(NODEROW);
+        ostrm << ", mine? " << that.ismine() << " (owner " << that.m_owner << ")";
+        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", next time " << that.frinfo.nexttime;
+        ostrm << ", nodebuf " << that.m_nodebuf << ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
         ostrm << ", txtr " << that.m_txtr;
         ostrm << "}";
@@ -119,42 +122,48 @@ public: //methods
     {
         perf_stats[0] = m_txtr.perftime(); //caller's render time
         frinfo.bits |= more;
-        if (frinfo->bits != ALL_UNIV) { wait(); return false; } //not all universes are rendered/ready
-        wake();
+        if (!ismine())
+        {
+            auto svfrnum = frinfo->frnum;
+            if (frinfo.bits == ALL_UNIV) wake(); //wake owner to xfr all universes to GPU
+            while (frinfo.frnum == svfrnum) wait(); //wait for GPU xfr to finish; loop compensates for spurious wakeups
+            return (num_threads() > 1); //return to caller to render next frame
+        }
+        while (frinfo.bits != ALL_UNIV) wait(); //wait for remaining universes; loop handles spurious wakeups
         perf_stats[1] = m_txtr.perftime(); //ipc wait time
-        if (!ismine()) return true;
-
-
-
+//all universes rendered; send to GPU:
+//        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
+//        perf_stats[1] = m_txtr.perftime(); //bitbang time
+        frinfo.bits = 0;
+        frinfo.nexttime = ++frinfo.frnum * frame_time; //update fr# and timestamp of next frame before waking other threads
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/&m_nodebuf[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] += perf_stats[i];
+    }
+//inter-thread/process sync:
+//SDL is not thread-safe; only owner thread is allowed to render to window
 //TODO: use ipc?; causes extra overhead but avoids polling (aside from extraneous wakeups)
 //sluz(m_frinfo->bits, NVL(srcline, SRCLINE)); //wait until frame is rendered
 //            usleep(2000); //2 msec; wait for remaining universes to be rendered (by other threads or processes)
 //TODO        if (NUM_THREAD > 1) wake_others(NVL(srcline, SRCLINE)); //let other threads/processes overwrite nodebuf while xfrbuf is going to GPU
-//all universes rendered; send to GPU:
-//        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
-//        perf_stats[1] = m_txtr.perftime(); //bitbang time
-        m_frinfo->bits = 0;
-        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/&m_nodebuf[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
-        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo->times[i] += perf_stats[i];
-        m_frinfo->nexttime = m_frinfo->numfr++ * m_frtime; //m_cfg->frame_time();
-    }
-//inter-thread/process sync:
-//SDL is not thread-safe; only owner thread is allowed to render to window
-    static auto thrid() { return get_id(); }
-    bool ismine() const { return (thrid() == m_owner); }
+    static inline auto /*std::thread::id*/ thrid() { return std::this_thread::get_id(); }
+    bool ismine() const { return (thrid() == frinfo.owner); }
+    int num_threads() { return shmnattch(m_nodebuf.get()); }
+    static const UNIVMAP ALL_UNIV = (1 << NUM_UNIV) - 1;
     void wait()
     {
-        int numth = shmnattch(m_nodebuf.get()); //get fresh count in case #threads changed
-        if (numth < 2) return; //no other threads/processes to wait for
-        if (!ismine()) waiters.push(this);
-        sleep();
+        if (num_threads() < 2) return; //no other threads/processes can wake me; get fresh count in case #threads changed
+        if (!ismine()) waiters().push_back(thrid()); //this);
+#if 0 //TODO
+        sleep(); //wait for another process/thread to wake me
+#endif
     }
     void wake()
     {
-        int numth = shmnattch(m_nodebuf.get()); //get fresh count in case #threads changed
-        if (numth < 2) return; //no other threads/processes to wake up
-        if (!ismine()) wake(m_owner);
-        else wake(waiters);
+        if (num_threads() < 2) return; //no other threads/processes to wake; get fresh count in case #threads changed
+#if 0 //TODO
+        if (!ismine()) wake(frinfo.owner);
+        else wake(waiters());
+#endif
     }
 public: //named arg variants
         struct CtorParams
@@ -168,7 +177,7 @@ public: //named arg variants
     template <typename CALLBACK>
     GpuPort(CALLBACK&& named_params): GpuPort(unpack(ctor_params(), named_params), Unpacked{}) {} //perfect fwd to arg unpack
 private: //named arg variants
-    GpuPort(const CtorParams& params, Unpacked): GpuPort(params.screen, params.shmkey, params.srcline) {}
+    GpuPort(const CtorParams& params, Unpacked): GpuPort(params.screen, params.shmkey, params.vgroup, params.srcline) {}
 private: //helpers
 //    void bitbang(SrcLine srcline = 0) //m_nodebuf, m_xfrbuf)
 //    {
@@ -184,9 +193,9 @@ private: //helpers
     {
         using super = SDL_AutoTexture<XFRTYPE>;
 //        const SDL_Size m_wh;
-public: //ctors/dtors
-        template <typename ... ARGS>
-        explicit txtr_bb(/*int w, int h,*/ ARGS&& ... args): super(std::forward<ARGS>(args) ...) {} //perfect fwd
+//public: //ctors/dtors
+//        template <typename ... ARGS>
+//        explicit txtr_bb(/*int w, int h,*/ ARGS&& ... args): super(std::forward<ARGS>(args) ...) {} //perfect fwd
 public: //static helper methods
 //override for bit-banged xfr:
         static void xfr(void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline = 0) //h * pitch(NUM_UNIV)
@@ -201,31 +210,36 @@ public: //static helper methods
             wake(); //wake other threads/processes that are waiting to update more nodes
         }
     };
-public: //data members
-    NODEBUF& nodes;
-    FrameInfo& frinfo;
-    const double frame_time;
-    double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
-    int NUM_THREADS() { return shmnattch(m_nodebuf.get()); }
 private: //data members
-//    static int m_count = 0;
-//    XFRBUF m_xfrbuf; //just use txtr
-    std::thead::id m_owner;
+    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
+//    AutoShmary<NODEBUF, false> m_nodebuf; //initialized to 0
+    std::unique_ptr<NODEROW, std::function<void(NODEROW*)>> m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
+//    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
+    const ScreenConfig* m_cfg; //CAUTION: must be initialized before frame_time (below)
+public: //data members
+    double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     struct FrameInfo
     {
         std::mutex mutex;
+        std::thread::id owner; //window/renderer owner
         std::atomic<UNIVMAP> bits; //one Ready bit for each universe
-        std::atomic<uint32_t> nexttime; //time of next frame (msec)
         std::atomic<uint32_t> numfr; //#frames rendered / next frame#
+        std::atomic<uint32_t> nexttime; //time of next frame (msec)
         uint64_t times[SIZEOF(perf_stats)]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
     }; //FrameInfo;
-    static const UNIVMAP ALL_UNIV = (1 << NUM_UNIV) - 1;
+    NODEBUF& nodes;
+    FrameInfo& frinfo;
+    const double& frame_time;
+private: //data members
+//    static int m_count = 0;
+//    XFRBUF m_xfrbuf; //just use txtr
+    static std::vector<std::thread::id>& waiters() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static std::vector<std::thread::id> m_all;
+        return m_all;
+    }
 //    const int H;
 //    const ScreenConfig cfg;
-    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
-//    AutoShmary<NODEBUF, false> m_nodebuf; //initialized to 0
-    std::unique_ptr<NODEROW, std::function<void(NODEROW*)>> m_nodebuf;
-//    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
     const elapsed_t m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
