@@ -55,7 +55,10 @@ files.forEach((filearg, inx) => (!inx? shebang_args(filearg): [filearg]).forEach
 
 function readfile(path)
 {
-    debug(`read file ${path} ...`.cyan_lt);
+    if (path.match(/^[-+].+|=/)) { debug(`TODO: handle option '${str}'`.yellow_lt); return; }
+    debug(`read file '${path}' ...`.cyan_lt);
+    const infile = (path == "-")? process.stdin: fs.createReadStream(path);
+    infile.pipe(
 }
 
 
@@ -75,7 +78,7 @@ function readfile(path)
 //!hoist: module.exports.shebang_args =
 function shebang_args(str)
 {
-    debug(`split shebang args from: ${str}`.blue_lt);
+    debug(`split shebang args from: '${str}'`.blue_lt);
 /*
     const COMMENT_xre = XRegExp(`
         \\s*  #skip white space
@@ -110,6 +113,7 @@ function shebang_args(str)
         \\s*
 */
 //new Regex(@"(?< switch> -{1,2}\S*)(?:[=:]?|\s+)(?< value> [^-\s].*?)?(?=\s+[-\/]|$)");
+    try{ //got a bad regex lib?
     const KEEP_xre = XRegExp(`
 #        (?<= \\s )  #leading white space (look-behind)
 #        (?: ^ | \\s+ )  #skip leading white space (greedy, not captured)
@@ -152,6 +156,7 @@ function shebang_args(str)
 //    }
 //    });
     return matches;
+    }catch(exc) { console.error(`shebang_args: ${exc}`.red_lt); return [str]; }
 }
 //(?:x)  non-capturing match
 //x(?=y)  positive lookahead

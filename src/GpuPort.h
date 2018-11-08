@@ -112,6 +112,7 @@ class GpuPort
 {
 protected: //helper classes + structs
 //template <typename PXTYPE = Uint32>
+#if 0
 //class mySDL_AutoTexture_bitbang: public mySDL_AutoTexture<PXTYPE>
 //override txtr xfr with bit banging:
 //txtr needs to be locked to update anyway, so just bit bang into txtr rather than an additional buffer + mem xfr
@@ -139,11 +140,12 @@ public: //static helper methods
             wake(); //wake other threads/processes that are waiting to update more nodes
         }
     };
+#endif
     const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
     const int UNIV_LEN; //= divup(m_cfg->vdisplay, vzoom);
     SDL_Size m_wh; //kludge: need param to txtr ctor; CAUTION: must occur before m_txtr; //(XFRW, UNIV_LEN);
 //kludge: need class member for SIZEOF, so define it up here:
-    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
+    /*txtr_bb*/ SDL_AutoTexture<XFRTYPE> m_txtr;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //    using PERF_STATS = decltype(m_txtr.perf_stats); //double[SIZEOF(txtr_bb.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
@@ -158,6 +160,21 @@ public: //static helper methods
         static const uint32_t FRINFO_MAGIC = 0x12345678;
         const uint32_t sentinel = FRINFO_MAGIC;
         bool isvalid() const { return (sentinel == FRINFO_MAGIC); }
+public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameInfo& that)
+        {
+            ostrm << "{" << &that;
+            if (!&that) ostrm << " (NULL)";
+            else
+            {
+                ostrm << ", bits " << std::hex << that.bits;
+                ostrm << ", #fr " << that.numfr;
+                ostrm << ", time " << that.nexttime;
+                ostrm << ", magic " << std::hex << that.sentinel;
+                if (that.isvalid()) ostrm << " INVALID";
+            }
+            return ostrm;
+        }
     };
 //    using FrameInfo_pad = char[divup(sizeof(FrameInfo), sizeof(NODEROW))]; //#extra NODEROWs needed to hold FrameInfo; kludge: "using" needs struct/type; use sizeof() to get value
 //    union NODEROW_or_FrameInfo //kludge: allow cast to either type
@@ -182,11 +199,14 @@ public: //static helper methods
 //    using XFRBUF = NODEVAL[W][UNIV_MAX]; //node buf bit banged according to protocol; staging area for txtr xfr to GPU
 //    using NODEBUF_FrameInfo = NODEROW_or_FrameInfo[HPAD + 1]; //1 extra row to hold frame info
 //    const std::function<int(void*)> shmfree_shim; //CAUTION: must be initialized before m_nodebuf
-    static void shmfree_shim(void* ptr, SrcLine srcline = 0) { shmfree(ptr, srcline); }
+//    class NODEBUF_debug; //fwd ref for shmfree_shim
+//    static void shmfree_shim(NODEBUF_debug* ptr, SrcLine srcline = 0) { shmfree(ptr, srcline); }
+    const std::function<int(NODEBUF_FrameInfo*)>& shmfree_shim;
+ //    using NODEBUF_debug_super = std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>; //DRY kludge
     using NODEBUF_debug_super = std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>; //DRY kludge
-    class NODEBUF_debug: public NODBUF_debug_super //std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>
+    class NODEBUF_debug: public NODEBUF_debug_super //std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>
     {
-//        using deleter_t = decltype(shmfree_shim); //std::function<int(NODEBUF_FrameInfo*, SrcLine)>; //shmfree signature
+        using deleter_t = std::function<int(NODEBUF_FrameInfo*)>; //shmfree signature
         using super = NODEBUF_debug_super; //std::unique_ptr<NODEBUF_FrameInfo, deleter_t>; //std::function<int(NODEBUF_FrameInfo*)>>; //NOTE: shmfree returns int, not void
 public: //ctors/dtors
 //        template <typename ... ARGS>
@@ -202,26 +222,42 @@ public: //data members
 public: //operators
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const NODEBUF_debug& that)
         {
-            ostrm << "NODEBUF"; //<< my_templargs();
+//            ostrm << "NODEBUF"; //<< my_templargs();
             ostrm << "{" << &that;
-            if (!that.frinfo.isvalid()) ostrm << " INVALID";
+//            if (!that.frinfo.isvalid()) ostrm << " INVALID";
             ostrm << ": key " << std::hex << shmkey(that.get());
             ostrm << ", size " << shmsize(that.get()) << " (" << (shmsize(that.get()) / sizeof(NODEROW)) << " rows)";
             ostrm << ", #attch " << shmnattch(that.get());
             ostrm << " (existed? " << shmexisted(that.get()) << ")";
+            ostrm << ", frinfo " << that.frinfo;
             ostrm << "}";
             return ostrm; 
         }
     };
+    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
+ private: //data members
+//    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
+//    AutoShmary<NODEBUF, false> m_nodebuf; //initialized to 0
+//    std::unique_ptr<NODEROW, std::function<void(NODEROW*)>> m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
+//public: //data members
+//    PERF_STATS perf_stats; //double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+//    const std::function<int(void*)> shmfree_shim; //CAUTION: must be initialized before m_nodebuf
+    NODEBUF_debug m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
+//    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
+//    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before frame_time (below)
+public: //data members
+    NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
+    const double& frame_time;
+    FrameInfo& frinfo;
 public: //ctors/dtors:
     explicit GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {}
     GpuPort(int screen = 0, key_t shmkey = 0, int vzoom = 1, SrcLine srcline = 0):
         m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))),
         UNIV_LEN(divup(m_cfg? m_cfg->vdisplay: UNIV_MAX, vzoom)),
         m_wh(XFRW, std::min(UNIV_LEN, UNIV_MAX)), //kludge: need to init before passing to txtr ctor below
-        m_txtr(txtr_bb::create(NAMED{ _.wh = &m_wh; _.w_padded = XFRW_PADDED; _.screen = screen; NVL(srcline, SRCLINE); })),
+        m_txtr(SDL_AutoTexture<XFRTYPE>::create(NAMED{ _.wh = &m_wh; _.w_padded = XFRW_PADDED; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); })),
         shmfree_shim(std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))),
-        m_nodebuf(shmalloc_typed<NODEBUF_FrameInfo>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), shmfree_shim),
+        m_nodebuf(shmalloc_typed<NODEBUF_FrameInfo>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), shmfree_shim), //std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))),
         nodes(m_nodebuf.nodes), // /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
         frinfo(m_nodebuf.frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
         frame_time(m_cfg->frame_time(NVL(srcline, SRCLINE))),
@@ -253,7 +289,7 @@ public: //ctors/dtors:
         ostrm << "\n{" << &that;
         ostrm << ", fr time " << that.frame_time;
         ostrm << ", mine? " << that.ismine() << " (owner " << that.frinfo.owner << ")";
-        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", next time " << that.frinfo.nexttime;
+        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", time " << that.frinfo.nexttime;
         ostrm << ", nodebuf " << that.m_nodebuf; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
         ostrm << ", txtr " << that.m_txtr;
@@ -281,7 +317,9 @@ public: //methods
 //        perf_stats[1] = m_txtr.perftime(); //bitbang time
         frinfo.bits = 0;
         frinfo.nexttime = ++frinfo.frnum * frame_time; //update fr# and timestamp of next frame before waking other threads
-        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/&m_nodebuf[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+//        static void xfr_bb(void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
+//        static XFR xfr_bb_shim(std::bind(xfr_bb, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))),
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/&m_nodebuf[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.xfr = xfr_bb; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
         for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] += perf_stats[i];
     }
 //inter-thread/process sync:
@@ -330,6 +368,18 @@ private: //helpers
 //        SDL_Size wh(NUM_UNIV, m_txtr->wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vzoom, and compile-time guess on max univ len)
 //        debug(BLUE_MSG "bit bang " << wh << " node buf => " << m_txtr->wh << " txtr" ENDCOLOR_ATLINE(srcline));
 //    }
+    static void xfr_bb(void* txtrbuf, const void* nodebuf, size_t xfrlen) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
+    {
+        SrcLine srcline2 = 0; //TODO: bind from caller?
+//            VOID memcpy(pxbuf, pixels, xfrlen);
+//            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vzoom, and compile-time guess on max univ len)
+//            int wh = xfrlen; //TODO
+        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW_PADDED, xfrlen / XFRW_PADDED / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
+        debug(BLUE_MSG "bit bang xfr " << wh_bb << " node buf => " << wh_txtr << " txtr, limit " << std::min(wh_bb.h, wh_txtr.h) << " rows" ENDCOLOR_ATLINE(srcline2));
+//TODO: bit bang here
+        VOID memcpy(txtrbuf, nodebuf, xfrlen);
+        wake(); //wake other threads/processes that are waiting to update more nodes
+    }
 private: //data members
 //    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
 //    AutoShmary<NODEBUF, false> m_nodebuf; //initialized to 0
@@ -337,13 +387,13 @@ private: //data members
 //public: //data members
 //    PERF_STATS perf_stats; //double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //    const std::function<int(void*)> shmfree_shim; //CAUTION: must be initialized before m_nodebuf
-    NODEBUF_debug m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
+//    NODEBUF_debug m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
 //    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before frame_time (below)
-public: //data members
-    NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
-    const double& frame_time;
-    FrameInfo& frinfo;
+//public: //data members
+//    NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
+//    const double& frame_time;
+//    FrameInfo& frinfo;
 private: //data members
 //    static int m_count = 0;
 //    XFRBUF m_xfrbuf; //just use txtr

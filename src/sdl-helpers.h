@@ -1135,9 +1135,7 @@ public: //operators
         /*Uint32*/ mySDL_Format fmt = SDL_GetWindowPixelFormat(wnd);
         if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", false, srcline);
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
-        SDL_RendererInfo info = {0};
         SDL_Renderer* rndr = renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd);
-        if (rndr && !SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info", srcline);
         std::ostringstream flag_desc;
         /*Uint32*/ SDL_WindowFlags flags = SDL_GetWindowFlags(wnd), svflags = flags;
         for (const auto& pair: SDL_WindowFlagNames())
@@ -1152,7 +1150,15 @@ public: //operators
         ostrm << FMT(", flags 0x%x (") << svflags << flag_desc.str().substr(1) << ")"; //FMT(", flags %s") << flag_desc.str().c_str() + 1;
 //        ostrm << *renderer(wnd); //FMT(", rndr %p") << renderer(wnd);
         ostrm << FMT(", rndr %p ") << rndr; //<< (rndr? renderer_desc(info): "(none)");
-        if (rndr) ostrm << info;
+        if (rndr) //TODO: extend rendererinfo with scale info
+        {
+            float hscale, vscale;
+            SDL_RendererInfo info; //= {0};
+            VOID SDL_RenderGetScale(rndr, &hscale, &vscale);
+            if (!SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info", srcline);
+            ostrm << ", scale " << hscale << " x " << vscale << " ";
+            ostrm << info;
+        }
         ostrm << "}";
         return ostrm; 
     }
@@ -1787,7 +1793,10 @@ public: //methods
 //    static const int NUM_STATS = 4;
     double perf_stats[4]; //in case caller doesn't provide a place
     inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
-    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = 0, double* perf = 0, SrcLine srcline = 0)
+//    template <typename XFR> //allow lamba function as param; see https://stackoverflow.com/questions/16111285/how-to-pass-and-execute-anonymous-function-as-parameter-in-c11
+//        VOID memcpy(pxbuf, pixels, xfrlen);
+    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
+    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = 0, double* perf = 0, /*XFR&&*/ XFR xfr = 0, SrcLine srcline = 0)
     {
         SDL_Texture* txtr = get();
 //this is *the* main function; performance is important so measure it:
@@ -1797,6 +1806,7 @@ public: //methods
 //        if (!pitch) pitch = cached.bounds.w * sizeof(pixels[0]); //Uint32);
 //        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
         if (want_pitch && (want_pitch != m_cached.pitch /*wh.w * sizeof(pixels[0])*/)) exc(RED_MSG "pitch mismatch: got %d, expected %d" ENDCOLOR_ATLINE(srcline), want_pitch, m_cached.pitch); //wh.w * sizeof(pixels[0]), want_pitch);
+        if (!xfr) xfr = memcpy;
 #if 0 //NOTE: wiki says this is slow, and to use streaming texture lock/unlock instead
 //https://wiki.libsdl.org/SDL_UpdateTexture?highlight=%28%5CbCategoryAPI%5Cb%29%7C%28SDLFunctionTemplate%29
         if (!SDL_OK(SDL_UpdateTexture(txtr, rect, pixels, cached.pitch))) SDL_exc("update texture", srcline);
@@ -1805,8 +1815,8 @@ public: //methods
         void* pxbuf;
 //        exc_soft(RED_MSG "TODO: leave locked?" ENDCOLOR);
         if (!SDL_OK(SDL_LockTexture(txtr, rect, &pxbuf, &pitch))) SDL_exc("lock texture");
-//        if (pitch != m_cached.pitch) exc("")
-        VOID xfr(pxbuf, pixels, m_cached.wh.h * m_cached.pitch, NVL(srcline, SRCLINE));
+//        VOID xfr(pxbuf, pixels, m_cached.wh.h * m_cached.pitch, NVL(srcline, SRCLINE));
+        std::forward<XFR>(xfr)(pxbuf, pixels, m_cached.wh.h * m_cached.pitch); //perfect fwd to memcpy; //, NVL(srcline, SRCLINE));
         VOID SDL_UnlockTexture(txtr);
 #endif
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
@@ -1865,6 +1875,7 @@ public: //named arg variants
 //            int& h = size.h;
             int pitch = 0;
             double* perf = 0;
+            XFR xfr = 0; //memcpy;
             SrcLine srcline = 0;
         };
     template <typename CALLBACK>
@@ -1874,7 +1885,7 @@ public: //named arg variants
         VOID update(unpack(update_params, named_params), Unpacked{});
     }
 protected: //named arg variant helpers
-    auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.perf, params.srcline); }
+    auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.perf, params.xfr, params.srcline); }
     static /*auto*/ mySDL_AutoTexture create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_padded, params.fmt, params.access, params.srcline); }
 public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
@@ -1931,11 +1942,11 @@ public: //static helper methods
         debug(BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
         VOID SDL_DestroyTexture(ptr);
     }
-    static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
-    {
-        debug(BLUE_MSG "txtr xfr " << xfrlen << " from " << pixels << " to " << pxbuf << ENDCOLOR_ATLINE(srcline));
-        VOID memcpy(pxbuf, pixels, xfrlen);
-    }
+//    static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
+//    {
+//        debug(BLUE_MSG "txtr xfr " << xfrlen << " from " << pixels << " to " << pxbuf << ENDCOLOR_ATLINE(srcline));
+//        VOID memcpy(pxbuf, pixels, xfrlen);
+//    }
 private: //member vars
 //    SDL_AutoLib sdllib;
 //    Uint32* m_shmbuf; //shared memory pixel array
