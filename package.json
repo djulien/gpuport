@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "colors": "git+https://github.com/djulien/colors.js.git",
-    "magic-globals": "^0.9.1"
+    "magic-globals": "^0.9.1",
+    "xregexp": "^4.2.0"
   }
 }

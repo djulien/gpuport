@@ -965,8 +965,9 @@ const mySDL_DisplayMode* ScreenInfo(SrcLine srcline = 0) { return ScreenInfo(FIR
 //includes Renderer option only because there is a CreateWindow variant for it; otherwise should be a child class
 //        debug(RED_MSG "TODO: add streaming texture" ENDCOLOR_ATLINE(srcline));
 //        debug(RED_MSG "TODO: add shm pixels" ENDCOLOR_ATLINE(srcline));
-template <bool WantRenderer = true> //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
-class mySDL_AutoWindow: public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
+using mySDL_AutoWindow_super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>; //DRY kludge
+template <bool WantRenderer = true> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
+class mySDL_AutoWindow: public mySDL_AutoWindow_super //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 //readable names (mainly for debug msgs):
     static const std::map<SDL_WindowFlags, const char*> SDL_WindowFlagNames()
@@ -1000,7 +1001,7 @@ class mySDL_AutoWindow: public std::unique_ptr<SDL_Window, std::function<void(SD
     }
 protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
-    using super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>;
+    using super = mySDL_AutoWindow_super; //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>;
 public: //ctors/dtors
 //    explicit SDL_AutoWindow(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //InOutDebug inout("auto wnd def ctor", SRCLINE); } //no surface
 //    template <typename ... ARGS>
@@ -1637,8 +1638,9 @@ protected:
 //SDL_Texture ptr auto-cleanup wrapper:
 //includes a few factory helper methods
 //template <bool WantPixelShmbuf = true> //, bool DebugInfo = true>
-template <typename PXTYPE = Uint32>
-class mySDL_AutoTexture: public std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
+using mySDL_AutoTexture_super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>; //DRY kludge
+template <typename PXTYPE = Uint32> //, super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //super DRY kludge
+class mySDL_AutoTexture: public mySDL_AutoTexture_super //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
 {
 //readable names (mainly for debug msgs):
     static const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
@@ -1654,7 +1656,7 @@ class mySDL_AutoTexture: public std::unique_ptr<SDL_Texture, std::function<void(
     }
 protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
-    using super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>;
+    using super = mySDL_AutoTexture_super; //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>;
 public: //ctors/dtors
 //    explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
@@ -1692,7 +1694,7 @@ public: //factory methods:
     }
 //    static SDL_AutoTexture/*&*/ streaming(/*SDL_Renderer* rndr*/ SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { return streaming(/*rndr*/ wnd, w, h, 0, 0, NVL(srcline, SRCLINE)); }
 #endif
-    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = MAKE_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, int w_pad = 0, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
+    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = MAKE_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, int w_padded = 0, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
     {
 //        bool wnd_owner = false;
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
@@ -1716,8 +1718,8 @@ public: //factory methods:
 //        if (!SDL_OK(rndr)) SDL_exc("get window renderer", srcline);
 //        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
         VOID SDL_AutoWindow<>::virtsize(wnd, &wh, NVL(srcline, SRCLINE));
-        if (!w_pad) w_pad = wh.w; //use actual for window width, pad pitch for txtr
-        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ w_pad/*? w_pad: wh.w*/, wh.h), wnd, NVL(srcline, SRCLINE));
+        if (!w_padded) w_padded = wh.w; //use actual for window width, pad pitch for txtr
+        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ w_padded/*? w_padded: wh.w*/, wh.h), wnd, NVL(srcline, SRCLINE));
 //        auto retval = SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w? w: DONT_CARE, h? h: DONT_CARE), /*wnd,*/ NVL(srcline, SRCLINE));
 //        /*if (wnd_owner)*/ retval.m_wnd.reset(wnd); //take ownership; TODO: allow caller to keep ownership?
 //        return retval;
@@ -1839,7 +1841,7 @@ public: //named arg variants
             CONST SDL_Window* wnd = MAKE_WINDOW; //(SDL_Window*)-1; //special value to create new window
   //          int w = 0, h = 0;
             const SDL_Size* wh = NO_SIZE;
-            int w_pad = 0;
+            int w_padded = 0;
 //            int& w = size.w; //allor caller to set individually as well
 //            int& h = size.h;
             SDL_Format fmt = NO_FORMAT;
@@ -1873,7 +1875,7 @@ public: //named arg variants
     }
 protected: //named arg variant helpers
     auto update(const UpdateParams& params, Unpacked) { VOID update(params.pixels, params.rect, params.pitch, params.perf, params.srcline); }
-    static /*auto*/ mySDL_AutoTexture create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_pad, params.fmt, params.access, params.srcline); }
+    static /*auto*/ mySDL_AutoTexture create(const CreateParams& params, Unpacked) { return create(params.wnd, params.screen, params.wh, params.w_padded, params.fmt, params.access, params.srcline); }
 public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
 //    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
