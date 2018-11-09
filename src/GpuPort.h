@@ -1,11 +1,25 @@
 //GPU Port and helpers
 
+//useful refs:
+// https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
+// https://preshing.com/20150316/semaphores-are-surprisingly-versatile/
+// http://cppatomic.blogspot.com/2018/05/modern-effective-c-alternative-to.html
+// https://github.com/preshing/cpp11-on-multicore
+//https://github.com/vheuken/SDL-Render-Thread-Example/
+
+//corefile:
+// https://stackoverflow.com/questions/2065912/core-dumped-but-core-file-is-not-in-current-directory
+// echo "[main]\nunpackaged=true" > ~/.config/apport/settings
+// puts them in /var/crash
+// mkdir ~/.core-files; apport-unpack /var/crash/* ~/.core-files   #makes them readable by gdb
+
+
 #ifndef _GPU_PORT_H
 #define _GPU_PORT_H
 
 #include <unistd.h> //sysconf()
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
-#include <functional> //std::function<>, std::bind(), std::placeholders
+#include <functional> //std::function<>, std::bind(), std::ref(), std::placeholders
 #include <algorithm> //std::min()
 #include <unistd.h> //usleep()
 #include <thread> //std::thread::get_id()
@@ -141,9 +155,24 @@ public: //static helper methods
         }
     };
 #endif
+    template <typename BASE>
+    class ctor_debug: public BASE //TODO: merge with InOut
+    {
+    public:
+        template<typename ... ARGS>
+        ctor_debug(ARGS&& ... args): BASE(std::forward<ARGS>(args) ...) { debug(BLUE_MSG << my_templargs() << " ctor" ENDCOLOR); } //perfect fwd
+    private:
+        static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+        {
+            static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
+            int x = 0, y = 3;
+            y /= x;
+            return m_templ_args;
+        }
+    };
     const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
     const int UNIV_LEN; //= divup(m_cfg->vdisplay, vzoom);
-    SDL_Size m_wh; //kludge: need param to txtr ctor; CAUTION: must occur before m_txtr; //(XFRW, UNIV_LEN);
+    const ctor_debug<SDL_Size> m_wh; //kludge: need param to txtr ctor; CAUTION: must occur before m_txtr; //(XFRW, UNIV_LEN);
 //kludge: need class member for SIZEOF, so define it up here:
     /*txtr_bb*/ SDL_AutoTexture<XFRTYPE> m_txtr;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
@@ -151,27 +180,36 @@ public: //static helper methods
     double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     struct FrameInfo
     {
-        std::mutex mutex; //TODO: multiple render threads/processes
+//        std::mutex mutex; //TODO: multiple render threads/processes
         std::thread::id owner; //window/renderer owner
+//make these atomic so multiple threads can access changing values without locks:
         std::atomic<UNIVMAP> bits; //= 0; //one Ready bit for each universe; NOTE: need to init to avoid "deleted function" errors
         std::atomic<uint32_t> numfr; //= 0; //#frames rendered / next frame#
         std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
         uint64_t times[SIZEOF(perf_stats)]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
         static const uint32_t FRINFO_MAGIC = 0x12345678;
-        const uint32_t sentinel = FRINFO_MAGIC;
+        /*const*/ uint32_t sentinel = FRINFO_MAGIC;
+    public: //methods
+        void init(std::thread::id new_owner)
+        {
+            owner = new_owner;
+            bits.store(0);
+            numfr.store(0);
+            nexttime.store(0);
+            sentinel = FRINFO_MAGIC;
+        }
         bool isvalid() const { return (sentinel == FRINFO_MAGIC); }
-public: //operators
+    public: //operators
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameInfo& that)
         {
             ostrm << "{" << &that;
             if (!&that) ostrm << " (NULL)";
             else
             {
-                ostrm << ", bits " << std::hex << that.bits;
-                ostrm << ", #fr " << that.numfr;
-                ostrm << ", time " << that.nexttime;
-                ostrm << ", magic " << std::hex << that.sentinel;
-                if (that.isvalid()) ostrm << " INVALID";
+                ostrm << ", bits " << std::hex << that.bits.load();
+                ostrm << ", #fr " << that.numfr.load();
+                ostrm << ", time " << that.nexttime.load();
+                if (!that.isvalid()) ostrm << ", magic " << std::hex << that.sentinel << " INVALID";
             }
             return ostrm;
         }
@@ -208,7 +246,7 @@ public: //operators
     {
         using deleter_t = std::function<int(NODEBUF_FrameInfo*)>; //shmfree signature
         using super = NODEBUF_debug_super; //std::unique_ptr<NODEBUF_FrameInfo, deleter_t>; //std::function<int(NODEBUF_FrameInfo*)>>; //NOTE: shmfree returns int, not void
-public: //ctors/dtors
+    public: //ctors/dtors
 //        template <typename ... ARGS>
 //        NODEBUF_debug(ARGS&& ... args):
 //            super(std::forward<ARGS>(args) ...), //perfect fwd; avoids "no matching function" error in ctor init above
@@ -216,17 +254,17 @@ public: //ctors/dtors
             super(ptr, deleter),
             nodes(this->get()->nodes), //CAUTION: "this" needed; compiler forgot about base class methods?
             frinfo(this->get()->frinfo_padded.frinfo) {}
-public: //data members
+    public: //data members
         NODEBUF& nodes; //() { return this->get()->nodes; } //CAUTION: "this" needed; compiler forgot about base class methods?
         FrameInfo& frinfo; //() { return this->get()->frinfo; }
-public: //operators
+    public: //operators
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const NODEBUF_debug& that)
         {
 //            ostrm << "NODEBUF"; //<< my_templargs();
             ostrm << "{" << &that;
 //            if (!that.frinfo.isvalid()) ostrm << " INVALID";
             ostrm << ": key " << std::hex << shmkey(that.get());
-            ostrm << ", size " << shmsize(that.get()) << " (" << (shmsize(that.get()) / sizeof(NODEROW)) << " rows)";
+            ostrm << ", size " << /*std::dec <<*/ commas(shmsize(that.get())); //<< " (" << (shmsize(that.get()) / sizeof(NODEROW)) << " rows)";
             ostrm << ", #attch " << shmnattch(that.get());
             ostrm << " (existed? " << shmexisted(that.get()) << ")";
             ostrm << ", frinfo " << that.frinfo;
@@ -249,7 +287,7 @@ public: //data members
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
     const double& frame_time;
     FrameInfo& frinfo;
-    /*const*/ std::function<void(void*, const void*, size_t)> my_xfr_bb; //memcpy signature; TODO: try to use AutoTexture<>::XFR
+    const std::function<void(void*, const void*, size_t)>& my_xfr_bb; //memcpy signature; TODO: try to use AutoTexture<>::XFR
 //    SDL_AutoTexture<XFRTYPE>::XFR my_xfr_bb; //memcpy signature
 //    using txtr_type = decltype(m_txtr);
 //    txtr_type::XFR my_xfr_bb; //memcpy signature
@@ -259,7 +297,7 @@ public: //ctors/dtors:
         m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))),
         UNIV_LEN(divup(m_cfg? m_cfg->vdisplay: UNIV_MAX, vzoom)),
         m_wh(XFRW, std::min(UNIV_LEN, UNIV_MAX)), //kludge: need to init before passing to txtr ctor below
-//        my_xfr_bb(std::bind(/*GpuPort::*/xfr_bb, *this, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4)),
+        my_xfr_bb(std::bind(/*GpuPort::*/xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)),
         m_txtr(SDL_AutoTexture<XFRTYPE>::create(NAMED{ _.wh = &m_wh; _.w_padded = XFRW_PADDED; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); })),
         shmfree_shim(std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))),
         m_nodebuf(shmalloc_typed<NODEBUF_FrameInfo>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), shmfree_shim), //std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))),
@@ -281,7 +319,8 @@ public: //ctors/dtors:
 //        SDL_Size wh(XFRW, UNIV_LEN); //, wh_padded(XFRW_PADDED, UNIV_LEN);
 //        m_txtr = txtr_bb::create(NAMED{ _.wh = &wh; _.w_padded = XFRW_PADDED; _.screen = screen; _.srcline = NVL(srcline, SRCLINE); });
 //        const double FPS = (double)m_cfg->dot_clock * 1e3 / m_
-        if (!shmexisted(m_nodebuf.get())) frinfo.owner = thrid(); //creator thread = owner
+//no        if (/*!shmexisted(m_nodebuf.get()) ||*/ !frinfo.owner)
+        if (shmnattch(m_nodebuf.get()) == 1) frinfo.init(thrid()); //= FrameInfo({thrid()}); //creator thread = owner; init if no owner
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
     }
     virtual ~GpuPort() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
@@ -292,11 +331,12 @@ public: //ctors/dtors:
         ostrm << "GpuPort" << my_templargs();
 //        ostrm << "\n{cfg " << *that.m_cfg;
         ostrm << "\n{" << &that;
-        ostrm << ", fr time " << that.frame_time;
-        ostrm << ", mine? " << that.ismine() << " (owner " << that.frinfo.owner << ")";
+        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
+        ostrm << ", mine? " << that.ismine() << " (owner 0x" << std::hex << that.frinfo.owner << ")";
         ostrm << ", frinfo #fr " << that.frinfo.numfr << ", time " << that.frinfo.nexttime;
         ostrm << ", nodebuf " << that.m_nodebuf; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
+        ostrm << ", wh " << that.m_wh;
         ostrm << ", txtr " << that.m_txtr;
         ostrm << "}";
         return ostrm; 
@@ -326,24 +366,29 @@ public: //methods
         SDL_Rect all(0, 0, m_wh.w, m_wh.h);
         if (!rect) rect = &all;
         debug(BLUE_MSG "fill " << *rect << " with 0x%x" ENDCOLOR_ATLINE(srcline), color);
+printf("here3 %d %d %d %d %p %p\n", rect->x, rect->y, rect->w, rect->h, &nodes[0][0], &nodes[rect->w][0]); fflush(stdout);
         for (int x = rect->x, xlimit = rect->x + rect->w; x < xlimit; ++x)
             for (int y = rect->y, ylimit = rect->y + rect->h; y < ylimit; ++y)
                 nodes[x][y] = color;
+printf("here4\n"); fflush(stdout);
     }
 //    FrameInfo* frinfo() const { return static_cast<FrameInfo*>(that.m_nodebuf.get()); }
     //void ready(SrcLine srcline = 0) { VOID ready(0, srcline); } //caller already updated frinfo->bits
     bool ready(UNIVMAP more = 0, SrcLine srcline = 0) //mark universe(s) as ready/rendered, wait for them to be processed; CAUTION: blocks caller
     {
         perf_stats[0] = m_txtr.perftime(); //caller's render time
-        frinfo.bits |= more;
+//        /*UNIVMAP new_bits =*/ frinfo.bits.fetch_or(more); //atomic; //frinfo.bits |= more;
+//        UNIVMAP old_bits = frinfo.bits.load(), new_bits = old_bits | more;
+//        while (!frinfo.bits.compare_exchange_weak(old_bits, new_bits)); //atomic |=; example at https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
+        UNIVMAP new_bits = frinfo.bits.fetch_or(more);
         if (!ismine())
         {
             /*auto*/uint32_t svnumfr = frinfo.numfr;
-            if (frinfo.bits == ALL_UNIV) wake(); //wake owner to xfr all universes to GPU
-            while (frinfo.numfr == svnumfr) wait(); //wait for GPU xfr to finish; loop compensates for spurious wakeups
+            if (new_bits == ALL_UNIV) wake(); //wake owner to xfr all universes to GPU
+            while (frinfo.numfr.load() == svnumfr) wait(); //wait for GPU xfr to finish; loop compensates for spurious wakeups; ABA problem avoided because numfr always increases; https://en.wikipedia.org/wiki/ABA_problem
             return (num_threads() > 1); //return to caller to render next frame
         }
-        while (frinfo.bits != ALL_UNIV) wait(); //wait for remaining universes; loop handles spurious wakeups
+        while (frinfo.bits.load() != ALL_UNIV) wait(); //wait for remaining universes; loop handles spurious wakeups
         perf_stats[1] = m_txtr.perftime(); //ipc wait time
 //all universes rendered; send to GPU:
 //        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
@@ -847,10 +892,22 @@ void unit_test(ARGS& args)
 
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
-        VOID gp.fill(palette[c], NULL, SRCLINE);
-        bool result = gp.ready(0xffffff, SRCLINE);
-        debug(CYAN_MSG << timestamp() << "color 0x%x, next fr# %d, next time %f, ready? %d, perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR,
-            palette[c], gp.frinfo.numfr, gp.frinfo.nexttime, result, gp.frinfo.times[0] / gp.frinfo.numfr, gp.frinfo.times[1] / gp.frinfo.numfr, gp.frinfo.times[2] / gp.frinfo.numfr, gp.frinfo.times[3] / gp.frinfo.numfr, gp.frinfo.times[4] / gp.frinfo.numfr, gp.frinfo.times[5] / gp.frinfo.numfr);
+        VOID gp.fill(palette[c], NO_RECT, SRCLINE);
+        bool result = gp.ready(0xffffff, SRCLINE); //set all univ ready
+
+//see example at https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
+        for (;;)
+        {
+            /*uint32_t*/ auto numfr = gp.frinfo.numfr.load();
+            /*uint32_t*/ auto next_time = gp.frinfo.nexttime.load();
+            uint64_t times[SIZEOF(gp.frinfo.times)];
+            for (int i = 0; i < SIZEOF(times); ++i) times[i] = gp.frinfo.times[i] / numfr;
+            if (gp.frinfo.numfr.load() != numfr) break; //invalid results; try again
+//CAUTION: use atomic ops; std::forward doesn't allow atomic vars (deleted function errors for copy ctor) so use load()
+            debug(CYAN_MSG << timestamp() << "color 0x%x, next fr# %d, next time %f, ready? %d, perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR,
+                palette[c], numfr, next_time, result, times[0], times[1], times[2], times[3], times[4], times[5]);
+            break; //got valid results
+        }
         SDL_Delay(1 sec);
     }
 

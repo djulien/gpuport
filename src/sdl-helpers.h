@@ -577,7 +577,7 @@ std::ostream& operator<<(std::ostream& ostrm, const SDL_RendererInfo& rinfo)
     if (unused_flags) flag_desc << FMT(";??0x%x??") << unused_flags;
     if (!flag_desc.tellp()) flag_desc << ";";
     for (unsigned int i = 0; i < rinfo.num_texture_formats; ++i)
-        fmts << ", " << (SDL_Format)rinfo.texture_formats[i]; //SDL_BITSPERPIXEL(rinfo.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(rinfo.texture_formats[i]);
+        fmts << (i? ", ": ": ") << (SDL_Format)rinfo.texture_formats[i]; //SDL_BITSPERPIXEL(rinfo.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(rinfo.texture_formats[i]);
 //    if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
 //    else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
 //    else count << "1 fmt: ";
@@ -587,8 +587,8 @@ std::ostream& operator<<(std::ostream& ostrm, const SDL_RendererInfo& rinfo)
     ostrm << FMT("'%s'") << NVL(rinfo.name, "(none)");
     ostrm << FMT(", flags 0x%x (") << rinfo.flags << flag_desc.str().substr(1) << ")"; //<< FMT(" %s") << flags.str().c_str() + 1;
     SDL_Size wh(rinfo.max_texture_width, rinfo.max_texture_height);
-    ostrm << ", max " << wh; //<< " == " << rinfo.max_texture_width << " x " << rinfo.max_texture_height;
-    ostrm << ", " << rinfo.num_texture_formats << " fmt" << plural(rinfo.num_texture_formats) << ": " << fmts.str().substr(2); //c_str() + 2; //<< count.str() << FMT("%s") << fmts.str().c_str() + 2;
+    if (wh.w || wh.h) ostrm << ", max " << wh; //<< " == " << rinfo.max_texture_width << " x " << rinfo.max_texture_height;
+    ostrm << ", " << rinfo.num_texture_formats << " fmt" << plural(rinfo.num_texture_formats) << fmts.str(); //c_str() + 2; //<< count.str() << FMT("%s") << fmts.str().c_str() + 2;
     ostrm << "}";
 //    return ostrm.str();
     return ostrm;
@@ -1149,15 +1149,15 @@ public: //operators
 //        ostrm << " bpp " << NVL(SDL_PixelFormatShortName(fmt)); //FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
         ostrm << FMT(", flags 0x%x (") << svflags << flag_desc.str().substr(1) << ")"; //FMT(", flags %s") << flag_desc.str().c_str() + 1;
 //        ostrm << *renderer(wnd); //FMT(", rndr %p") << renderer(wnd);
-        ostrm << FMT(", rndr %p ") << rndr; //<< (rndr? renderer_desc(info): "(none)");
+        ostrm << FMT(", rndr %p") << rndr; //<< (rndr? renderer_desc(info): "(none)");
         if (rndr) //TODO: extend rendererinfo with scale info
         {
             float hscale, vscale;
             SDL_RendererInfo info; //= {0};
             VOID SDL_RenderGetScale(rndr, &hscale, &vscale);
             if (!SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info", srcline);
-            ostrm << ", scale " << hscale << " x " << vscale << " ";
-            ostrm << info;
+            if ((hscale != 1) || (vscale != 1)) ostrm << ", scale " << hscale << " x " << vscale;
+            ostrm << " " << info;
         }
         ostrm << "}";
         return ostrm; 
