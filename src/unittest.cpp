@@ -32,6 +32,9 @@ echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${T
 #line 32 __SRCFILE__ #compensate for shell commands above; NOTE: +1 needed (sets *next* line)
 
 #include <iostream> //std::cout, std::endl, std::flush
+#include <vector>
+
+using ARGS = std::vector<std::string>; //const char*>;
 
 #include __TEST_FILE__ //include first time without unit test
 #define WANT_UNIT_TEST
@@ -44,7 +47,9 @@ echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${T
 int main(int argc, const char* argv[])
 {
     MSG("testing " __TEST_FILE__ " ...");
-    unit_test();
+    ARGS args;
+    for (int i = 0; i < argc; ++i) args.push_back(std::string(argv[i]));
+    unit_test(args);
     return 0;
 }
 //EOF

@@ -1275,7 +1275,7 @@ public: //static utility methods
 //        if (!SDL_OK(rndr)) SDL_exc("get renderer");
         if (!SDL_OK(SDL_SetRenderDrawColor(rndr, R_G_B_A(color)))) SDL_exc("set render draw color", srcline);
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
-        exc_soft(RED_MSG "broken %d,%d,%d,%d" ENDCOLOR, R_G_B_A(color));
+        exc_soft(RED_MSG "broken %d,%d,%d,%d" ENDCOLOR, R_G_B_A(color)); //TODO: why doesn't this work?
 //        SDL_RendererInfo rinfo = {0};
 //        if (!SDL_OK(SDL_GetRendererInfo(rndr, &rinfo))) SDL_exc("can't get renderer info", srcline);
 //        SDL_Size wh(rinfo.max_texture_width, rinfo.max_texture_height);
@@ -1891,6 +1891,11 @@ public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
 //    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
 //    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, NVL(srcline, SRCLINE)); }
+    static void fill(void* dest, const void* src, size_t len) //memcpy-compatible fill, for use with update() above
+    {
+        PXTYPE* ptr = static_cast<PXTYPE*>(dest);
+        while (len--) *ptr++ = *(PXTYPE*)src; //supposedly a loop is faster than an overlapping memcpy
+    }
     static void check(SDL_Texture* txtr, SDL_TextureInfo<PXTYPE>* cached, /*int want_w = 0, int want_h = 0,*/ SDL_Size* want_wh = NO_SIZE, SrcLine srcline = 0)
     {
         /*SDL_Surface*/ SDL_TextureInfo<PXTYPE> my_cache;
@@ -2127,14 +2132,14 @@ void sdl_api_test()
 //    SDL_Window* sdlWindow = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 0, 0, SDL_WINDOW_FULLSCREEN_DESKTOP);
     SDL_Window* sdlWindow;
     SDL_Renderer* sdlRenderer;
-    const int W = 3 * 24, H = 64; //1111;
+    const int W = 4, H = 5; //W = 3 * 24, H = 64; //1111;
     if (!SDL_OK(SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer))) SDL_exc("cre wnd & rndr");
     debug(BLUE_MSG "wnd renderer %p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
     if (!SDL_OK(SDL_RenderSetLogicalSize(sdlRenderer, W, H))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
-
-    if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(BLACK)))) SDL_exc("set render draw color");
+    if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(mixARGB(0.5, BLACK, WHITE))))) SDL_exc("set render draw color");
     if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear");
     VOID SDL_RenderPresent(sdlRenderer); //flips texture to screen; no retval to check
+    VOID SDL_Delay(4 sec);
 
     SDL_Texture* sdlTexture = SDL_CreateTexture(sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H); //tells GPU contents will change frequently; //640, 480);
     if (!SDL_OK(sdlTexture)) SDL_exc("create texture");
@@ -2163,13 +2168,15 @@ void sdl_api_test()
         VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
-        VOID SDL_Delay(2 sec);
+        VOID SDL_Delay(1 sec);
     }
 
 //pixel test:
     for (int i = 0; i < W * H; ++i) myPixels[0][i] = BLACK;
-    for (int x = 0 + W-3; x < W; ++x)
-        for (int y = 0 + H-3; y < H; ++y)
+    for (int y = 0 + std::max(H-5, 0), c = 0; y < H; ++y) //fill in GPU xfr order (for debug/test only)
+        for (int x = 0 + std::max(W-5, 0); x < W; ++x, ++c)
+//    for (int x = 0 + W-3; x < W; ++x)
+//        for (int y = 0 + H-3; y < H; ++y)
         {
             myPixels[y][x] = palette[(x + y) % SIZEOF(palette)];
 
@@ -2180,7 +2187,7 @@ void sdl_api_test()
             VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
-            VOID SDL_Delay(0.1 sec);
+            VOID SDL_Delay(0.25 sec);
         }
     
     VOID SDL_DestroyTexture(sdlTexture);
@@ -2191,14 +2198,18 @@ void sdl_api_test()
 
 //based on example code at https://wiki.libsdl.org/MigrationGuide
 //using "fully rendered frames" style
-void fullscreen_test()
+void fullscreen_test(ARGS& args)
 {
+    int screen = 0; //default
     const int W = 4, H = 5;
     const SDL_Size wh(W, H); //int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
-    debug(PINK_MSG << timestamp() << "fullscreen " << wh << " test start" << ENDCOLOR);
-    /*SDL_AutoTexture<>*/ auto txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = 1-1; SRCLINE; }));
-    VOID txtr.clear(mixARGB(1, 2, BLACK, WHITE), SRCLINE);
-    VOID SDL_Delay(2 sec);
+
+    for (auto arg : args) //int i = 0; i < args.size(); ++i)
+        if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
+    debug(PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start" << ENDCOLOR);
+    /*SDL_AutoTexture<>*/ auto txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
+    VOID txtr.clear(mixARGB(0.5, BLACK, WHITE), SRCLINE);
+    VOID SDL_Delay(4 sec);
 
     Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
 #if 0 //check if 1D index can be used instead of (X,Y); useful for fill() loops
@@ -2315,7 +2326,7 @@ void gl_test()
 
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     debug(BLUE_MSG << FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
     debug(BLUE_MSG << FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
@@ -2324,8 +2335,8 @@ void unit_test()
     lib_test();
 //    surface_test();
 //    window_test();
-//    sdl_api_test();
-    fullscreen_test();
+    sdl_api_test();
+    fullscreen_test(args);
     gl_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>
