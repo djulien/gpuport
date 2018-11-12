@@ -21,6 +21,8 @@ const fs = require("fs"); //https://nodejs.org/api/fs.html
 //const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
 //const JSON5 = require("json5"); //more reader-friendly JSON; https://github.com/json5/json5
 const XRegExp = require("xregexp"); //https://github.com/slevithan/xregexp
+const JSONStream = require('JSONStream'); //https://github.com/dominictarr/JSONStream
+const evtstrm = require('event-stream'); //https://github.com/dominictarr/event-stream
 extensions(); //hoist to top
 
 
@@ -57,8 +59,10 @@ function readfile(path)
 {
     if (path.match(/^[-+].+|=/)) { debug(`TODO: handle option '${str}'`.yellow_lt); return; }
     debug(`read file '${path}' ...`.cyan_lt);
-    const infile = (path == "-")? process.stdin: fs.createReadStream(path);
-    infile.pipe(
+    ((path == "-")? process.stdin: fs.createReadStream(path))
+//        .pipe(evtstrm.split()) //split on newlines
+        .pipe(JSONStream.parse("frames.*"))
+        .pipe(evtstrm.mapSync((data) => { console.error(data); return data; });
 }
 
 

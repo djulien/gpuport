@@ -106,7 +106,7 @@ public: //operators
 void myprintf(int level, const char* fmt, ...)
 {
     if (level > MAX_DEBUG_LEVEL) return; //0;
-    char fmtbuf[600];
+    char fmtbuf[800];
     va_list args;
     va_start(args, fmt);
     size_t needlen = vsnprintf(fmtbuf, sizeof(fmtbuf), fmt, args);

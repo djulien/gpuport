@@ -49,7 +49,7 @@
 #include "debugexc.h" //debug(), TEMPL_ARGS
 #include "elapsed.h" //timestamp()
 #include "srcline.h" //SrcLine, SRCLINE
-#include "str-helpers.h" //NVL(), plural()
+#include "str-helpers.h" //NVL(), plural(), commas()
 #include "ostrfmt.h" //FMT()
 
 #ifndef STATIC
@@ -57,10 +57,21 @@
 #endif
 
 
+#ifndef rndup
+ #define rndup(num, den)  (((num) + (den) - 1) / (den) * (den))
+#endif
+
+
 //varargs to accept up to 2 macro args:
 #ifndef UPTO_2ARGS
  #define UPTO_2ARGS(one, two, three, ...)  three
 #endif
+
+
+#define CACHE_LEN  64 //CAUTION: use larger of RPi and RPi 2 size to ensure fewer conflicts across processors; //static size_t cache_len = sysconf(_SC_PAGESIZE);
+#define cache_pad_1ARG(raw_len)  rndup(raw_len, CACHE_LEN)
+#define cache_pad_2ARGS(raw_len, use_hdr)  (rndup((raw_len) + sizeof(ShmHdr), CACHE_LEN) - sizeof(ShmHdr))
+#define cache_pad(...)  UPTO_2ARGS(__VA_ARGS__, cache_pad_2ARGS, cache_pad_1ARG) (__VA_ARGS__)
 
 
 #define err_ret_1ARG(ret_val)  return ret_val
@@ -72,7 +83,8 @@
 //keep a little extra info in shm:
 //uses 24 bytes on Intel, 16 bytes on ARM (Rpi)
 #define SHM_MAGIC  0xfeedbeef //marker to detect valid shmem block
-typedef struct ShmHdr
+
+struct ShmHdr //16 or 24 bytes (depending on processor architecture)
 {
 //    int id; key_t key;
 //    template<bool SHARED_inner = SHARED>
@@ -83,8 +95,21 @@ typedef struct ShmHdr
     key_t key;
     size_t size;
     uint32_t marker;
-} ShmHdr;
+}; //ShmHdr;
 
+#if 0
+union ShmHdr_padded
+{
+    ShmHdr hdr;
+    char pad[cache_pad(sizeof(ShmHdr))]; //pad to reduce memory cache contention
+}; //ShmHdr_padded;
+#endif
+template <typename TYPE>
+struct WithShmHdr
+{
+    ShmHdr hdr;
+    TYPE data;
+};
 
 //check if mem ptr is valid:
 //template <bool IPC>
@@ -130,6 +155,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     ShmHdr* ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
 //printf("here4 %p\n", ptr); fflush(stdout);
     if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
+    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " => " << commas(shminfo.shm_segsz) << " (hdr " << sizeof(ShmHdr) << "), existed? " << existed << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
     ptr->id = shmid;
     ptr->key = key;
     ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
@@ -192,6 +218,7 @@ int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid a
         if (shmctl(svhdr.id, IPC_RMID, NULL /*ignored*/)) throw std::runtime_error(strerror(errno));
 //        debug(CYAN_MSG << timestamp() << "shmfree: freed " << svhdr.id << FMT("0x%lx") << svhdr.key << ", size " << shminfo.shm_segsz << ENDCOLOR_ATLINE(srcline));
 //    }
+    debug(CYAN_MSG << timestamp() << "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ENDCOLOR_ATLINE(srcline));
     err_ret(shminfo.shm_nattch, 0); //return #procs still using memory
 }
 #undef err_ret
@@ -355,7 +382,7 @@ void unit_test()
 
     uint32_t* ptr = shmalloc_typed<uint32_t>(4, 0, SRCLINE);
     ptr[0] = 0x12345678;
-    debug(BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << ENDCOLOR);
+    debug(BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
     shmfree(ptr);
 
     AutoShmary<> ary1(5, 0, SRCLINE);
