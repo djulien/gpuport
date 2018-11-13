@@ -116,7 +116,7 @@ namespace CompileTime //keep separate from run-time functions in math.h
 //lookup table (typically int -> string):
 //use this function instead of operator[] on const maps (operator[] is not const - will add an entry)
 template <typename MAP, typename VAL> //... ARGS>
-const char* unmap(MAP&& map, VAL&& value) //Uint32 value) //ARGS&& ... args)
+inline const char* unmap(MAP&& map, VAL&& value) //Uint32 value) //ARGS&& ... args)
 {
     return map.count(value)? map.find(value)->second: "";
 }
@@ -241,9 +241,10 @@ protected: //data members
 //friendlier names for SDL special param values:
 //#define UNUSED  0
 #define DONT_CARE  0
+//#define NO_POINT  0
 //#define NO_RECT  NULL
 //#define NO_PARENT_WND  NULL
-#define FIRST_RENDERER_MATCH  -1
+//#define FIRST_RENDERER_MATCH  -1
 //#define THIS_THREAD  NULL
 //#define UNDEF_EVTID  0
 
@@ -263,10 +264,10 @@ protected: //data members
 
 
 //timing stats:
-#define now()  SDL_Ticks() //nsec
+#define now()  SDL_Ticks() //nsec -> usec
 //inline uint64_t now() { return SDL_Ticks(); }
-#define SDL_Ticks()  SDL_GetPerformanceCounter()
-#define SDL_TickFreq()  SDL_GetPerformanceFrequency() //high res timer, ticks/sec
+#define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
+#define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
 typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement
 inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second
 {
@@ -377,24 +378,54 @@ inline int mySDL_SetHint(const char* name, const char* value)
 
 //C++ note on struct vs. typedef: https://stackoverflow.com/questions/612328/difference-between-struct-and-typedef-struct-in-c
 
+/*typedef*/ struct mySDL_Point: /*public*/ SDL_Point
+{
+//public:
+//NOTE: ctor can't access SDL_Rect members after ":", only within "{}" :(
+    explicit inline mySDL_Point(int newx = 0, int newy = 0) { x = newx; y = newy; }
+//    mySDL_Rect(const mySDL_Rect& that): mySDL_Rect(that.x, that.y, that.w, that.h) {} //x(that.x), y(that.y), w(that.w), h(that.h) {} //copy ctor
+//inspect SDL_Rect (mainly for debug msgs):
+//const std::string/*&*/ rect_desc(const SDL_Rect* rect)
+    inline bool operator==(const mySDL_Point& that) const //lhs, const mySDL_Point& rhs)
+    {
+        return (x == that.x) && (y == that.y);
+    }
+    inline bool operator!=(const mySDL_Point& that) const { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Point& that) CONST
+    {
+//    std::ostringstream ss;
+//    if (!rect) ss << "all";
+//    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
+//    return ss.str();
+//    ostrm << "SDL_Rect";
+        ostrm << "(" << that.x << "," << that.y << ")";
+        return ostrm;
+    }
+}; //mySDL_Rect;
+#define SDL_Point  mySDL_Point //use my def instead of SDL def
+//#define NO_RECT  NULL
+#define NO_POINT  NULL
+
+
 /*typedef*/ struct mySDL_Size //no: public SDL_Point
 {
 //won't support mult inh:    int& w = x; int& h = y; //kludge: rename parent's members, but still allow down-cast
     int w, h;
 //    explicit SDL_Size(): w(0), h(0) {} //default ctor
-    explicit mySDL_Size(int neww = 0, int newh = 0): w(neww), h(newh) {} //default ctor
-    explicit mySDL_Size(const mySDL_Size& that): w(that.w), h(that.h) {} //copy ctor
+    explicit inline mySDL_Size(int neww = 0, int newh = 0): w(neww), h(newh) {} //default ctor
+    explicit inline mySDL_Size(const mySDL_Size& that): w(that.w), h(that.h) {} //copy ctor
 //operators:
 //operator overload syntax/semantics: https://en.cppreference.com/w/cpp/language/operators
-    inline bool operator==(const mySDL_Size& that) //lhs, const mySDL_Size& rhs)
+//    inline bool operator==(CONST mySDL_Size that) { return operator==(that); }
+    inline bool operator==(const mySDL_Size& that) const //lhs, const mySDL_Size& rhs)
     {
 //    mySDL_Size& lhs = *this;
 //    if (!&lhs || !&rhs) return (&lhs == &rhs); //handles NO_SIZE
 //    return (lhs.w == rhs.w) && (lhs.h == rhs.h);
-        return (w == that.w) && (h = that.h);
+        return (w == that.w) && (h == that.h);
     }
-    inline bool operator!=(const mySDL_Size& that) { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Size& that)
+    inline bool operator!=(const mySDL_Size& that) const { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Size& that) CONST
     {
         ostrm << that.w << " x " << that.h;
         if (that.w && that.h) ostrm << " = " << commas(that.w * that.h);
@@ -402,7 +433,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
     }
 //utility/helper methods:
     template <typename DATATYPE=Uint32>
-    inline size_t datalen() { return w * h * sizeof(DATATYPE); }
+    inline size_t datalen() const { return w * h * sizeof(DATATYPE); }
 }; //mySDL_Size;
 #define SDL_Size  mySDL_Size //use my def instead of SDL def (in case SDL defines one in future)
 //const SDL_Size& NO_SIZE = *(SDL_Size*)0; //&NO_SIZE == 0
@@ -414,25 +445,26 @@ inline int mySDL_SetHint(const char* name, const char* value)
 //typedef struct SDL_Rect: public SDL_Point, SDL_Size
 /*typedef*/ struct mySDL_Rect: /*public*/ SDL_Rect
 {
-//public:
+//public: //ctors/dtors
 //NOTE: ctor can't access SDL_Rect members after ":", only within "{}" :(
-    explicit mySDL_Rect(int newx = 0, int newy = 0, int neww = 0, int newh = 0) { x = newx; y = newy; w = neww; h = newh; } //: x(newx), y(newy), w(neww), h(newh) {} //default ctor
-    mySDL_Rect(const mySDL_Rect& that): mySDL_Rect(that.x, that.y, that.w, that.h) {} //x(that.x), y(that.y), w(that.w), h(that.h) {} //copy ctor
+    explicit inline mySDL_Rect(int newx = 0, int newy = 0, int neww = 0, int newh = 0): SDL_Rect({newx, newy, neww, newh}) {} // { x = newx; y = newy; w = neww; h = newh; } //: x(newx), y(newy), w(neww), h(newh) {} //default ctor
+    inline mySDL_Rect(const mySDL_Rect& that): mySDL_Rect(that.x, that.y, that.w, that.h) {} //x(that.x), y(that.y), w(that.w), h(that.h) {} //copy ctor
     /*explicit*/ mySDL_Rect(const SDL_Point& newxy, const SDL_Size& newwh): mySDL_Rect(newxy.x, newxy.y, newwh.w, newwh.h) {} //x(newxy.x), y(newxy.y), w(newwh.w), h(newwh.h) {}
-    SDL_Point& point() const { static SDL_Point xy; xy.x = x; xy.y = y; return xy; }
-    SDL_Size& size() const { static SDL_Size wh; wh.w = w; wh.h = h; return wh; }
-    /*explicit*/ operator SDL_Point*() const { return &point(); }
-    /*explicit*/ operator SDL_Size*() const { return &size(); }
+//operators:
+    inline const SDL_Point& position() const { static SDL_Point xy; xy.x = x; xy.y = y; return xy; }
+    inline const SDL_Size& size() const { static SDL_Size wh; wh.w = w; wh.h = h; return wh; }
+    /*explicit*/ operator const SDL_Point*() const { return &position(); }
+    /*explicit*/ operator const SDL_Size*() const { return &size(); }
 //inspect SDL_Rect (mainly for debug msgs):
 //const std::string/*&*/ rect_desc(const SDL_Rect* rect)
-    inline bool operator==(const mySDL_Rect& that) //lhs, const mySDL_Rect& rhs)
+    inline bool operator==(const mySDL_Rect& that) const //lhs, const mySDL_Rect& rhs)
     {
 //    if (!&lhs || !&rhs) return (&lhs == &rhs); //handles NO_RECT
 //        return (lhs.x == rhs.x) && (lhs.y == rhs.y) && (lhs.w == rhs.w) && (lhs.h == rhs.h);
         return (x == that.x) && (y == that.y) && (w == that.w) && (h == that.h);
     }
-    inline bool operator!=(const mySDL_Rect& that) { return !(*this == that); } //lhs, const mySDL_Rect& rhs) { return !(lhs == rhs); }
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Rect& that)
+    inline bool operator!=(const mySDL_Rect& that) const { return !(*this == that); } //lhs, const mySDL_Rect& rhs) { return !(lhs == rhs); }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Rect& that) CONST
     {
 //    std::ostringstream ss;
 //    if (!rect) ss << "all";
@@ -448,6 +480,16 @@ inline int mySDL_SetHint(const char* name, const char* value)
 //const SDL_Rect& NO_RECT = *(SDL_Rect*)0; //&NO_RECT == 0
 //SDL_Rect NO_RECT; //dummy value (settable)
 #define NO_RECT  NULL
+
+
+inline void mySDL_GetWindowRect(CONST SDL_Window* wnd, SDL_Rect* rect)
+{
+    if (!rect) return;
+//    if (!wnd) { rect->x = rect-Y = rect->w = rect->h = 0; return; } //caller is responsible for this
+    VOID SDL_GetWindowSize(wnd, &rect->w, &rect->h);
+    VOID SDL_GetWindowPosition(wnd, &rect->x, &rect->y);
+}
+#define SDL_GetWindowRect  mySDL_GetWindowRect //use my def instead of SDL def (in case SDL defines one in future)
 
 
 //enum mySDL_Format: Uint32 {};
@@ -478,19 +520,20 @@ inline bool operator==(const mySDL_Format& lhs, const mySDL_Format rhs)
     return (lhs.u32 == rhs.u32);
 }
 inline bool operator!=(const mySDL_Format& lhs, const mySDL_Format& rhs) { return !(lhs == rhs); }
-#endif
+#endif //0
 #define NO_FORMAT  SDL_PIXELFORMAT_UNKNOWN
 typedef decltype(NO_FORMAT) mySDL_Format; //use exact type instead of generic Uint32 for type-safety and overloads
 //or std::underlying_type<Foo>::typ
-#define SDL_Format  mySDL_Format //use my def instead of SDL def (in case SDL defines one in future)
-inline bool SDL_OK(mySDL_Format/*&*/ retval) { return ((SDL_LastError = retval) != SDL_PIXELFORMAT_UNKNOWN); }
-mySDL_Format mySDL_GetWindowPixelFormat(CONST SDL_Window* wnd) { return (mySDL_Format)SDL_GetWindowPixelFormat(wnd); }
-#define SDL_GetWindowPixelFormat  mySDL_GetWindowPixelFormat //use my def instead of SDL def
 std::ostream& operator<<(std::ostream& ostrm, const mySDL_Format& that)
 {
     ostrm << /*FMT("%d") <<*/ SDL_BITSPERPIXEL(that) << " bpp " << NVL(SDL_PixelFormatShortName(that)); //kludge: use FMT() to avoid "ambiguous overload" errors
     return ostrm;
 }    
+#define SDL_Format  mySDL_Format //use my def instead of SDL def (in case SDL defines one in future)
+inline bool SDL_OK(mySDL_Format/*&*/ retval) { return ((SDL_LastError = retval) != SDL_PIXELFORMAT_UNKNOWN); }
+mySDL_Format mySDL_GetWindowPixelFormat(CONST SDL_Window* wnd) { return (mySDL_Format)SDL_GetWindowPixelFormat(wnd); }
+#define SDL_GetWindowPixelFormat  mySDL_GetWindowPixelFormat //use my def instead of SDL def
+
 
 /*typedef*/ struct mySDL_DisplayMode: /*public*/ SDL_DisplayMode
 {
@@ -501,7 +544,7 @@ std::ostream& operator<<(std::ostream& ostrm, const mySDL_Format& that)
     int num_disp = 0, which_disp = -1;
 //    explicit mySDL_DisplayMode(): fmt(*(SDL_Format*)this) { } //kludge: rename + re-type parent's member
 //    SDL_Format& fmt() const { SDL_Format conv(format); return conv; } //format; }
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_DisplayMode& dispmode)
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_DisplayMode& dispmode) CONST
     {
 //    ostrm << "mySDL_DisplayMode";
 //printf("here1\n"); fflush(stdout);
@@ -525,9 +568,9 @@ template <typename PXTYPE = Uint32>
     SDL_Size wh;
     SDL_Format fmt;
     int access, pitch;
-    int expected_pitch() const { return wh.w * sizeof(PXTYPE); }
+    inline int expected_pitch() const { return wh.w * sizeof(PXTYPE); }
 public: //operators
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_TextureInfo& that)
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_TextureInfo& that) CONST
     {
         SrcLine srcline = NVL(/*that.m_srcline*/ 0, SRCLINE);
         ostrm << "SDL_TextureInfo";
@@ -543,38 +586,6 @@ public: //operators
 
 
 //formatters for debug/messages:
-
-/*typedef*/ struct mySDL_Point: /*public*/ SDL_Point
-{
-//public:
-//NOTE: ctor can't access SDL_Rect members after ":", only within "{}" :(
-    explicit mySDL_Point(int newx = 0, int newy = 0) { x = newx; y = newy; }
-//    mySDL_Rect(const mySDL_Rect& that): mySDL_Rect(that.x, that.y, that.w, that.h) {} //x(that.x), y(that.y), w(that.w), h(that.h) {} //copy ctor
-//inspect SDL_Rect (mainly for debug msgs):
-//const std::string/*&*/ rect_desc(const SDL_Rect* rect)
-#if 0
-    inline bool operator==(const mySDL_Rect& that) //lhs, const mySDL_Rect& rhs)
-    {
-//    if (!&lhs || !&rhs) return (&lhs == &rhs); //handles NO_RECT
-//        return (lhs.x == rhs.x) && (lhs.y == rhs.y) && (lhs.w == rhs.w) && (lhs.h == rhs.h);
-        return (x == that.x) && (y == that.y) && (w == that.w) && (h == that.h);
-    }
-    inline bool operator!=(const mySDL_Rect& that) { return !(*this == that); } //lhs, const mySDL_Rect& rhs) { return !(lhs == rhs); }
-#endif
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Point& that)
-    {
-//    std::ostringstream ss;
-//    if (!rect) ss << "all";
-//    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
-//    return ss.str();
-//    ostrm << "SDL_Rect";
-        ostrm << "(" << that.x << "," << that.y << ")";
-        return ostrm;
-    }
-}; //mySDL_Rect;
-#define SDL_Point  mySDL_Point //use my def instead of SDL def
-//#define NO_RECT  NULL
-
 
 #define SDL_RendererFlags  Uint32 //kludge: enum type doesn't allow bitwise arithmetic so override it
 
@@ -778,7 +789,7 @@ class mySDL_AutoLib //: public SDL_version //kludge: define some displayable dat
 {
 //readable names (mainly for debug msgs):
 //    static const /*std::map<Uint32, const char*>&*/ char* mySDL_SubSystemName(Uint32 key)
-    static const std::map<SDL_SubSystemFlags, const char*>& SDL_SubSystemNames()
+    static inline const std::map<SDL_SubSystemFlags, const char*>& SDL_SubSystemNames()
     {
         static const std::map<SDL_SubSystemFlags, const char*> names =
         {
@@ -795,7 +806,7 @@ class mySDL_AutoLib //: public SDL_version //kludge: define some displayable dat
         };
         return names; //unmap(names, key); //names;
     }
-    static const char* SDL_SubSystemName(SDL_SubSystemFlags key) { return unmap(SDL_SubSystemNames(), key); }
+    static inline const char* SDL_SubSystemName(SDL_SubSystemFlags key) { return unmap(SDL_SubSystemNames(), key); }
 //no super
 public: //ctor/dtor
 //    SDL_lib(Uint32 flags) { init(flags); }
@@ -860,7 +871,8 @@ protected: //helpers
         atexit(cleanup); //SDL_Quit); //defer cleanup in case caller wants more SDL later
         TMI(srcline);
     }
-//too much info:
+//show info (for dev/debug):
+//too much info?
     static void TMI(SrcLine srcline = 0)
     {
 //        SDL_AutoLib* dummy = 0;
@@ -937,13 +949,13 @@ protected: //data members
 //        static /*std::atomic<int>*/int m_count = 0;
 //        return m_count;
 //    }
-    static std::vector<mySDL_AutoLib*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::vector<mySDL_AutoLib*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::vector<mySDL_AutoLib*> m_all;
         return m_all;
     }
 //    static std::mutex m_mutex;
-    static std::mutex& mutex() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::mutex& mutex() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::mutex m_mutex;
         return m_mutex;
@@ -952,7 +964,21 @@ protected: //data members
 #define SDL_AutoLib  mySDL_AutoLib //use my def instead of SDL def (in case SDL defines one in future)
 
 
-//get current (prior to SDL changes) screen config:
+////////////////////////////////////////////////////////////////////////////////
+////
+/// SDL Window:
+//
+
+
+#define NO_WINDOW  0
+#define FIRST_RENDERER_MATCH  -1
+
+#define NO_WINDOW_FLAGS  (SDL_WINDOW_FULLSCREEN & ~SDL_WINDOW_FULLSCREEN)
+#define SDL_WindowFlags  Uint32 //kludge: enum type doesn't allow bitwise arithmetic so just use int
+
+
+//get current screen config:
+//NOTE: does not reflect changes made by SDL
 #define FIRST_SCREEN  0
 const mySDL_DisplayMode* ScreenInfo(int which = FIRST_SCREEN, SrcLine srcline = 0)
 {
@@ -966,17 +992,7 @@ const mySDL_DisplayMode* ScreenInfo(int which = FIRST_SCREEN, SrcLine srcline = 
 //    debug(BLUE_MSG "screen info: %d x %d, refresh %d Hz, fmt %d bpp %s" ENDCOLOR_ATLINE(srcline), dm.w, dm.h, dm.refresh_rate, SDL_BITSPERPIXEL(dm.format), NVL(SDL_PixelFormatShortName(fmt)));
     return &dm;
 }
-const mySDL_DisplayMode* ScreenInfo(SrcLine srcline = 0) { return ScreenInfo(FIRST_SCREEN, NVL(srcline, SRCLINE)); }
-
-
-////////////////////////////////////////////////////////////////////////////////
-////
-/// SDL Window:
-//
-
-
-#define NO_WINDOW_FLAGS  (SDL_WINDOW_FULLSCREEN & ~SDL_WINDOW_FULLSCREEN)
-#define SDL_WindowFlags  Uint32 //kludge: enum type doesn't allow bitwise arithmetic so override it
+const inline mySDL_DisplayMode* ScreenInfo(SrcLine srcline = 0) { return ScreenInfo(FIRST_SCREEN, NVL(srcline, SRCLINE)); }
 
 
 //#define FIRST_SCREEN  (SDL_Rect*)-1
@@ -988,11 +1004,11 @@ const mySDL_DisplayMode* ScreenInfo(SrcLine srcline = 0) { return ScreenInfo(FIR
 //        debug(RED_MSG "TODO: add streaming texture" ENDCOLOR_ATLINE(srcline));
 //        debug(RED_MSG "TODO: add shm pixels" ENDCOLOR_ATLINE(srcline));
 using mySDL_AutoWindow_super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>; //DRY kludge
-template <bool WantRenderer = true> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
+template <bool WantRenderer = true> //, Uint32 INIT_COLOR = BLUE> //BLACK> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
 class mySDL_AutoWindow: public mySDL_AutoWindow_super //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 //readable names (mainly for debug msgs):
-    static const std::map<SDL_WindowFlags, const char*> SDL_WindowFlagNames()
+    static inline const std::map<SDL_WindowFlags, const char*> SDL_WindowFlagNames()
     {
         static const std::map<SDL_WindowFlags, const char*> names =
         {
@@ -1042,12 +1058,12 @@ public: //ctors/dtors
     /*virtual*/ ~mySDL_AutoWindow() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
-    mySDL_AutoWindow(const mySDL_AutoWindow& that) { reset(((mySDL_AutoWindow)that).release()); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
+    inline mySDL_AutoWindow(const mySDL_AutoWindow& that, SrcLine srcline = 0): mySDL_AutoWindow(((mySDL_AutoWindow)that).release(), srcline) {} //reset(((mySDL_AutoWindow)that).release()); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
 //amg with ctor    SDL_AutoWindow(/*const*/ SDL_Window* that) { this->reset(that); } //operator=(that); } //*this = that; } //copy ctor; //= delete; //deleted copy constructor
 public: //factory methods:
 //    template <typename ... ARGS>
 //    static SDL_AutoWindow/*&*/ create(ARGS&& ... args, SrcLine srcline = 0) //title, x, y, w, h, mode)
-    static mySDL_AutoWindow/*&*/ create(const char* title = 0, /*int x = 0, int y = 0, int w = 0, int h = 0,*/ const mySDL_Rect* rect = NO_RECT, /*Uint32*/ SDL_WindowFlags flags = NO_WINDOW_FLAGS, SrcLine srcline = 0)
+    static mySDL_AutoWindow/*&*/ create(const char* title = 0, /*int x = 0, int y = 0, int w = 0, int h = 0,*/ int screen = FIRST_SCREEN, const mySDL_Rect* rect = NO_RECT, /*Uint32*/ SDL_WindowFlags flags = NO_WINDOW_FLAGS, Uint32 init_color = BLACK, SrcLine srcline = 0)
     {
 //        InOutDebug inout("auto wnd factory: create", SRCLINE);
 //        if (++count() > 30) exc("recursion?");
@@ -1063,10 +1079,12 @@ public: //factory methods:
 //            return SDL_AutoWindow(!SDL_CreateWindowAndRenderer(w? w: DONT_CARE, h? h: DONT_CARE, flags? flags: SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_SHOWN, &wnd, &rndr)? wnd: NULL, NVL(srcline, SRCLINE));
 //        if (x < 0) x = 0; //let SDL handle the case of x >= w
 //        if (y < 0) y = 0;
-        SDL_Rect wrect = (/*rect != NO_RECT*/ rect)? *rect: ScreenInfo(FIRST_SCREEN, NVL(srcline, SRCLINE))->bounds;
+//        SDL_Rect wrect = (/*rect != NO_RECT*/ rect)? *rect: ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds;
+//NOTE: need to set (x, y) for multiple monitors so get screen layout:
+        if (!rect) rect = &ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds;
 //        if (w <= 0) w += ScreenInfo(SRCLINE)->w; //- x; //default to whole screen; xlate < 0 to relative size
 //        if (h <= 0) h += ScreenInfo(SRCLINE)->h; //- y;
-        wnd = SDL_CreateWindow(NVL(title, "GpuPort"), wrect.x /*? x: SDL_WINDOWPOS_UNDEFINED*/, wrect.y /*? y: SDL_WINDOWPOS_UNDEFINED*/, wrect.w /*? w: DONT_CARE*/, wrect.h /*? h: DONT_CARE*/, flags | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
+        wnd = SDL_CreateWindow(NVL(title, "GpuPort"), rect->x /*? x: SDL_WINDOWPOS_UNDEFINED*/, rect->y /*? y: SDL_WINDOWPOS_UNDEFINED*/, rect->w /*? w: DONT_CARE*/, rect->h /*? h: DONT_CARE*/, flags | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
         if (SDL_OK(wnd) && WantRenderer)
         {
             rndr = SDL_CreateRenderer(wnd, FIRST_RENDERER_MATCH, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
@@ -1077,7 +1095,8 @@ public: //factory methods:
 //            SDL_Rect rect = {0, 0, 10, 10};
 //            if (!SDL_OK(SDL_RenderSetViewport(rndr, &rect))) SDL_exc("set rndr vwpt");
         }
-        return mySDL_AutoWindow(wnd, NVL(srcline, SRCLINE));
+        if (wnd && A(init_color)) clear(wnd, init_color, NVL(srcline, SRCLINE)); //start in known state
+        return mySDL_AutoWindow(wnd, NVL(srcline, SRCLINE)); //CAUTION: uses copy ctor
 //!supported?        if (flags & SDL_WINDOW_OPENGL) //create GL context
     }
 //full screen example at: see https://wiki.libsdl.org/MigrationGuide#If_your_game_just_wants_to_get_fully-rendered_frames_to_the_screen
@@ -1132,8 +1151,8 @@ public: //factory methods:
 //        SDL_AutoTexture txtr(SDL_AutoTexture::streaming(wnd.renderer(), SRCLINE));
 //    }
 public: //operators
-    operator SDL_Window*() const { return get(); }
-    mySDL_AutoWindow& operator=(mySDL_AutoWindow& that) { return *this = /*operator=*/(that.release()); } //copy asst op; //, SrcLine srcline = 0)
+    inline operator SDL_Window*() const { return get(); } //conv
+    inline mySDL_AutoWindow& operator=(CONST mySDL_AutoWindow& that) { return *this = /*operator=*/(that.release()); } //copy asst op; //, SrcLine srcline = 0)
     mySDL_AutoWindow& operator=(SDL_Window* ptr) //, SrcLine srcline = 0)
     {
 //        SDL_Window* ptr = that.release();
@@ -1151,9 +1170,9 @@ public: //operators
         if (!wnd) return ostrm << "{wnd 0}";
 //        if (wnd == (SDL_Window*)0) return ostrm << "{WND 0}";
 //        int wndx, wndy, wndw, wndh;
-        mySDL_Rect wrect;
-        VOID SDL_GetWindowPosition(wnd, &wrect.x, &wrect.y);
-        VOID SDL_GetWindowSize(wnd, &wrect.w, &wrect.h);
+//        mySDL_Rect wrect;
+//        VOID SDL_GetWindowPosition(wnd, &wrect.x, &wrect.y);
+//        VOID SDL_GetWindowSize(wnd, &wrect.w, &wrect.h);
         /*Uint32*/ mySDL_Format fmt = SDL_GetWindowPixelFormat(wnd);
         if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", false, srcline);
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
@@ -1165,9 +1184,9 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "\n{" << commas(sizeof(that)) << ":" << &that;
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         ostrm << FMT(", wnd@ %p, ") << wnd;
-        ostrm << wrect; //wndw << " x " << wndh;
+        ostrm << that.m_rect; //wndw << " x " << wndh;
         ostrm << ", fmt " << fmt; //SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
 //        ostrm << " bpp " << NVL(SDL_PixelFormatShortName(fmt)); //FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(fmt));
         ostrm << FMT(", flags 0x%x (") << svflags << flag_desc.str().substr(1) << ")"; //FMT(", flags %s") << flag_desc.str().c_str() + 1;
@@ -1208,27 +1227,29 @@ public: //operators
     }
 #endif
 public: //methods; mostly just wrappers for static utility methods
-    void virtsize(/*int w, int h,*/ const SDL_Size& wh, SrcLine srcline = 0) { VOID virtsize(get(), wh, srcline); }
+    inline void virtsize(/*int w, int h,*/ const SDL_Size& wh, SrcLine srcline = 0) { VOID virtsize(get(), wh, srcline); }
     void reset(SDL_Window* new_ptr, SrcLine srcline = 0)
     {
 //printf("reset here1\n"); fflush(stdout);
-        if (new_ptr == get()) return; //nothing changed
+        if (new_ptr == get()) return; //no change
 //printf("reset here2\n"); fflush(stdout);
-        if (new_ptr) check(new_ptr, NO_SIZE, NO_FORMAT, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
+        if (new_ptr) check(new_ptr, NO_POINT, NO_SIZE, NO_FORMAT, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
 //        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
         debug(BLUE_MSG << FMT("AutoWindow(%p)") << this << " taking ownership of " << FMT("%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
         super::reset(new_ptr);
+        if (!new_ptr) m_rect.x = m_rect.y = m_rect.w = m_rect.h = 0;
+        else VOID SDL_GetWindowRect(new_ptr, &m_rect);
 //printf("reset here3\n"); fflush(stdout);
         VOID INSPECT(*this, srcline);
 //printf("reset here4\n"); fflush(stdout);
     }
-    SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline); }
-    void clear(Uint32 color = BLACK, SrcLine srcline = 0) { VOID clear(get(), color, srcline); }
+    inline SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline); }
+    inline void clear(Uint32 color = BLACK, SrcLine srcline = 0) { VOID clear(get(), color, srcline); }
 //just use Named args rather than all these overloads:
 //    void render(SDL_Texture* txtr, SrcLine srcline = 0) { render(txtr, true, NVL(srcline, SRCLINE)); }
 //    void render(SDL_Texture* txtr, bool clearfb = true, SrcLine srcline = 0) { render(txtr, NO_RECT, NO_RECT, clearfb, NVL(srcline, SRCLINE)); }
 //    void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, bool clearfb = true, SrcLine srcline = 0)
-    void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0) { VOID render(get(), txtr, src, dest, /*clearfb,*/ srcline); }
+    inline void render(SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0) { VOID render(get(), txtr, src, dest, /*clearfb,*/ srcline); }
 //    void update(void* pixels, SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
 //    {
 //TODO:
@@ -1246,12 +1267,14 @@ public: //named arg variants
             const char* title = "GpuPort";
 //            int x = 0, y = 0;
 //            int w = 0, h = 0;
+            int screen = FIRST_SCREEN;
             const SDL_Rect* rect = NO_RECT; //{0, 0, 0, 0};
             SDL_WindowFlags flags = NO_WINDOW_FLAGS;
+            Uint32 init_color = BLACK;
             SrcLine srcline = 0;
         } params;
         unpack(params, named_params);
-        return create(params.title, /*params.x, params.y, params.w, params.h,*/ params.rect, params.flags, params.srcline);
+        return create(params.title, params.screen, /*params.x, params.y, params.w, params.h,*/ params.rect, params.flags, params.init_color, params.srcline);
     }
     template <typename CALLBACK>
     inline auto render(CALLBACK&& named_params)
@@ -1276,7 +1299,7 @@ public: //named arg variants
 public: //static utility methods
 //    static void virtsize(SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { VOID virtsize(renderer(wnd), w, h, srcline); }
 //    static void virtsize(SDL_Renderer* rndr, int w, int h, SrcLine srcline = 0)
-    static void virtsize(CONST SDL_Window* wnd, /*int w, int h,*/ const SDL_Size* want_wh = 0, SrcLine srcline = 0)
+    static void virtsize(CONST SDL_Window* wnd, /*int w, int h,*/ const SDL_Size& want_wh, SrcLine srcline = 0)
     {
 //note about aspect ratio: https://forums.libsdl.org/viewtopic.php?p=38664
 //        debug(BLUE_MSG "set wnd render logical size to %d x %d" ENDCOLOR_ATLINE(srcline), w, h);
@@ -1285,11 +1308,11 @@ public: //static utility methods
 //don't use:        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
         SDL_Size wh; //int wndw, wndh;
         VOID SDL_GetWindowSize(wnd, &wh.w, &wh.h);
-        float hscale = (want_wh && want_wh->w)? (float)want_wh->w / wh.w: 1, vscale = (want_wh && want_wh->h)? (float)want_wh->h / wh.h: 1;
+        float hscale = /*(want_wh && want_wh->w)?*/want_wh.w? (float)want_wh.w / wh.w: 1, vscale = /*(want_wh && want_wh->h)?*/ want_wh.h? (float)want_wh.h / wh.h: 1;
         SDL_Renderer* rndr = renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd); //get());
 //        if (!SDL_OK(rndr)) SDL_exc("get renderer");
         if (!SDL_OK(SDL_RenderSetScale(rndr, hscale, vscale))) SDL_exc("set render scale", srcline);
-        debug(BLUE_MSG "virt size: %d x %d / %d x %d => scale %f x %f" ENDCOLOR_ATLINE(srcline), want_wh->w, want_wh->h, wh.w, wh.h, hscale, vscale);
+        debug(BLUE_MSG "virt size: %d x %d / %d x %d => scale %f x %f" ENDCOLOR_ATLINE(srcline), want_wh.w, want_wh.h, wh.w, wh.h, hscale, vscale);
     }
 //NOTE: leaves in-memory copy stale, so not too useful
 //    static void clear(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
@@ -1301,18 +1324,21 @@ public: //static utility methods
 //        if (!SDL_OK(rndr)) SDL_exc("get renderer");
         if (!SDL_OK(SDL_SetRenderDrawColor(rndr, R_G_B_A(color)))) SDL_exc("set render draw color", srcline);
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
-        exc_soft(RED_MSG "broken %d,%d,%d,%d" ENDCOLOR, R_G_B_A(color)); //TODO: why doesn't this work?
+//        exc_soft(RED_MSG "broken %d,%d,%d,%d" ENDCOLOR, R_G_B_A(color)); //TODO: why doesn't this work?
 //        SDL_RendererInfo rinfo = {0};
 //        if (!SDL_OK(SDL_GetRendererInfo(rndr, &rinfo))) SDL_exc("can't get renderer info", srcline);
 //        SDL_Size wh(rinfo.max_texture_width, rinfo.max_texture_height);
 //        SDL_Size wh;
         SDL_Rect rect;
 //        SDL_Window* wnd = windowof(rndr, srcline);
-        VOID SDL_GetWindowSize(wnd, &rect.w, &rect.h);
+        VOID SDL_GetWindowRect(wnd, &rect);
 //no worky        VOID SDL_RenderGetViewport(rndr, &rect);
-        debug(BLUE_MSG "set all " << rect.size() << " pixels in window to color 0x%x" ENDCOLOR_ATLINE(srcline), color);
+        debug(BLUE_MSG "set " << rect/*.size()*/ << " pixels in window to color 0x%x" ENDCOLOR_ATLINE(srcline), color);
 //printf("hello2 %p\n", rndr); fflush(stdout);
         VOID SDL_RenderPresent(rndr); //flips texture to screen
+#if 1 //api docs recommend this even if caller will update all pixels
+        if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
+#endif        
 //printf("hello3 %p\n", rndr); fflush(stdout);
 //no worky        VOID SDL_RaiseWindow(wnd); //kludge: compensate for multiple windows (avoids ipc for multiple threads or processes)
     }
@@ -1334,17 +1360,21 @@ public: //static utility methods
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, src, dest))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
 //no worky        VOID SDL_RaiseWindow(wnd); //kludge: compensate for multiple windows (avoids ipc for multiple threads or processes)
+#if 1 //api docs recommend this even if caller will update all pixels
+        if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
+#endif        
     }
 //    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, NVL(srcline, SRCLINE)); }
-    static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Size* want_wh = 0, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
+    static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Size* want_wh = NO_SIZE, const SDL_Point* want_xy = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
     {
         /*Uint32*/ SDL_Format fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
         if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", srcline);
 //        if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
         if (want_fmt && (fmt != want_fmt)) exc(RED_MSG "unexpected window format: got " << fmt << ", expected " << want_fmt << ENDCOLOR_ATLINE(srcline)); //, fmt, want_fmt);
-        SDL_Size wh; //int wndw, wndh;
-        VOID SDL_GetWindowSize(wnd, &wh.w, &wh.h);
-        if (want_wh /*!= NO_FORMAT*/ && (/*(wsz.w != want_sz.w) || (wsz.h != want_sz.h)*/ wh != *want_wh)) exc(RED_MSG "window mismatch: expected " << *want_wh << ", got " << wh << ENDCOLOR_ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
+        SDL_Rect rect; //int wndw, wndh;
+        VOID SDL_GetWindowRect(wnd, &rect);
+        if (want_wh && (rect.size() != *want_wh)) exc(RED_MSG "window size mismatch: expected " << *want_wh << ", got " << rect.size() << ENDCOLOR_ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
+        if (want_xy && (rect.position() != *want_xy)) exc(RED_MSG "window position mismatch: expected " << *want_xy << ", got " << rect.position() << ENDCOLOR_ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
 //        myprintf(22, BLUE_MSG "cre wnd: max fit %d x %d => wnd %d x %d, vtx size %2.1f x %2.1f" ENDCOLOR, MaxFit().w, MaxFit().h, wndw, wndh, (double)wndw / (TXR_WIDTH - 1), (double)wndh / univ_len);
 //TODO: check renderer also?
     }
@@ -1420,13 +1450,14 @@ public: //static utility methods
 protected: //members
 //    SDL_AutoLib sdllib;
     const elapsed_t m_started;
+    mySDL_Rect m_rect; //cached window size + position
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 //    static /*std::atomic<int>*/int& count() //kludge: use wrapper to avoid trailing static decl at global scope
 //    {
 //        static /*std::atomic<int>*/int m_count = 0;
 //        return m_count;
 //    }
-    static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
@@ -1663,7 +1694,7 @@ protected:
 //
 
 
-#define MAKE_WINDOW  (SDL_Window*)-1
+//#define MAKE_WINDOW  (SDL_Window*)-1
 #define NO_ACCESS  (SDL_TEXTUREACCESS_STREAMING & ~SDL_TEXTUREACCESS_STREAMING)
 #define SDL_TextureAccess  Uint32 //kludge: enum type doesn't allow bitwise arithmetic so override it
 #define NO_PITCH  0
@@ -1679,7 +1710,7 @@ template <typename PXTYPE = Uint32> //, super = std::unique_ptr<SDL_Texture, std
 class mySDL_AutoTexture: public mySDL_AutoTexture_super //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
 {
 //readable names (mainly for debug msgs):
-    static const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
+    static inline const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
     {
         static const std::map<SDL_TextureAccess, const char*> names =
         {
@@ -1697,7 +1728,7 @@ public: //ctors/dtors
 //    explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
-    explicit mySDL_AutoTexture(SDL_Texture* txtr, SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_wnd(wnd, srcline), m_started(now()), /*m_shmbuf(??),*/ m_srcline(srcline) //CAUTION: AutoWindow ctor needs a window value; //SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
+    explicit mySDL_AutoTexture(SDL_Texture* txtr, SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_wnd(wnd, srcline), m_started(now()), m_latest(now()), /*m_shmbuf(??),*/ m_srcline(srcline) //CAUTION: AutoWindow ctor needs a window value; //SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
 //    (SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
 //        debug(RED_MSG "TODO: add shm pixel buf" ENDCOLOR_ATLINE(srcline));
@@ -1707,13 +1738,16 @@ public: //ctors/dtors
         reset(txtr, NVL(srcline, SRCLINE)); //take ownership of window after checking
 //        debug(GREEN_MSG "SDL_AutoTexture(%p) ctor txtr %p, wnd %p" ENDCOLOR_ATLINE(srcline), /*TEMPL_ARGS.c_str(),*/ this, txtr, wnd);
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
+//        VOID clear(BLACK, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible; related to SDL double buffering?
     }
     /*virtual*/ ~mySDL_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
 //    SDL_AutoTexture(const SDL_AutoTexture& that) { *this = that; } //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
 //    SDL_AutoTexture(SDL_Texture* that) { operator=(that); } //*this = that; } //copy ctor; //= delete; //deleted copy constructor
-    mySDL_AutoTexture(const mySDL_AutoTexture& that, SrcLine srcline = 0): m_wnd(that.m_wnd, srcline) { reset(((mySDL_AutoTexture)that).release(), srcline); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
+//    inline mySDL_AutoTexture(const mySDL_AutoTexture& that, SrcLine srcline = 0): m_wnd(that.m_wnd, srcline) { reset(((mySDL_AutoTexture)that).release(), srcline); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
+    inline mySDL_AutoTexture(const mySDL_AutoTexture& that, SrcLine srcline = 0): mySDL_AutoTexture(((mySDL_AutoTexture)that).release(), that.m_wnd, srcline) {} //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
+//??    mySDL_AutoTexture(const mySDL_AutoTexture& that, SrcLine srcline = 0): mySDL_AutoTexture(((mySDL_AutoTexture)that).release(), srcline) {} //m_wnd(that.m_wnd, srcline) { reset(((mySDL_AutoTexture)that).release(), srcline); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
 //    SDL_AutoTexture(/*const*/ SDL_Texture* that) { this->reset(that); } //operator=(that); } //*this = that; } //copy ctor; //= delete; //deleted copy constructor
 //    {
 //        SrcLine srcline = m_srcline; //TODO: where to get this?
@@ -1731,39 +1765,40 @@ public: //factory methods:
     }
 //    static SDL_AutoTexture/*&*/ streaming(/*SDL_Renderer* rndr*/ SDL_Window* wnd, int w, int h, SrcLine srcline = 0) { return streaming(/*rndr*/ wnd, w, h, 0, 0, NVL(srcline, SRCLINE)); }
 #endif
-    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = MAKE_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, const SDL_Size* view_wh = NO_SIZE, /*int w_padded = 0,*/ /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
+    static mySDL_AutoTexture/*& not allowed with rval ret; not needed with unique_ptr*/ create(/*SDL_Renderer* rndr*/ CONST SDL_Window* wnd = NO_WINDOW, int screen = FIRST_SCREEN, /*int w = 0, int h = 0,*/ const SDL_Size* want_wh = NO_SIZE, const SDL_Size* view_wh = NO_SIZE, /*int w_padded = 0,*/ /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SDL_TextureAccess access = NO_ACCESS, PXTYPE init_color = BLACK, /*key_t shmkey = 0,*/ SrcLine srcline = 0)
     {
 //        bool wnd_owner = false;
         SDL_AutoLib sdllib(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)); //init lib before creating window
-        if (wnd == MAKE_WINDOW) //(SDL_Window*)-1)
+        if (!wnd) //wnd == MAKE_WINDOW) //(SDL_Window*)-1)
         {
             SDL_Rect rect = ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds; //NOTE: need to set (x, y) for multiple monitors
-            if (want_wh /*!= NO_SIZE*/) { rect.w = want_wh->w; rect.h = want_wh->h; }
-            /*SDL_AutoWindow<true>*/ auto new_wnd(SDL_AutoWindow<true>::create(NAMED{ _.rect = &rect; SRCLINE; }));
+            SDL_Rect* want_rect = NO_RECT;
+            if (want_wh) { rect.w = want_wh->w; rect.h = want_wh->h; want_rect = &rect; }
+            SDL_AutoWindow<true>/*&*/ new_wnd = SDL_AutoWindow<true>::create(NAMED{ _.screen = screen; _.rect = want_rect; if (A(init_color)) _.init_color = init_color; SRCLINE; });
             wnd = new_wnd.release(); //take ownership of new window before end of scope destroys it
 //            wnd_owner = true;
         }
 //        if (WantPixelShmbuf)
 //            AutoShmary<Uint32, false> shmbuf((w + 2) * h, shmkey, srcline);
 //    explicit AutoShmary(size_t ents, key_t key, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, srcline): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(srcline)
-        SDL_Size wh; //int wndw, wndh;
+        SDL_Size wh; //texture size; //int wndw, wndh;
         if (want_wh /*!= NO_SIZE*/) wh = *want_wh;
         else VOID SDL_GetWindowSize(wnd, &wh.w, &wh.h);
 //        if (!w) w = wndw;
 //        if (!h) h = wndh;
-        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd);
 //        if (!SDL_OK(rndr)) SDL_exc("get window renderer", srcline);
 //        if (!SDL_OK(SDL_RenderSetLogicalSize(rndr, w, h))) SDL_exc("set render logical size", srcline); //use GPU to scale up to full screen
-        VOID SDL_AutoWindow<>::virtsize(wnd, view_wh? view_wh: &wh, NVL(srcline, SRCLINE));
+        VOID SDL_AutoWindow<>::virtsize(wnd, view_wh? *view_wh: wh, NVL(srcline, SRCLINE)); //set renderer scaling
 //no; don't need to pad actual texture (single writer); messes up stretch        if (!w_padded) w_padded = wh.w; //use actual for window width, pad pitch for txtr
+        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd);
         return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ /*w_padded? w_padded:*/ wh.w, wh.h), wnd, NVL(srcline, SRCLINE));
 //        auto retval = SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w? w: DONT_CARE, h? h: DONT_CARE), /*wnd,*/ NVL(srcline, SRCLINE));
 //        /*if (wnd_owner)*/ retval.m_wnd.reset(wnd); //take ownership; TODO: allow caller to keep ownership?
 //        return retval;
     }
 public: //operators
-    operator SDL_Texture*() const { return get(); }
-    mySDL_AutoTexture& operator=(mySDL_AutoTexture& that) { return *this /*operator*/=(that.release()); } //copy asst op; //, SrcLine srcline = 0)
+    inline operator SDL_Texture*() const { return get(); }
+    inline mySDL_AutoTexture& operator=(mySDL_AutoTexture& that) { return *this /*operator*/=(that.release()); } //copy asst op; //, SrcLine srcline = 0)
     mySDL_AutoTexture& operator=(SDL_Texture* txtr) //, SrcLine srcline = 0)
     {
 //        if (!srcline) srcline = m_srcline;
@@ -1816,20 +1851,33 @@ public: //methods
         if (!SDL_OK(SDL_SetTextureColorMod(get(), r, g, b))) SDL_exc("set texture color mod", srcline);
     }
 #endif
-    void clear(PXTYPE color = BLACK, SrcLine srcline = 0) //{ VOID render(get(), color, srcline); }
+    inline void clear(PXTYPE color = BLACK, SrcLine srcline = 0) //{ VOID render(get(), color, srcline); }
     {
         VOID SDL_AutoWindow<>::clear(m_wnd, color, srcline);
+//??        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
+//??        VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
+    }
+    inline void fill(PXTYPE color = BLACK, SrcLine srcline = 0)
+    {
+        int pitch;
+        void* txtrbuf;
+        SDL_Texture* txtr = get();
+        if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &txtrbuf, &pitch))) SDL_exc("lock texture");
+        fill(txtrbuf, color, m_cached.wh.h * m_cached.wh.w); //pitch);
+        VOID SDL_UnlockTexture(txtr);
     }
 //use Named args rather than a bunch of overloads:
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
 //    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
 //    static const int NUM_STATS = 4;
-    double perf_stats[4]; //in case caller doesn't provide a place
-    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
+    /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
+//    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
+    elapsed_t m_latest;
+    inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; }
 //    template <typename XFR> //allow lamba function as param; see https://stackoverflow.com/questions/16111285/how-to-pass-and-execute-anonymous-function-as-parameter-in-c11
 //        VOID memcpy(pxbuf, pixels, xfrlen);
     using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
-    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = NO_PITCH, double* perf = NO_PERF, /*XFR&&*/ /*XFR xfr = 0*/ XFR xfr = NO_XFR, SrcLine srcline = 0)
+    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = NO_PITCH, elapsed_t* perf = NO_PERF, /*XFR&&*/ /*XFR xfr = 0*/ XFR xfr = NO_XFR, SrcLine srcline = 0)
     {
 //printf("here10\n"); fflush(stdout);
         SDL_Texture* txtr = get();
@@ -1844,27 +1892,30 @@ public: //methods
 //        static int count = 0;
 //        if (!count++)
 //            printf("txtr upd xfr was %p, is now %p\n", xfr, xfr? xfr: memcpy);
-        size_t xfrlen = m_cached.wh.h * m_cached.pitch;
-        if (!xfr) exc_hard(RED_MSG "no xfr cb" ENDCOLOR); //{ xfr = memcpy; xfrlen /= 3; } //kludge: txtr is probably 3x node size so avoid segv
+        if (pixels)
+        {
+            size_t xfrlen = m_cached.wh.h * m_cached.pitch;
+            if (!xfr) exc_hard(RED_MSG "no xfr cb" ENDCOLOR); //{ xfr = memcpy; xfrlen /= 3; } //kludge: txtr is probably 3x node size so avoid segv
 //printf("here12\n"); fflush(stdout);
 #if 0 //NOTE: wiki says this is slow, and to use streaming texture lock/unlock instead
 //https://wiki.libsdl.org/SDL_UpdateTexture?highlight=%28%5CbCategoryAPI%5Cb%29%7C%28SDLFunctionTemplate%29
         if (!SDL_OK(SDL_UpdateTexture(txtr, rect, pixels, cached.pitch))) SDL_exc("update texture", srcline);
 #else
-        int pitch;
-        void* txtrbuf;
+            int pitch;
+            void* txtrbuf;
 //        exc_soft(RED_MSG "TODO: leave locked?" ENDCOLOR);
-        if (!SDL_OK(SDL_LockTexture(txtr, rect, &txtrbuf, &pitch))) SDL_exc("lock texture");
+            if (!SDL_OK(SDL_LockTexture(txtr, rect, &txtrbuf, &pitch))) SDL_exc("lock texture");
 //        VOID xfr(pxbuf, pixels, m_cached.wh.h * m_cached.pitch, NVL(srcline, SRCLINE));
 //printf("here13 %p %p %d * %d = %zu\n", pxbuf, pixels, m_cached.wh.h, m_cached.pitch, m_cached.wh.h * m_cached.pitch); fflush(stdout);
 //no need to fwd<>!        std::forward<XFR>(xfr)(pxbuf, pixels, m_cached.wh.h * m_cached.pitch); //perfect fwd to memcpy; //, NVL(srcline, SRCLINE));
 //        if (xfr == memcpy) exc(RED_MSG "about to crash" ENDCOLOR);
-        xfr(txtrbuf, pixels, xfrlen); //m_cached.wh.h * m_cached.pitch); //perfect fwd to memcpy; //, NVL(srcline, SRCLINE));
+            xfr(txtrbuf, pixels, xfrlen); //m_cached.wh.h * m_cached.pitch); //perfect fwd to memcpy; //, NVL(srcline, SRCLINE));
 //printf("here14\n"); fflush(stdout);
-        VOID SDL_UnlockTexture(txtr);
+            VOID SDL_UnlockTexture(txtr);
 #endif
+        }
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
-        perf[1] = perftime(1000); //CPU-side data xfr time (msec)
+        perf[1] = perftime(); //1000); //CPU-side data xfr time (msec)
 #if 0 //DRY
         VOID SDL_AutoWindow<>::render(m_wnd, txtr, NO_RECT, NO_RECT, /*false,*/ NVL(srcline, SRCLINE)); //put new texture on screen
 #else //WET to allow more detailed perf tracking
@@ -1872,12 +1923,14 @@ public: //methods
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
 //printf("here16\n"); fflush(stdout);
-        perf[2] = perftime(1000); //CPU to GPU data xfr time (msec)
+        perf[2] = perftime(); //1000); //CPU to GPU data xfr time (msec)
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
 #endif
-        perf[3] = perftime(1000); //vsync wait time (idle time, in msec); should align with fps
+        perf[3] = perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
 //printf("here17\n"); fflush(stdout);
-        debug(BLUE_MSG "update times: caller %f, txtr lock/fill/unlock %f, rendr copy %f, rendr present+sync %f" ENDCOLOR_ATLINE(srcline));
+//        debug(BLUE_MSG "update times: caller %f s, txtr lock/fill/unlock %f ms, rendr copy %f ms, rendr present+sync %f ms" ENDCOLOR_ATLINE(srcline), perf[0] / 1e6, perf[1] / 1e3, perf[2] / 1e3, perf[3] / 1e3);
+//        static int count = 0;
+//        if (++count < 5) { printf("elapsed %d %d %d %d %d\n", now() - m_started, perf[0], perf[1], perf[2], perf[3]); fflush(stdout); }
     }
 //    std::enable_if<WantPixelShmbuf_copy, void> update(const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0) //SFINAE
 //    {
@@ -1903,7 +1956,7 @@ public: //named arg variants
 //        return create(unpack(create_params, named_params), Unpacked{});
         struct //CreateParams
         {
-            CONST SDL_Window* wnd = MAKE_WINDOW; //(SDL_Window*)-1; //special value to create new window
+            CONST SDL_Window* wnd = NO_WINDOW; //(SDL_Window*)-1; //special value to create new window
   //          int w = 0, h = 0;
             const SDL_Size* wh = NO_SIZE;
             const SDL_Size* view_wh = NO_SIZE;
@@ -1913,10 +1966,11 @@ public: //named arg variants
             SDL_Format fmt = NO_FORMAT;
             SDL_TextureAccess access = NO_ACCESS;
             int screen = FIRST_SCREEN;
+            PXTYPE init_color = BLACK;
             SrcLine srcline = 0;
         } params;
         unpack(params, named_params);
-        return create(params.wnd, params.screen, params.wh, params.view_wh, /*params.w_padded,*/ params.fmt, params.access, params.srcline);
+        return create(params.wnd, params.screen, params.wh, params.view_wh, /*params.w_padded,*/ params.fmt, params.access, params.init_color, params.srcline);
     }
     template <typename CALLBACK>
     inline auto update(CALLBACK&& named_params)
@@ -1931,7 +1985,7 @@ public: //named arg variants
 //            int& w = size.w; //allor caller to set individually as well
 //            int& h = size.h;
             int pitch = NO_PITCH;
-            double* perf = NO_PERF;
+            elapsed_t* perf = NO_PERF;
             XFR xfr = NO_XFR; //memcpy;
             SrcLine srcline = 0;
         } params;
@@ -1948,6 +2002,7 @@ public: //static helper methods
 //    static void render(SDL_Window* wnd, Uint32 color = BLACK, SrcLine srcline = 0) { VOID render(renderer(wnd), color, srcline); }
 //    static void render(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
 //    static void check(SDL_Texture* txtr, SDL_Surface* cached, SrcLine srcline = 0) { check(txtr, cached, 0, 0, NVL(srcline, SRCLINE)); }
+    static inline void fill(void* dest, const PXTYPE src, size_t len) { VOID fill(dest, &src, len); }
     static void fill(void* dest, const void* src, size_t len) //memcpy-compatible fill, for use with update() above
     {
         PXTYPE* ptr = static_cast<PXTYPE*>(dest);
@@ -2017,9 +2072,9 @@ private: //member vars
 //    typedef struct { SDL_Surface surf; uint32_t fmt; int acc; } SDL_CachedTextureInfo;
 //    SDL_Window* m_wnd;
     SDL_AutoWindow<true> m_wnd;
-    elapsed_t m_started; //measure performance
+    const elapsed_t m_started; //measure performance
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-    static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
@@ -2294,10 +2349,11 @@ void fullscreen_test(ARGS& args)
         if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
     debug(PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start" << ENDCOLOR);
     /*SDL_AutoTexture<>*/ auto txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
-    VOID txtr.clear(mixARGB(0.5, BLACK, WHITE), SRCLINE);
-    VOID SDL_Delay(4 sec);
+    VOID txtr.clear(mixARGB(0.75, BLACK, WHITE), SRCLINE); //gray; bypass txtr and go direct to window
+    VOID SDL_Delay((4-1) sec);
+//    VOID txtr.fill(mixARGB(0.25, BLACK, WHITE), SRCLINE);
+//    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
 
-    Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
 #if 0 //check if 1D index can be used instead of (X,Y); useful for fill() loops
 //    myPixels[0][W] = RED;
 //    myPixels[0][2 * W] = GREEN;
@@ -2313,43 +2369,50 @@ void fullscreen_test(ARGS& args)
     debug(BLUE_MSG << buf.str().substr(2) << ENDCOLOR);
     return;
 #endif
+
+    Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
 //primary color test:
     int numfr = 0;
-    double perf_stats[SIZEOF(txtr.perf_stats) + 1], total_stats[SIZEOF(perf_stats)] = {0};
+    elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1], total_stats[SIZEOF(perf_stats)] = {0};
     debug(CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)" ENDCOLOR);
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
+    txtr.perftime(); //kludge: flush perf timer
+    VOID SDL_Delay(1 sec); //kludge: even out timer with loop
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
         perf_stats[0] = txtr.perftime();
-        for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
+        SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
         debug(BLUE_MSG << timestamp() << "all " << wh << " pixels => 0x%x" ENDCOLOR, myPixels[0][0]);
-        VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
-        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0], perf_stats[1], perf_stats[2], perf_stats[3], perf_stats[4]);
+        VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
         for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
         ++numfr;
         VOID SDL_Delay(1 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
-    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr, total_stats[1] / numfr, total_stats[2] / numfr, total_stats[3] / numfr, total_stats[4] / numfr);
+    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
 
 //pixel test:
     numfr = 0;
     for (int i = 0; i < SIZEOF(total_stats); ++i) total_stats[i] = 0;
-    for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = BLACK; //bypass compiler index limits
+    SDL_AutoTexture<>::fill(&myPixels[0][0], BLACK, wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = BLACK; //bypass compiler index limits
+//    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
+    txtr.perftime(); //kludge: flush perf timer
+    VOID SDL_Delay(0.25 sec); //kludge: even out timer with loop
     for (int y = 0 + std::max(wh.h-5, 0), c = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
         for (int x = 0 + std::max(wh.w-5, 0); x < wh.w; ++x, ++c)
         {
             perf_stats[0] = txtr.perftime();
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
             debug(BLUE_MSG << timestamp() << "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
-            VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
-            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0], perf_stats[1], perf_stats[2], perf_stats[3], perf_stats[4]);
+            VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
+            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
             for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
             ++numfr;
             VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
-    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr, total_stats[1] / numfr, total_stats[2] / numfr, total_stats[3] / numfr, total_stats[4] / numfr);
+    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
 }
 
 
@@ -2418,14 +2481,14 @@ void unit_test(ARGS& args)
     debug(BLUE_MSG << FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
     debug(BLUE_MSG << *ScreenInfo(SRCLINE) << ENDCOLOR);
 
-    timer_test();
+//    timer_test();
 //return;
-    lib_test();
+//    lib_test();
 //    surface_test();
 //    window_test();
-    sdl_api_test();
+//    sdl_api_test();
     fullscreen_test(args);
-    gl_test();
+//    gl_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>
     debug(BLUE_MSG << "finish" << ENDCOLOR);

@@ -1,10 +1,31 @@
 #!../player.js -a -b #comment
-{
-    a: 1,
-    b: 2,
+#{
+#    a: 1,
+#    b: 2,
+#}
+#{}
+#{frames:
+#[
+{time: -1,
+    comment: "pre-seq frame",
+},
+{time: -2,
+    comment: "pre-seq frame",
+},
+{time:  .000, data: "frame 0"},
+{time:  .033, data: "frame 1"},
+{time:  .200, data: "frame 6"},
+{time:  .133, data: "frame 4"},
+{time:  .133, data: "frame 4"},
+{time:  .133, data: "frame 4"},
+{time:  .167, data: "frame 5"},
+{time: 1.500, data: "frame 45"},
+{time: 2.000, data: "frame 60"},
+{time: 2.001,
+    comment: "post-seq wrap-up"
 }
-{}
-{
-    "key": "key2",
-}
+#]}
+#{
+#    "key": "key2",
+#}
 #eof

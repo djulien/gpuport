@@ -169,7 +169,7 @@ public: //static helper methods
 #endif
 //    struct DebugThing { template <typename TYPE> explicit DebugThing(TYPE&& val) { debug(BLUE_MSG "debug: val " << val << ENDCOLOR); }}; //        ~DebugThing() {}
 //    DebugThing m_debug9, m_debug0, m_debug1;
-    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
+//    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
 public:
     const int UNIV_LEN; //= divup(m_cfg->vdisplay, vgroup);
 protected:
@@ -180,7 +180,7 @@ protected:
     /*txtr_bb*/ SDL_AutoTexture<XFRTYPE> m_txtr;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //    using PERF_STATS = decltype(m_txtr.perf_stats); //double[SIZEOF(txtr_bb.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
-    double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+    elapsed_t perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     struct FrameInfo //72 bytes; rnd up to 128 bytes for memory cache performance
     {
 //        std::mutex mutex; //TODO: multiple render threads/processes
@@ -188,7 +188,7 @@ protected:
 //make these atomic so multiple threads can access changing values without locks:
         std::atomic<UNIV_MASK> bits; //= 0; //one Ready bit for each universe; NOTE: need to init to avoid "deleted function" errors
         std::atomic<uint32_t> numfr; //= 0; //#frames rendered / next frame#
-        std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
+//        std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
         uint64_t times[SIZEOF(perf_stats)]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
         static const uint32_t FRINFO_MAGIC = 0x12345678;
         /*const*/ uint32_t sentinel = FRINFO_MAGIC;
@@ -196,9 +196,14 @@ protected:
         void init(std::thread::id new_owner)
         {
             owner = new_owner;
+            init();
+        }
+        void init()
+        {
             bits.store(0);
             numfr.store(0);
-            nexttime.store(0);
+//            nexttime.store(0);
+            for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
             sentinel = FRINFO_MAGIC;
         }
         bool isvalid() const { return (sentinel == FRINFO_MAGIC); }
@@ -212,7 +217,7 @@ protected:
                 ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
                 ostrm << ", bits " << std::hex << that.bits.load() << std::dec;
                 ostrm << ", #fr " << that.numfr.load();
-                ostrm << ", time " << that.nexttime.load();
+//                ostrm << ", time " << that.nexttime.load();
                 if (!that.isvalid()) ostrm << ", magic " << std::hex << that.sentinel << " INVALID" << std::dec;
             }
             return ostrm;
@@ -307,13 +312,14 @@ public: //data members
     enum Protocol: int { NONE = 0, DEV_MODE, WS281X};
 protected:
     Protocol m_protocol;
+    double m_frame_time;
 public: //ctors/dtors:
-    explicit GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {} //default ctor
-    GpuPort(int screen /*= 0*/, key_t shmkey = 0, int vgroup = 1, Protocol protocol = WS281X, NODEVAL init_color = 0, SrcLine srcline = 0):
+    explicit inline GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {} //default ctor
+    GpuPort(int screen /*= FIRST_SCREEN*/, key_t shmkey = 0, int vgroup = 1, Protocol protocol = WS281X, NODEVAL init_color = 0, SrcLine srcline = 0):
 //        m_debug0(&thing),
 //        m_debug1(vgroup),
-        m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))), //get this first for screen placement and size default
-        UNIV_LEN(divup(m_cfg? m_cfg->vdisplay: UNIV_MAX, vgroup)), //univ len == display height
+//        m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))), //get this first for screen placement and size default
+        UNIV_LEN(divup(/*m_cfg? m_cfg->vdisplay: UNIV_MAX*/ ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds.h, vgroup)), //univ len == display height
 //        m_debug2(UNIV_LEN),
         m_wh(SIZEOF(bbdata[0]) /*3 * NODEBITS*/, std::min(UNIV_LEN, UNIV_MAX)), //texture (virtual window) size; kludge: need to init before passing to txtr ctor below
         m_view(m_wh.w - 1, m_wh.h), //last 1/3 bit will overlap hblank; clip from visible part of window
@@ -324,17 +330,19 @@ public: //ctors/dtors:
         nodes(m_nodebuf.nodes), //expose as property for simpler caller usage; /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
         frinfo(m_nodebuf.frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
         NumUniv(NUM_UNIV), UnivLen(UNIV_LEN), //tell caller what the limits are
-        frame_time(m_cfg->frame_time(NVL(srcline, SRCLINE))), //actual refresh rate based on video config (sec)
+        frame_time(m_frame_time), //m_cfg->frame_time(NVL(srcline, SRCLINE))), //actual refresh rate based on video config (sec)
         m_protocol(protocol),
         m_started(now()),
         m_srcline(srcline)
     {
+        const ScreenConfig* const m_cfg = getScreenConfig(screen, NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
 //        if (sizeof(frinfo) > sizeof(nodes[0] /*NODEROW*/)) exc_hard(RED_MSG << "FrameInfo " << sizeof(frinfo) << " too large for node buf row " << sizeof(nodes[0] /*NODEROW*/) << ENDCOLOR_ATLINE(srcline));
         if (!m_cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
 //        frame_time = cfg->frame_time();
         if (UNIV_LEN > UNIV_MAX) exc_soft(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgroup << " require univ len " << UNIV_LEN << " exceeding max " << UNIV_MAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
         if (!&nodes || !&frinfo) exc_hard(RED_MSG "missing ptrs" ENDCOLOR_ATLINE(srcline));
 //const& broken; kludge: just initialize as var:
+        m_frame_time = m_cfg->frame_time(NVL(srcline, SRCLINE)); //actual refresh rate based on video config (sec)
         m_xfr = std::bind((protocol == WS281X)? /*GpuPort::*/xfr_ws281x: (protocol == DEV_MODE)? xfr_devmode: xfr_raw, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE));
 //        const int UNIV_LEN = divup(m_cfg->vdisplay, vgroup);
 //        const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
@@ -348,7 +356,7 @@ public: //ctors/dtors:
 //        debug(YELLOW_MSG << "sizeof(NODEBUF) = " << sizeof(NODEBUF) << " vs. " << sizeof(NODEVAL) << "*" << NUM_UNIV << "*" << H_PADDED << " = " << (sizeof(NODEVAL) * NUM_UNIV * H_PADDED) << ", sizeof(NODEVAL) " << sizeof(NODEVAL) << ", sizeof(node row) " << sizeof(NODEVAL[H_PADDED]) << ", " << m_wh << ENDCOLOR);
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
 //        ready(ALL_UNIV, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible
-        VOID m_txtr.clear(BLACK, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible; related to SDL double buffering?
+//        VOID m_txtr.clear(BLACK, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible; related to SDL double buffering?
         if (A(init_color)) //initialize nodes for caller
         {
 //            SDL_Delay(3 sec);
@@ -360,7 +368,7 @@ public: //ctors/dtors:
     }
     /*virtual*/ ~GpuPort() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
 //public: operators
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort& that)
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort& that) CONST
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
         ostrm << "GpuPort" << my_templargs();
@@ -482,6 +490,14 @@ public: //methods
     }
 //    FrameInfo* frinfo() const { return static_cast<FrameInfo*>(that.m_nodebuf.get()); }
     //void ready(SrcLine srcline = 0) { VOID ready(0, srcline); } //caller already updated frinfo->bits
+    void clear_stats()
+    {
+//        frinfo.numfr.store(0);
+//        frinfo.nexttime.store(0);
+//        for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] = 0;
+        frinfo.init();
+        m_txtr.perftime(); //kludge: flush perf timer
+    }
     bool ready(UNIV_MASK more = 0, SrcLine srcline = 0) //mark universe(s) as ready/rendered, wait for them to be processed; CAUTION: blocks caller
     {
 //printf("here1\n"); fflush(stdout);
@@ -500,12 +516,13 @@ public: //methods
         }
 //printf("here3\n"); fflush(stdout);
         while (frinfo.bits.load() != ALL_UNIV) wait(); //wait for remaining universes; loop handles spurious wakeups
-        perf_stats[1] = m_txtr.perftime(1000); //ipc wait time (msec)
+        perf_stats[1] = m_txtr.perftime(); //1000); //ipc wait time (msec)
 //all universes rendered; send to GPU:
 //        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
 //        perf_stats[1] = m_txtr.perftime(); //bitbang time
-        frinfo.bits = 0;
-        frinfo.nexttime = ++frinfo.numfr * frame_time; //update fr# and timestamp of next frame before waking other threads
+        frinfo.bits.store(0);
+//        frinfo.nexttime.store(++frinfo.numfr * frame_time); //update fr# and timestamp of next frame before waking other threads
+        ++frinfo.numfr;
 //        static void xfr_bb(void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
 //        static XFR xfr_bb_shim(std::bind(xfr_bb, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))),
 //printf("here4 \n"); fflush(stdout);
@@ -528,8 +545,10 @@ public: //methods
         else
             VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //printf("here5\n"); fflush(stdout);
+//TODO: fix ipc race condition here:
         for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] += perf_stats[i];
 //printf("here6\n"); fflush(stdout);
+        return true;
     }
 //inter-thread/process sync:
 //SDL is not thread-safe; only owner thread is allowed to render to window
@@ -669,7 +688,7 @@ protected: //data members
 protected: //data members
 //    static int m_count = 0;
 //    XFRBUF m_xfrbuf; //just use txtr
-    static std::vector<std::thread::id>& waiters() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::vector<std::thread::id>& waiters() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::vector<std::thread::id> m_all;
         return m_all;
@@ -678,7 +697,7 @@ protected: //data members
 //    const ScreenConfig cfg;
     const elapsed_t m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-    static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+    static inline std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
@@ -1150,15 +1169,16 @@ void gpstats(const char* desc, GPTYPE&& gp)
     for (;;)
     {
         /*uint32_t*/ auto numfr = gp.frinfo.numfr.load();
-        /*uint32_t*/ auto next_time = gp.frinfo.nexttime.load();
+//        /*uint32_t*/ auto next_time = gp.frinfo.nexttime.load();
+        double next_time = numfr * gp.frame_time;
         /*uint64_t*/ double times[SIZEOF(gp.frinfo.times)];
-        for (int i = 0; i < SIZEOF(times); ++i) times[i] = gp.frinfo.times[i] / numfr;
+        for (int i = 0; i < SIZEOF(times); ++i) times[i] = gp.frinfo.times[i] / numfr / 1e3; //avg msec
         if (gp.frinfo.numfr.load() != numfr) continue; //invalid (inconsistent) results; try again
 //CAUTION: use atomic ops; std::forward doesn't allow atomic vars (deleted function errors for copy ctor) so use load()
         static int count = 0;
 //        if (!(count++ % 100))
             debug(CYAN_MSG << timestamp() << "%s, next fr# %d, next time %f, ready? %d, perf: [%4.3f s, %4.3f ms, %4.3f s, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR,
-                desc, numfr, next_time, result, times[0], times[1], times[2], times[3], times[4], times[5]);
+                desc, numfr, next_time, result, times[0] / 1e3, times[1], times[2], times[3], times[4], times[5]);
         break; //got valid results
     }
 }
@@ -1179,13 +1199,13 @@ void unit_test(ARGS& args)
 
 //    SDL_Size wh(4, 4);
 //    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, 0, SRCLINE);
-    GpuPort<> gp/* = GpuPort<>::factory*/(NAMED{ _.screen = screen; _.vgroup = scrn->vdisplay / 5; /*_.wh = wh*/; _.protocol = GpuPort<>::NONE/*WS281X*/; SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
+    GpuPort<> gp/* = GpuPort<>::factory*/(NAMED{ _.screen = screen; _.vgroup = scrn->vdisplay / 5; /*_.wh = wh*/; _.protocol = GpuPort<>::NONE/*WS281X*/; _.init_color = dimARGB(0.25, RED); SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
 //    Uint32* pixels = gp.Shmbuf();
 //    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it
 //    debug(CYAN_MSG "&nodes[0] %p, &nodes[0][0] = %p, sizeof gp %zu, sizeof nodes %zu" ENDCOLOR, &gp.nodes[0], &gp.nodes[0][0], sizeof(gp), sizeof(gp.nodes));
     debug(CYAN_MSG << gp << ENDCOLOR);
-    SDL_Delay(5 sec);
+    SDL_Delay((5-1) sec);
 
     void* addr = &gp.nodes[0][0];
     debug(YELLOW_MSG "&node[0][0] " << addr << ENDCOLOR);
@@ -1196,6 +1216,9 @@ void unit_test(ARGS& args)
     addr = &gp.nodes[24][0];
     debug(YELLOW_MSG "&node[24][0] " << addr << ENDCOLOR);
 
+    gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
+//    txtr.perftime(); //kludge: flush perf timer
+    VOID SDL_Delay(1 sec); //kludge: even out timer with loop
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
         VOID gp.fill(palette[c], NO_RECT, SRCLINE);
@@ -1207,6 +1230,9 @@ void unit_test(ARGS& args)
     }
 
     VOID gp.fill(dimARGB(0.25, CYAN), NO_RECT, SRCLINE);
+    gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
+//    txtr.perftime(); //kludge: flush perf timer
+    VOID SDL_Delay(0.1 sec); //kludge: even out timer with loop
     for (int y = 0, c = 0; y < gp.UnivLen; ++y)
         for (int x = 0; x < gp.NumUniv; x += 4, ++c)
         {
