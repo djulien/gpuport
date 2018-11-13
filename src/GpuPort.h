@@ -1358,7 +1358,7 @@ void unit_test(ARGS& args)
     debug(BLUE_MSG "limit blue 0x%x, cyan 0x%x, white 0x%x, 0x%x -> 0x%x, 0x%x -> 0x%x" ENDCOLOR, GpuPort<>::limit(BLUE), GpuPort<>::limit(CYAN), GpuPort<>::limit(WHITE), tb1, GpuPort<>::limit(tb1), tb2, GpuPort<>::limit(tb2));
 
 //    bind_test(); return;
-    int screen = 0, vgroup = 0; //default
+    int screen = 0, vgroup = 0, delay_msec = 100; //default
 //    for (auto& arg : args) //int i = 0; i < args.size(); ++i)
     /*GpuPort<>::Protocol*/ int protocol = GpuPort<>::Protocol::NONE;
     for (auto it = ++args.begin(); it != args.end(); ++it)
@@ -1367,6 +1367,7 @@ void unit_test(ARGS& args)
         if (!arg.find("-s")) { screen = atoi(arg.substr(2).c_str()); continue; }
         if (!arg.find("-g")) { vgroup = atoi(arg.substr(2).c_str()); continue; }
         if (!arg.find("-p")) { protocol = atoi(arg.substr(2).c_str()); continue; }
+        if (!arg.find("-d")) { delay_msec = atoi(arg.substr(2).c_str()); continue; }
         debug(YELLOW_MSG "what is arg[%d] '%s'?" ENDCOLOR, /*&arg*/ it - args.begin(), arg.c_str());
     }
     const auto* scrn = getScreenConfig(screen, SRCLINE);
@@ -1414,7 +1415,7 @@ void unit_test(ARGS& args)
 //    VOID gp.fill(dimARGB(0.25, CYAN), NO_RECT, SRCLINE);
     gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
 //    txtr.perftime(); //kludge: flush perf timer
-    VOID SDL_Delay(0.1 sec); //kludge: even out timer with loop
+    if (delay_msec) VOID SDL_Delay(delay_msec); //0.1 sec); //kludge: even out timer with loop
     for (int y = 0, c = 0; y < gp.UnivLen; ++y)
         for (int x = 0; x < gp.NumUniv; x += 4, ++c)
         {
@@ -1425,7 +1426,7 @@ void unit_test(ARGS& args)
             std::ostringstream desc;
             desc << "node[" << x << "," << y << "] <- 0x" << std::hex << color << std::dec;
             VOID gpstats(desc.str().c_str(), gp, 100);
-            SDL_Delay(0.1 sec);
+            if (delay_msec) SDL_Delay(delay_msec); //0.1 sec);
             if (SDL_QuitRequested()) { y = gp.UnivLen; x = gp.NumUniv; break; } //Ctrl+C or window close enqueued
         }
     VOID gpstats("4x pixel text", gp);
