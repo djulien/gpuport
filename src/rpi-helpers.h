@@ -30,6 +30,10 @@
  #define STATIC //dummy keyword for readability
 #endif
 
+#ifndef CONST
+ #define CONST //dummy keyword for readability
+#endif
+
 //accept up to 2 macro args:
 #ifndef UPTO_2ARGS
  #define UPTO_2ARGS(one, two, three, ...)  three
@@ -520,7 +524,9 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
 //    struct fb_fix_screeninfo finfo; //don't need this info
     struct fb_var_screeninfo vinfo;
     AutoFD fb(open("/dev/fb0", O_RDONLY)); //O_RDWR);
-    if (fb < 0) { ERR("can't open FB", srcline); return 0; }
+    if (fb < 0) { ERR("can't open FB; need sudo?", srcline); return 0; }
+//for perms error, run with sudo or add pi user to video group ("sudo usermod -a -G video pi")
+//more info at https://www.raspberrypi.org/forums/viewtopic.php?t=6568
 //get variable screen info:
 	if (ioctl(fb, FBIOGET_VSCREENINFO, &vinfo) < 0) { ERR("can't get var fb info", srcline); return 0; }
 //	vinfo.grayscale = 0;
@@ -585,6 +591,8 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfi
 #include "msgcolors.h"
 #include "debugexc.h"
 #include "srcline.h"
+
+#define SDL_GetNumVideoDisplays()  1 //TODO
 
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)

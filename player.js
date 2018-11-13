@@ -14,6 +14,8 @@
 //https://github.com/uhop/stream-json
 //http://oboejs.com/examples
 
+//if need to do it in C++: https://github.com/nlohmann/json/
+
 "use strict";
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
@@ -23,7 +25,12 @@ const fs = require("fs"); //https://nodejs.org/api/fs.html
 const XRegExp = require("xregexp"); //https://github.com/slevithan/xregexp
 const JSONStream = require('JSONStream'); //https://github.com/dominictarr/JSONStream
 const evtstrm = require('event-stream'); //https://github.com/dominictarr/event-stream
+const thru2 = require("through2"); //https://www.npmjs.com/package/through2
+elapsed.started = Date.now(); //msec
 extensions(); //hoist to top
+//const str = "{a}\n{b}\n{c}";
+//debug(JSON.stringify(str.splitr(/}\s*{/g, "}}{{")));
+//process.exit();
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -45,7 +52,7 @@ if (!files.length) // && !isPiped(0))
             <file>  #first line is shebang: "#!<${ME} path> <arg> <arg>"
             ${ME} < <file>  #redirected file
             <other command> | ${ME}  #piped input
-        `.replace(/^(\s*)/gm, (match) => match.substr((this.prefix || (this.prefix = match)).length)).red_lt); //remove indents
+        `.unindent(/^\s*/gm).red_lt); //.replace(/^\s*/gm, (match) => match.substr((this.prefix || (this.prefix = match)).length)).red_lt); //remove indents
     process.exit(1);
 }
 files.forEach((filearg, inx) => (!inx? shebang_args(filearg): [filearg]).forEach((filename) => readfile(filename)));
@@ -57,12 +64,64 @@ files.forEach((filearg, inx) => (!inx? shebang_args(filearg): [filearg]).forEach
 
 function readfile(path)
 {
-    if (path.match(/^[-+].+|=/)) { debug(`TODO: handle option '${str}'`.yellow_lt); return; }
+    if (path.match(/^[-+].+|=/)) { debug(`TODO: handle option '${path}'`.yellow_lt); return; }
     debug(`read file '${path}' ...`.cyan_lt);
     ((path == "-")? process.stdin: fs.createReadStream(path))
 //        .pipe(evtstrm.split()) //split on newlines
-        .pipe(JSONStream.parse("frames.*"))
-        .pipe(evtstrm.mapSync((data) => { console.error(data); return data; });
+        .pipe(thru2(parse_xform, parse_flush))
+//        .pipe(JSONStream.parse("*")) //"frames.*"))
+//        .pipe(evtstrm.mapSync((data) => { console.error(data); return data; }));
+        .on("frame", data => debug((timestamp() + JSON.stringify(data)).blue_lt))
+        .on("eof", () => debug((timestamp() + "eof").cyan_lt))
+        .pipe(process.stdout);
+}
+
+
+//clean up and parse input stream:
+//strip comments (JSONStream doesn't like them)
+function parse_xform(chunk, enc, cb)
+{
+    if (typeof chunk != "string") chunk = chunk.toString(); //TODO: enc?
+//NO        chunk = chunk.replace(/\s+$/, ""); //right-trim only; need to keep left spaces for indent checking
+//        chunk += ParsePad;
+//    ++this.count || (this.count = 1);
+    this.buf = (this.buf || "") + chunk; //append to fifo buf
+//    for (var ofs, prev = -1; (ofs = this.buf.indexOf("\n", prev + 1)) != -1; prev = ofs)
+//        this.write(this.buf.slice(prev + 1, ofs));
+//TODO: better parsing
+//    const re = /['"#\n{}]/g; //special chars
+//    for (var match; match = re.exec(s);)
+//    this.buf = this.buf.slice(prev + 1);
+//    debug(`[${this.id || 1}]. ${chunk.length}:${chunk.replace(/\n/g, "\\n")}`.blue_lt);
+    var chunks = this.buf.splitr(/}\s*{/g, "}}{{"); //kludge: valid JSON objects can't have "}{" so split there (arrays need "," between elements); look-behind no worky, so consume entire separator after inserting extra chars first; split idea from https://stackoverflow.com/questions/38833020/how-can-i-split-a-string-containing-n-concatenated-json-string-in-javascript-nod/38833262; this one didn't help: https://stackoverflow.com/questions/12001953/javascript-and-regex-split-string-and-keep-the-separator
+//    debug(`${chunks.length} chunks:\n` + chunks.map((str, inx, all) => `[${inx}/${all.length}] ${str.length}:'${str.replace(/\n/g, "\\n")}'`).join("\n"));
+    this.buf = chunks.pop(); //assume last chunk is partial; hold and prepend to next chunk
+    chunks.forEach((str) => frame.call(this, str));
+    cb();
+}
+
+
+function parse_flush(cb)
+{
+    if (this.buf) frame.call(this, this.buf);
+    cb();
+    this.emit("eof");
+    console.error(`${plural(this.id)} frame${plural.suffix} processed`.cyan);
+}
+
+
+//process a frame:
+//apply JSON fixups: strip comments, strip trailing commas, put quotes around property names, fix floats
+//append unique id
+//emit parsed object
+function frame(str)
+{
+    const fixedup = str/*.echo("original str:")*/.replace(/#.*$/gm, "").replace(/,\s*(?=[}\]])/gm, "").replace(/(\w+):/g, '"$1":').replace(/(\D)\.(\d+)/g, "$1 0.$2").trim()/*.echo("cleaned up str:")*/;
+    if (!fixedup) return;
+//    debug(`parse ${fixedup.length}:${fixedup.escnl}`);
+    const obj = JSON.parse(fixedup);
+    obj.id = ++this.id || (this.id = 1);
+    this.emit("frame", obj);
 }
 
 
@@ -169,6 +228,27 @@ function shebang_args(str)
 //x(?<!y)  negative lookbehind
 
 
+function elapsed(reset)
+{
+    const delta = Date.now() - elapsed.started;
+    if (reset) (elapsed.started += delta) || (elapsed.started = Date.now());
+    return delta;
+}
+
+function timestamp()
+{
+    return `[${elapsed()}] `;
+}
+
+
+function plural(count, suffix_n, suffix_1)
+{
+    if (!arguments.length) return plural.suffix;
+    plural.suffix = (count != 1)? (suffix_n || "es"): (suffix_1 || "");
+    return count;
+}
+
+
 function debug(args)
 {
     console.log.apply(null, arguments);
@@ -177,7 +257,14 @@ function debug(args)
 
 function extensions()
 {
-    Object.defineProperty(Array.prototype, "top", { get() { return this[this.length - 1]; }});
+    if (!Array.prototype.back) //polyfill
+        Object.defineProperty(Array.prototype, "back", { get() { return this[this.length - 1]; }});
+//    if (!String.prototype.echo)
+    String.prototype.echo = function echo(args) { args = Array.from(arguments); args.push(this.replace(/\n/g, "\\n")); console.error.apply(null, args); return this; } //fluent to allow in-line calls
+//    if (!String.prototype.splitr)
+    Object.defineProperty(String.prototype, "escnl", { get() { return this.replace(/\n/g, "\\n"); }});
+    String.prototype.splitr = function splitr(sep, repl) { return this.replace(sep, repl).split(sep); }
+    String.prototype.unindent = function unindent(prefix) { return this.replace(prefix, (match) => match.substr((this.svprefix || (this.svprefix = match)).length)); } //remove indents
 }
 
 
