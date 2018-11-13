@@ -14,6 +14,12 @@
 #include <sys/stat.h> //struct stat
 #include <stdint.h> //uint*_t
 #include <ostream> //std::ostream
+#include <memory> //std::unique_ptr<>
+#include <linux/fb.h> //struct fb_var_screeninfo
+//#include <stdio.h>
+#include <fcntl.h> //open(), O_RDONLY
+#include <unistd.h> //close()
+#include <sys/ioctl.h> //ioctl()
 
 #include "debugexc.h" //debug()
 #include "srcline.h" //SrcLine, SRCLINE
@@ -22,6 +28,11 @@
 
 #ifndef STATIC
  #define STATIC //dummy keyword for readability
+#endif
+
+//accept up to 2 macro args:
+#ifndef UPTO_2ARGS
+ #define UPTO_2ARGS(one, two, three, ...)  three
 #endif
 
 
@@ -99,7 +110,7 @@ bool isRPi()
 //check for null ptr (can happen with dynamically allocated memory):
     void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline)); }
 //operators:
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that)
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that) CONST
     {
 //    std::ostringstream ss;
 //    if (!rect) ss << "all";
@@ -121,6 +132,7 @@ bool isRPi()
 }; //ScreenConfig;
 
 
+#if 1
 #ifdef RPI_NO_X
 // #include "bcm_host.h"
 // #include <iostream> 
@@ -472,10 +484,92 @@ WH ScreenInfo()
     return wh;
 }
 #endif
+#else
 
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Get framebuffer info (any Linux box):
+//
+
+//auto-close a file descriptor:
+//using AutoFD_super = std::unique_ptr<int, std::function<void(SDL_Window*)>>; //DRY kludge
+class AutoFD
+{
+    int m_fd;
+public: //ctors/dtors
+    AutoFD(int fd): m_fd(fd) {}
+    ~AutoFD() { if (m_fd) close(m_fd); }
+public: //operators:
+    operator int() const { return m_fd; }
+};
+
+
+#define ERR_2ARGS(msg, srcline)  exc(RED_MSG << msg << ": %s (error %d)" ENDCOLOR_ATLINE(srcline), strerror(errno), errno)
+#define ERR_1ARG(msg)  ERR_2ARGS(msg, 0)
+#define ERR(...)  UPTO_2ARGS(__VA_ARGS__, ERR_2ARGS, ERR_1ARG) (__VA_ARGS__)
+
+
+const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
+{
+    static ScreenConfig cached;
+    if (cached.screen == which) return &cached; //return cached data; screen info won't change
+    cached.screen = -1; //invalidate cache
+
+//based on example from http://betteros.org/tut/graphics1.php
+//    struct fb_fix_screeninfo finfo; //don't need this info
+    struct fb_var_screeninfo vinfo;
+    AutoFD fb(open("/dev/fb0", O_RDONLY)); //O_RDWR);
+    if (fb < 0) { ERR("can't open FB", srcline); return 0; }
+//get variable screen info:
+	if (ioctl(fb, FBIOGET_VSCREENINFO, &vinfo) < 0) { ERR("can't get var fb info", srcline); return 0; }
+//	vinfo.grayscale = 0;
+//	vinfo.bits_per_pixel = 32;
+//	ioctl(fb_fd, FBIOPUT_VSCREENINFO, &vinfo);
+//	ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo);
+//	ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo);
+
+    cached.dot_clock = vinfo.pixclock; //pixel clock (pico seconds)
+
+    cached.hdisplay = vinfo.xres; //visible resolution
+    cached.hlead = vinfo.right_margin; //time from picture to sync
+    cached.hsync = vinfo.hsync_len; //length of horizontal sync
+    cached.htrail = vinfo.left_margin; //time from sync to picture
+    cached.htotal = vinfo.xres_virtual; //virtual resolution
+
+    cached.vdisplay = vinfo.yres;
+    cached.vlead = vinfo.lower_margin; //time from picture to sync
+    cached.vsync = vinfo.vsync_len;
+    cached.vtrail = vinfo.upper_margin; //time from sync to picture
+    cached.vtotal = vinfo.yres_virtual;
+//__u32 height;	//height of picture in mm
+//__u32 width; //width of picture in mm
+//__u32 xoffset;			/* offset from virtual to visible */
+//__u32 yoffset;			/* resolution			*/
+
+    cached.aspect_ratio = 0; //configured, not calculated
+    cached.frame_rate = 0; //configured, not calculated
+    cached.screen = which;
+
+    int hblank = cached.hlead + cached.hsync + cached.htrail; //, htotal = hblank + cached.hdisplay;
+    int vblank = cached.vlead + cached.vsync + cached.vtrail; //, vtotal = vblank + cached.vdisplay;
+//    double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
+//    double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
+    debug_level(28, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
+//            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
+//            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
+//            cached.mode_line.vsyncstart - cached.mode_line.vdisplay, cached.mode_line.vsyncend - cached.mode_line.vsyncstart, cached.mode_line.vtotal - cached.mode_line.vsyncend, cached.mode_line.vtotal - cached.mode_line.vdisplay, (double)100 * (cached.mode_line.vtotal - cached.mode_line.vdisplay) / cached.mode_line.vtotal, //vinfo.upper_margin, vinfo.lower_margin, vinfo.vsync_len,
+//            1000000 * rowtime, rowtime / 300000, 1000 * frametime, 1 / frametime);
+        cached.screen, cached.hdisplay, cached.vdisplay, (double)cached.hdisplay / cached.vdisplay, cached.aspect_ratio, (double)cached.dot_clock / 1000,
+        cached.hlead, cached.hsync, cached.htrail, hblank, (double)100 * hblank / cached.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
+        cached.vlead, cached.vsync, cached.vtrail, vblank, (double)100 * vblank / cached.vtotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
+        cached.row_time() * 1e6, 100 * cached.row_time() * 1e6 / 30, 1000 * cached.frame_time(), /*1 / cached.frame_time()*/ cached.fps(), cached.frame_rate);
+    return &cached;
+}
+const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfig(0, srcline); }
+#endif
 
 #endif //ndef _RPI_HELPERS_H
-
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -493,14 +587,14 @@ WH ScreenInfo()
 #include "srcline.h"
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     debug(CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
 //    return 0;
 //    for (int screen = 0;; ++screen)
 //    SDL_AutoLib sdl(SDL_INIT_VIDEO, SRCLINE);
 //    debug(BLUE_MSG "get info for %d screens ..." ENDCOLOR, SDL_GetNumVideoDisplays());
-    for (int screen = 0; /*screen < SDL_GetNumVideoDisplays()*/; ++screen)
+    for (int screen = 0; screen < SDL_GetNumVideoDisplays(); ++screen)
     {
         const ScreenConfig* cfg = getScreenConfig(screen, SRCLINE); //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
 //        if (!cfg) break;
