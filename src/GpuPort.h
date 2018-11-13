@@ -17,6 +17,11 @@
 #ifndef _GPU_PORT_H
 #define _GPU_PORT_H
 
+//C++11 implements a lot of SDL functionality in a more C++-friendly way, so let's use it! :)
+#if __cplusplus < 201103L
+ #pragma message("CAUTION: this file probably needs c++11 to compile correctly")
+#endif
+
 #include <unistd.h> //sysconf()
 #include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 #include <functional> //std::function<>, std::bind(), std::ref(), std::placeholders
@@ -35,6 +40,11 @@
 #ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 #endif
+
+#ifndef rdiv
+ #define rdiv(n, d)  int(((n) + ((d) >> 1)) / (d))
+#endif
+
 
 //accept variable # up to 2 - 3 macro args:
 //#ifndef UPTO_2ARGS
@@ -98,6 +108,7 @@ template<
     int CLOCK = 52 MHz, //pixel clock speed (constrained by GPU)
     int HTOTAL = 1536, //total x res including blank/sync (might be contrained by GPU); 
     int FPS = 30, //target #frames/sec
+    int BRIGHTEST = 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //settings that must match h/w:
     int IOPINS = 24, //total #I/O pins available (h/w dependent)
     int HWMUX = 0, //#I/O pins to use for external h/w mux
@@ -112,6 +123,8 @@ template<
 //they are treated as upper limits, but caller can use smaller values
     int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX), //max #univ with external h/w mux
 //    int XFRW = NODEBITS * 3 - 1, //last 1/3 of last node bit can overlap hsync so exclude it from display width
+//    int BIT_SLICES = NODEBITS * 3, //divide each node bit into 1/3s (last 1/3 of last node bit will be clipped)
+//    int NODEVAL_MSB = 1 << (NODEBITS - 1),
 //    int XFRW_PADDED = cache_pad(XFRW * sizeof(XFRTYPE)) / sizeof(XFRTYPE),
     int UNIV_MAX = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
 //    int H_PADDED = cache_pad(UNIV_MAX * sizeof(NODEVAL)) / sizeof(NODEVAL)> //avoid cross-universe memory cache contention
@@ -123,6 +136,8 @@ class GpuPort
     using NODEVAL = Uint32; //data type for node colors
     using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
     using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
+    static const int BIT_SLICES = NODEBITS * 3; //divide each node bit into 1/3s (last 1/3 of last node bit will be clipped)
+    static const int NODEVAL_MSB = 1 << (NODEBITS - 1);
 protected: //helper classes + structs
 //template <typename PXTYPE = Uint32>
 #if 0
@@ -296,10 +311,10 @@ protected: //data members
 //    PERF_STATS perf_stats; //double perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //    const std::function<int(void*)> shmfree_shim; //CAUTION: must be initialized before m_nodebuf
     NODEBUF_debug m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
-    XFRTYPE bbdata[UNIV_MAX][3 * NODEBITS]; //bit-bang buf; dcl in heap so it doesn't need to be fully re-initialized every time
+//    XFRTYPE bbdata[UNIV_MAX][3 * NODEBITS]; //bit-bang buf; dcl in heap so it doesn't need to be fully re-initialized every time
 //    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before frame_time (below)
-    std::function<void(void*, const void*, size_t)> m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
+    const std::function<void(void*, const void*, size_t)> m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
 public: //data members
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
     const double& frame_time;
@@ -311,6 +326,16 @@ public: //data members
     const int NumUniv, UnivLen;
     enum Protocol: int { NONE = 0, DEV_MODE, WS281X};
 protected:
+    static inline const char* ProtocolName(Protocol key)
+    {
+        static const std::map<Protocol, const char*> names =
+        {
+            {NONE, "NONE"},
+            {DEV_MODE, "DEV MODE"},
+            {WS281X, "WS281X"},
+        };
+        return unmap(names, key); //names;
+    }
     Protocol m_protocol;
     double m_frame_time;
 public: //ctors/dtors:
@@ -321,11 +346,11 @@ public: //ctors/dtors:
 //        m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))), //get this first for screen placement and size default
         UNIV_LEN(divup(/*m_cfg? m_cfg->vdisplay: UNIV_MAX*/ ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds.h, vgroup)), //univ len == display height
 //        m_debug2(UNIV_LEN),
-        m_wh(SIZEOF(bbdata[0]) /*3 * NODEBITS*/, std::min(UNIV_LEN, UNIV_MAX)), //texture (virtual window) size; kludge: need to init before passing to txtr ctor below
-        m_view(m_wh.w - 1, m_wh.h), //last 1/3 bit will overlap hblank; clip from visible part of window
+        m_wh(/*SIZEOF(bbdata[0])*/ BIT_SLICES /*3 * NODEBITS*/, std::min(UNIV_LEN, UNIV_MAX)), //texture (virtual window) size; kludge: need to init before passing to txtr ctor below
+        m_view(/*m_wh.w*/ BIT_SLICES - 1, m_wh.h), //last 1/3 bit will overlap hblank; clip from visible part of window
 //        m_debug3(m_view.h),
-//        my_xfr_bb(std::bind(/*GpuPort::*/xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))), //shim
-        m_txtr(SDL_AutoTexture<XFRTYPE>::create(NAMED{ _.wh = &m_wh; _.view_wh = &m_view, /*_.w_padded = XFRW_PADDED;*/ _.screen = screen; _.srcline = NVL(srcline, SRCLINE); })),
+        m_xfr(std::bind(/*GpuPort::*/xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))), //memcpy shim
+        m_txtr(SDL_AutoTexture<XFRTYPE>::create(NAMED{ _.wh = &m_wh; _.view_wh = &m_view, /*_.w_padded = XFRW_PADDED;*/ _.screen = screen; _.init_color = init_color; _.srcline = NVL(srcline, SRCLINE); })),
         m_nodebuf(shmalloc_typed<NODEBUF_FrameInfo>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
         nodes(m_nodebuf.nodes), //expose as property for simpler caller usage; /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
         frinfo(m_nodebuf.frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
@@ -343,7 +368,7 @@ public: //ctors/dtors:
         if (!&nodes || !&frinfo) exc_hard(RED_MSG "missing ptrs" ENDCOLOR_ATLINE(srcline));
 //const& broken; kludge: just initialize as var:
         m_frame_time = m_cfg->frame_time(NVL(srcline, SRCLINE)); //actual refresh rate based on video config (sec)
-        m_xfr = std::bind((protocol == WS281X)? /*GpuPort::*/xfr_ws281x: (protocol == DEV_MODE)? xfr_devmode: xfr_raw, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE));
+//        m_xfr = std::bind((protocol == WS281X)? /*GpuPort::*/xfr_ws281x: (protocol == DEV_MODE)? xfr_devmode: xfr_raw, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE));
 //        const int UNIV_LEN = divup(m_cfg->vdisplay, vgroup);
 //        const ScreenConfig* cfg = getScreenConfig(screen, NVL(srcline, SRCLINE));
 //video config => xres, yres, clock => W = NODEBITS * 3 - 1, H = vres / vgroup, fps = clock / xres / yres
@@ -357,6 +382,7 @@ public: //ctors/dtors:
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
 //        ready(ALL_UNIV, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible
 //        VOID m_txtr.clear(BLACK, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible; related to SDL double buffering?
+#if 0
         if (A(init_color)) //initialize nodes for caller
         {
 //            SDL_Delay(3 sec);
@@ -365,6 +391,7 @@ public: //ctors/dtors:
 //            ready(ALL_UNIV, NVL(srcline, SRCLINE));
             VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &nodes[0][0]; _.perf = &perf_stats[SIZEOF(perf_stats) - 4]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); });
         }
+#endif
     }
     /*virtual*/ ~GpuPort() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
 //public: operators
@@ -378,7 +405,7 @@ public: //ctors/dtors:
         ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
         ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
 //        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", time " << that.frinfo.nexttime;
-        ostrm << ", protocol " << that.m_protocol;
+        ostrm << ", protocol " << NVL(ProtocolName(that.m_protocol), "?PROTOCOL?");
         ostrm << ", nodebuf " << that.m_nodebuf; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
         ostrm << ", txtr " << that.m_txtr; //should be 71x1111=78881 on RPi, 71*768=54528 on laptop
@@ -386,11 +413,12 @@ public: //ctors/dtors:
         return ostrm; 
     }
 protected: //helpers
+#if 0
 //raw (no formatting) for debug/dev only:
     static void xfr_raw(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline) // = 0) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
     {
         SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
-        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_bb size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
+        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_raw size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
 //NOTE: txtrbuf = in-memory texture, nodebuf = just a ptr of my *unformatted* nodes
 //this won't work: different sizes        VOID memcpy(txtrbuf, nodebuf, xfrlen);
 //raw (dev/debug only):
@@ -406,7 +434,7 @@ protected: //helpers
     static void xfr_devmode(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline) // = 0) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
     {
         SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
-        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_bb size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
+        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_devmode size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
 //NOTE: txtrbuf = in-memory texture, nodebuf = just a ptr of my *unformatted* nodes
 //        using TXTRBUF = XFRTYPE[gp.m_wh.h][XFRW];
 //        TXTRBUF& txtrptr = txtrbuf;
@@ -436,7 +464,7 @@ protected: //helpers
 //            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
 //            int wh = xfrlen; //TODO
         SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
-        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_bb size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
+        if (xfrlen != gp.m_wh./*datalen<XFRTYPE>()*/ w * gp.m_wh.h * sizeof(XFRTYPE)) exc_hard(RED_MSG "xfr_ws281x size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
 //        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW/*_PADDED*/, xfrlen / XFRW/*_PADDED*/ / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
 //        if (!(count++ % 100))
         static int count = 0;
@@ -448,8 +476,9 @@ protected: //helpers
 //        using TXTRBUF = XFRTYPE[gp.m_wh.h][XFRW];
 //        TXTRBUF& txtrptr = txtrbuf;
         XFRTYPE* ptr = static_cast<XFRTYPE*>(txtrbuf);
-        for (int y = 0; y < nodes_wh.h; ++y) //node# within each universe
-//3x as many x accesses as y accesses, so favor pixels over nodes in memory cache
+        for (int y = 0, yofs = 0; y < nodes_wh.h; ++y, yofs += TXR_WIDTH) //outer loop = node# within each universe
+//3x as many x accesses as y accesses, so favor pixels (horizontally adjacent) over nodes (vertically adjacent) in memory cache
+        {
             for (int x = 0, xofs = 0, bit = 0x800000; x < NUM_UNIV; ++x, xofs += 3, bit >>= 1) //universe#
             {
 //WS281X encoding: 1/3 white, 1/3 data, 1/3 black
@@ -458,8 +487,146 @@ protected: //helpers
                 /*bbdata[y][xofs + 1]*/ *ptr++ = gp.nodes[x][y];
                 /*if (u) bbdata[y][xofs - 1]*/ *ptr++ = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
             }
+        }
 //printf("here9\n"); fflush(stdout);
         gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+    }
+#else
+//raw (no formatting) for debug/dev only:
+    static void xfr_bb(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline) // = 0) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
+    {
+        XFRTYPE bbdata/*[UNIV_MAX]*/[BIT_SLICES]; //3 * NODEBITS]; //bit-bang buf; enough for *1 row* only; dcl in heap so it doesn't need to be fully re-initialized every time
+//        SrcLine srcline2 = 0; //TODO: bind from caller?
+//printf("here7\n"); fflush(stdout);
+//            VOID memcpy(pxbuf, pixels, xfrlen);
+//            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
+//            int wh = xfrlen; //TODO
+        SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
+        if ((gp.m_wh.w != SIZEOF(bbdata)) || (xfrlen != gp.m_wh.h * sizeof(bbdata) /*gp.m_wh./-*datalen<XFRTYPE>()*-/ w * sizeof(XFRTYPE)*/)) exc_hard(RED_MSG "xfr_raw size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << gp.m_wh << ENDCOLOR);
+//        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW/*_PADDED*/, xfrlen / XFRW/*_PADDED*/ / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
+//        if (!(count++ % 100))
+//        static int count = 0;
+//        if (!count++)
+//            debug(BLUE_MSG "bit bang xfr: " << nodes_wh << " node buf => " << gp.m_wh << ENDCOLOR_ATLINE(srcline));
+//NOTE: txtrbuf = in-memory texture, nodebuf = just a ptr of my *unformatted* nodes
+//this won't work: different sizes        VOID memcpy(txtrbuf, nodebuf, xfrlen);
+//        using TXTRBUF = XFRTYPE[gp.m_wh.h][XFRW];
+//        TXTRBUF& txtrptr = txtrbuf;
+        XFRTYPE* ptr = static_cast<XFRTYPE*>(txtrbuf);
+//allow caller to turn formatting on/off at run-time (only useful for dev/debug, since h/w doesn't change):
+//adds no extra run-time overhead if protocol is checked outside the loops
+//3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
+        bool rbswap = isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
+        UNIV_MASK dirty = gp.frinfo.bits.load() | (255 * Ashift);
+        switch (gp.m_protocol)
+        {
+            default: //NONE (raw)
+                for (int y = 0; y < nodes_wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, xmask >>= 1) //inner loop = universe#
+                        *ptr++ = *ptr++ = *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(gp.nodes[x][y]): gp.nodes[x][y]: BLACK; //copy as-is (3x width)
+                break;
+            case DEV_MODE: //partially formatted
+                for (int y = 0; y < nodes_wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, xmask >>= 1) //inner loop = universe#
+                    {
+//show start + stop bits around unpivoted data:
+                        *ptr++ = dirty; //WHITE;
+                        *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(gp.nodes[x][y]): gp.nodes[x][y]: BLACK; //unpivoted node values
+                        *ptr++ = BLACK;
+                    }
+                break;
+            case WS281X: //fully formatted (pivoted)
+                for (int y = 0, yofs = 0; y < nodes_wh.h; ++y, yofs += BIT_SLICES) //TXR_WIDTH) //outer loop = node# within each universe
+                {
+//initialize 3x signal for this row of 24 WS281X pixels:
+//            for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+//            {
+//                pxbuf32[yofs + x3 + 0] = leading_edges; //WHITE;
+//                pxbuf32[yofs + x3 + 1] = BLACK; //data bit body (will be overwritten with pivoted color bits)
+////                if (x3) pxbuf32[yofs + x3 - 1] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//                pxbuf32[yofs + x3 + 2] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//            }
+                    memset(&ptr[yofs], 0, sizeof(bbdata));
+                    for (int bit3x = 0; bit3x < BIT_SLICES; bit3x += 3) ptr[yofs + bit3x] = dirty; //WHITE; //leading edge = high; turn on for all universes
+//pivot pixel data onto 24 parallel GPIO pins:
+//  WS281X = 1, PLAIN_SSR = 2, CHPLEX_SSR = 3,TYPEBITS = 0xF,
+// RGSWAP = 0x20, CHECKSUM = 0x40, POLARITY = 0x80};
+//NOTE: xmask loop assumes ARGB or ABGR fmt (A in upper byte)
+                    for (uint32_t x = 0, xofs = 0, xmask = NODEVAL_MSB /*1 << (NUM_UNIV - 1)*/; x < NUM_UNIV; ++x, xofs += nodes_wh.h, xmask >>= 1) //inner loop = universe#
+                    {
+                        XFRTYPE color_out = gp.nodes[x][y]; //[0][xofs + y]; //pixels? pixels[xofs + y]: fill;
+//                            if (!A(color) || (!R(color) && !G(color) && !B(color))) continue; //no data to pivot
+//                        if (rbswap) color_out = ARGB2ABGR(color_out); //user-requested explicit R <-> G swap
+//no                            color = ARGB2ABGR(color); //R <-> G swap doesn't need to be automatic for RPi; user can swap GPIO pins
+                        if (BRIGHTEST && (BRIGHTEST < 3 * 255)) color_out = limit(color_out); //limit brightness/power
+//WS281X encoding: 1/3 white, 1/3 data, 1/3 black
+//3x as many x accesses as y accesses, so favor pixels over nodes in memory cache
+//                        /*bbdata[y][xofs + 0]*/ *ptr++ = WHITE;
+//                        /*bbdata[y][xofs + 1]*/ *ptr++ = gp.nodes[x][y];
+//                        /*if (u) bbdata[y][xofs - 1]*/ *ptr++ = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
+//24 WS281X data bits spread across 72 screen pixels = 3 pixels per WS281X data bit:
+#if 1
+//TODO: try 8x loop with r_yofs/r_msb, g_yofs/g_msb, b_yofs/b_msb
+                        for (int bit3x = 0+1; bit3x < BIT_SLICES; bit3x += 3, color_out <<= 1)
+//                        {
+//                            ptr[yofs + bit3 + 0] |= xmask; //leading edge = high
+                            if (color_out & NODEVAL_MSB) ptr[yofs + bit3x] |= xmask; //set this data bit for current node
+//                                pxbuf32[yofs + bit3 + 2] &= ~xmask; //trailing edge = low
+//                        }
+#else
+//set data bits for current node:
+                        if (color_out & 0x800000) ptr[yofs + 3*0 + 1] |= xmask;
+                        if (color_out & 0x400000) ptr[yofs + 3*1 + 1] |= xmask;
+                        if (color_out & 0x200000) ptr[yofs + 3*2 + 1] |= xmask;
+                        if (color_out & 0x100000) ptr[yofs + 3*3 + 1] |= xmask;
+                        if (color_out & 0x080000) ptr[yofs + 3*4 + 1] |= xmask;
+                        if (color_out & 0x040000) ptr[yofs + 3*5 + 1] |= xmask;
+                        if (color_out & 0x020000) ptr[yofs + 3*6 + 1] |= xmask;
+                        if (color_out & 0x010000) ptr[yofs + 3*7 + 1] |= xmask;
+                        if (color_out & 0x008000) ptr[yofs + 3*8 + 1] |= xmask;
+                        if (color_out & 0x004000) ptr[yofs + 3*9 + 1] |= xmask;
+                        if (color_out & 0x002000) ptr[yofs + 3*10 + 1] |= xmask;
+                        if (color_out & 0x001000) ptr[yofs + 3*11 + 1] |= xmask;
+                        if (color_out & 0x000800) ptr[yofs + 3*12 + 1] |= xmask;
+                        if (color_out & 0x000400) ptr[yofs + 3*13 + 1] |= xmask;
+                        if (color_out & 0x000200) ptr[yofs + 3*14 + 1] |= xmask;
+                        if (color_out & 0x000100) ptr[yofs + 3*15 + 1] |= xmask;
+                        if (color_out & 0x000080) ptr[yofs + 3*16 + 1] |= xmask;
+                        if (color_out & 0x000040) ptr[yofs + 3*17 + 1] |= xmask;
+                        if (color_out & 0x000020) ptr[yofs + 3*18 + 1] |= xmask;
+                        if (color_out & 0x000010) ptr[yofs + 3*19 + 1] |= xmask;
+                        if (color_out & 0x000008) ptr[yofs + 3*20 + 1] |= xmask;
+                        if (color_out & 0x000004) ptr[yofs + 3*21 + 1] |= xmask;
+                        if (color_out & 0x000002) ptr[yofs + 3*22 + 1] |= xmask;
+                        if (color_out & 0x000001) ptr[yofs + 3*23 + 1] |= xmask;
+#endif
+                    }
+                }
+                break;
+        }
+//printf("here9\n"); fflush(stdout);
+        gp.frinfo.bits.store(0); //clear dirty bits
+        ++gp.frinfo.numfr;
+        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+    }
+#endif
+public:
+//limit brightness:
+//NOTE: A bits are dropped/ignored
+    static NODEVAL limit(NODEVAL color)
+    {
+        if (!BRIGHTEST || (BRIGHTEST >= 3 * 255)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
+//#pragma message "limiting R+G+B brightness to " TOSTR(LIMIT_BRIGHTNESS)
+        unsigned int r = R(color), g = G(color), b = B(color);
+        unsigned int sum = r + g + b; //max = 3 * 255 = 765
+        if (sum <= BRIGHTEST) return color;
+//reduce brightness, try to preserve relative colors:
+        r = rdiv(r * BRIGHTEST, sum);
+        g = rdiv(g * BRIGHTEST, sum);
+        b = rdiv(b * BRIGHTEST, sum);
+        color = /*Abits(color) |*/ (r * Rshift) | (g * Gshift) | (b * Bshift); //| Rmask(r) | Gmask(g) | Bmask(b);
+//printf("REDUCE: 0x%x, sum %d, R %d, G %d, B %d => r %d, g %d, b %d, 0x%x\n", sv, sum, R(sv), G(sv), B(sv), r, g, b, color);
+        return color;
     }
 public: //methods
     void fill(NODEVAL color, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
@@ -475,7 +642,7 @@ public: //methods
             region.h = std::min(m_wh.h, rect->y + rect->h);
         }
 //        printf("region %d %d %d %d\n", region.x, region.y, region.w, region.h);
-        debug(BLUE_MSG "fill " << region << " with 0x%x" ENDCOLOR_ATLINE(srcline), color);
+//        debug(BLUE_MSG "fill " << region << " with 0x%x" ENDCOLOR_ATLINE(srcline), color);
 //printf("here3 %d %d %d %d %p %p %p\n", region.x, region.y, region.w, region.h, &nodes[0][0], &nodes[1][0], &nodes[region.w][0]); fflush(stdout);
         for (int x = region.x, xlimit = region.x + region.w; x < xlimit; ++x)
   //      {
@@ -520,9 +687,9 @@ public: //methods
 //all universes rendered; send to GPU:
 //        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
 //        perf_stats[1] = m_txtr.perftime(); //bitbang time
-        frinfo.bits.store(0);
+//don't do until wake:        frinfo.bits.store(0);
 //        frinfo.nexttime.store(++frinfo.numfr * frame_time); //update fr# and timestamp of next frame before waking other threads
-        ++frinfo.numfr;
+//don't do until wake:        ++frinfo.numfr;
 //        static void xfr_bb(void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
 //        static XFR xfr_bb_shim(std::bind(xfr_bb, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))),
 //printf("here4 \n"); fflush(stdout);
@@ -1162,9 +1329,11 @@ void bind_test()
 
 //show GpuPort stats:
 template <typename GPTYPE>
-void gpstats(const char* desc, GPTYPE&& gp)
+void gpstats(const char* desc, GPTYPE&& gp, int often = 1)
 {
     bool result = gp.ready(0xffffff, SRCLINE); //mark all univ ready to display
+    static int count = 0;
+    if (++count % often) return;
 //see example at https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
     for (;;)
     {
@@ -1175,10 +1344,8 @@ void gpstats(const char* desc, GPTYPE&& gp)
         for (int i = 0; i < SIZEOF(times); ++i) times[i] = gp.frinfo.times[i] / numfr / 1e3; //avg msec
         if (gp.frinfo.numfr.load() != numfr) continue; //invalid (inconsistent) results; try again
 //CAUTION: use atomic ops; std::forward doesn't allow atomic vars (deleted function errors for copy ctor) so use load()
-        static int count = 0;
-//        if (!(count++ % 100))
-            debug(CYAN_MSG << timestamp() << "%s, next fr# %d, next time %f, ready? %d, perf: [%4.3f s, %4.3f ms, %4.3f s, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR,
-                desc, numfr, next_time, result, times[0] / 1e3, times[1], times[2], times[3], times[4], times[5]);
+        debug(CYAN_MSG << timestamp() << "%s, next fr# %d, next time %f, ready? %d, avg perf: [%4.3f s, %4.3f ms, %4.3f s, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR,
+            desc, numfr, next_time, result, times[0] / 1e3, times[1], times[2], times[3], times[4], times[5]);
         break; //got valid results
     }
 }
@@ -1187,11 +1354,23 @@ void gpstats(const char* desc, GPTYPE&& gp)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
+    Uint32 tb1 = 0xff80ff, tb2 = 0xffddbb;
+    debug(BLUE_MSG "limit blue 0x%x, cyan 0x%x, white 0x%x, 0x%x -> 0x%x, 0x%x -> 0x%x" ENDCOLOR, GpuPort<>::limit(BLUE), GpuPort<>::limit(CYAN), GpuPort<>::limit(WHITE), tb1, GpuPort<>::limit(tb1), tb2, GpuPort<>::limit(tb2));
+
 //    bind_test(); return;
-    int screen = 0; //default
-    for (auto arg : args) //int i = 0; i < args.size(); ++i)
-        if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
+    int screen = 0, vgroup = 0; //default
+//    for (auto& arg : args) //int i = 0; i < args.size(); ++i)
+    /*GpuPort<>::Protocol*/ int protocol = GpuPort<>::Protocol::NONE;
+    for (auto it = ++args.begin(); it != args.end(); ++it)
+    {
+        auto& arg = *it;
+        if (!arg.find("-s")) { screen = atoi(arg.substr(2).c_str()); continue; }
+        if (!arg.find("-g")) { vgroup = atoi(arg.substr(2).c_str()); continue; }
+        if (!arg.find("-p")) { protocol = atoi(arg.substr(2).c_str()); continue; }
+        debug(YELLOW_MSG "what is arg[%d] '%s'?" ENDCOLOR, /*&arg*/ it - args.begin(), arg.c_str());
+    }
     const auto* scrn = getScreenConfig(screen, SRCLINE);
+    if (!vgroup) vgroup = scrn->vdisplay / 5;
 //    const int NUM_UNIV = 4, UNIV_LEN = 5; //24, 1111
 //    const int NUM_UNIV = 30, UNIV_LEN = 100; //24, 1111
 //    const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
@@ -1199,7 +1378,7 @@ void unit_test(ARGS& args)
 
 //    SDL_Size wh(4, 4);
 //    GpuPort<NUM_UNIV, UNIV_LEN/*, raw WS281X*/> gp(2.4 MHz, 0, SRCLINE);
-    GpuPort<> gp/* = GpuPort<>::factory*/(NAMED{ _.screen = screen; _.vgroup = scrn->vdisplay / 5; /*_.wh = wh*/; _.protocol = GpuPort<>::NONE/*WS281X*/; _.init_color = dimARGB(0.25, RED); SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
+    GpuPort<> gp/* = GpuPort<>::factory*/(NAMED{ _.screen = screen; _.vgroup = vgroup; /*_.wh = wh*/; _.protocol = static_cast<GpuPort<>::Protocol>(protocol) /*GpuPort<>::NONE WS281X*/; _.init_color = dimARGB(0.25, RED); SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
 //    Uint32* pixels = gp.Shmbuf();
 //    Uint32 myPixels[H][W]; //TODO: [W][H]; //NOTE: put nodes in same universe adjacent for better cache performance
 //    auto& pixels = gp.pixels; //NOTE: this is shared memory, so any process can update it
@@ -1207,14 +1386,14 @@ void unit_test(ARGS& args)
     debug(CYAN_MSG << gp << ENDCOLOR);
     SDL_Delay((5-1) sec);
 
-    void* addr = &gp.nodes[0][0];
-    debug(YELLOW_MSG "&node[0][0] " << addr << ENDCOLOR);
-    addr = &gp.nodes[1][0];
-    debug(YELLOW_MSG "&node[1][0] " << addr << ENDCOLOR);
-    addr = &gp.nodes[0][gp.UNIV_LEN];
-    debug(YELLOW_MSG "&node[0][%d] " << addr << ENDCOLOR, gp.UNIV_LEN);
-    addr = &gp.nodes[24][0];
-    debug(YELLOW_MSG "&node[24][0] " << addr << ENDCOLOR);
+//    void* addr = &gp.nodes[0][0];
+//    debug(YELLOW_MSG "&node[0][0] " << addr << ENDCOLOR);
+//    addr = &gp.nodes[1][0];
+//    debug(YELLOW_MSG "&node[1][0] " << addr << ENDCOLOR);
+//    addr = &gp.nodes[0][gp.UNIV_LEN];
+//    debug(YELLOW_MSG "&node[0][%d] " << addr << ENDCOLOR, gp.UNIV_LEN);
+//    addr = &gp.nodes[24][0];
+//    debug(YELLOW_MSG "&node[24][0] " << addr << ENDCOLOR);
 
     gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
 //    txtr.perftime(); //kludge: flush perf timer
@@ -1224,27 +1403,32 @@ void unit_test(ARGS& args)
         VOID gp.fill(palette[c], NO_RECT, SRCLINE);
         std::ostringstream desc;
         desc << "all-color 0x" << std::hex << palette[c] << std::dec;
-        VOID gpstats(desc.str().c_str(), gp);
+        VOID gpstats(desc.str().c_str(), gp, 100); //SIZEOF(palette) - 1);
+        bool result = gp.ready(0xffffff, SRCLINE); //mark all univ ready to display
         SDL_Delay(1 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
+    VOID gpstats("all-pixel test", gp);
 
-    VOID gp.fill(dimARGB(0.25, CYAN), NO_RECT, SRCLINE);
+#define BKG  dimARGB(0.25, CYAN) //BLACK
+//    VOID gp.fill(dimARGB(0.25, CYAN), NO_RECT, SRCLINE);
     gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
 //    txtr.perftime(); //kludge: flush perf timer
     VOID SDL_Delay(0.1 sec); //kludge: even out timer with loop
     for (int y = 0, c = 0; y < gp.UnivLen; ++y)
         for (int x = 0; x < gp.NumUniv; x += 4, ++c)
         {
+            VOID gp.fill(BKG, NO_RECT, SRCLINE); //use up some CPU time
             Uint32 color = palette[c % SIZEOF(palette)]; //dimARGB(0.25, PINK);
             gp.nodes[x + 3][y] = gp.nodes[x + 2][y] = gp.nodes[x + 1][y] =
             gp.nodes[x][y] = color;
             std::ostringstream desc;
             desc << "node[" << x << "," << y << "] <- 0x" << std::hex << color << std::dec;
-            VOID gpstats(desc.str().c_str(), gp);
+            VOID gpstats(desc.str().c_str(), gp, 100);
             SDL_Delay(0.1 sec);
             if (SDL_QuitRequested()) { y = gp.UnivLen; x = gp.NumUniv; break; } //Ctrl+C or window close enqueued
         }
+    VOID gpstats("4x pixel text", gp);
 #if 0
     debug(BLUE_MSG << timestamp() << "render" << ENDCOLOR);
     for (int x = 0; x < gp.Width /*NUM_UNIV*/; ++x)
