@@ -516,7 +516,7 @@ protected: //helpers
 //allow caller to turn formatting on/off at run-time (only useful for dev/debug, since h/w doesn't change):
 //adds no extra run-time overhead if protocol is checked outside the loops
 //3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
-        bool rbswap = isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
+        static bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
         UNIV_MASK dirty = gp.frinfo.bits.load() | (255 * Ashift);
         switch (gp.m_protocol)
         {
