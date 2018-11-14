@@ -9,6 +9,24 @@
     'targets':
     [
         {
+            "target_name": "gpuport",
+            "cflags!": [ "-fno-exceptions" ],
+            "cflags_cc!": [ "-fno-exceptions" ],
+            "sources": ["src/GpuPort.cpp"],
+#            'include_dirs': [ "<!@(node -p \"require('nan')\")" ],
+            'include_dirs':
+            [
+                "<!@(node -p \"require('node-addon-api').include\")"
+#                "<!@(node -p \"require('node-addon-api').include + '/src'\")"
+            ],
+            'libraries': [],
+            'dependencies': [ "<!(node -p \"require('node-addon-api').gyp\")" ],
+            'defines': [ 'NAPI_DISABLE_CPP_EXCEPTIONS' ]
+        }
+    ],
+    'xtargets':
+    [
+        {
             'target_name': "gpuport",
 #            'type': 'executable',
             'sources': [ "src/GpuPort.cpp"],
