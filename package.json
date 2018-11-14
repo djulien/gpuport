@@ -1,8 +1,9 @@
 {
-  "name": "ws281x-gpu",
+  "name": "gpuport",
   "description": "Node.js stream and API to drive WS281X LEDs using the RPi GPU via OpenGL",
   "keywords": [
     "GPU",
+    "GPU Port",
     "RPi",
     "Raspberry Pi 2",
     "OpenGL ES",
@@ -39,10 +40,8 @@
   "old-xxdevDependencies": {
     "mocha": "^2.1.0"
   },
-  "??dependencies": {
-    "nan": "^2.11.1"
-  },
   "dependencies": {
+    "nan": "^2.11.1",
     "node-addon-api": "^1.6.0"
   },
   "devDependencies": {

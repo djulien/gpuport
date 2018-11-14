@@ -17,13 +17,13 @@
 
 
 //#include <nan.h> //older V8 api
-//#include <node_api.h> //C style api
+#include <node_api.h> //C style api
 //#include <src/node_api_types.h> //kludge: not sure why this needs to be explicitly included
-typedef int napi_callback_scope;
-typedef int napi_open_callback_scope;
-typedef int napi_close_callback_scope;
+//typedef int napi_callback_scope;
+//typedef int napi_open_callback_scope;
+//typedef int napi_close_callback_scope;
 //BROKEN: 
-#include "napi.h" //C++ style api; #includes node_api.h; WHERE IS napi_callback_scope?
+//#include "napi.h" //C++ style api; #includes node_api.h; WHERE IS napi_callback_scope?
 //#ifndef SRC_NAPI_H_ //kludge: avoid rewriting code below
 // namespace Napi
 // {
@@ -38,7 +38,6 @@ typedef int napi_close_callback_scope;
 ////
 /// example code
 //
-
 
 #include <string>
 
@@ -416,6 +415,50 @@ if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @%p = 0x%x...\n", timestamp()
 //    return 0;
 }
 #endif
+
+class GpuPort_napi
+{
+ public:
+  static napi_value Init(napi_env env, napi_value exports);
+  static void Destructor(napi_env env, void* nativeObject, void* finalize_hint);
+
+ private:
+  explicit MyObject(double value_ = 0);
+  ~MyObject();
+
+  static napi_value New(napi_env env, napi_callback_info info);
+  static napi_value GetValue(napi_env env, napi_callback_info info);
+  static napi_value SetValue(napi_env env, napi_callback_info info);
+  static napi_value PlusOne(napi_env env, napi_callback_info info);
+  static napi_value Multiply(napi_env env, napi_callback_info info);
+  static napi_ref constructor;
+  double value_;
+  napi_env env_;
+  napi_ref wrapper_;
+};
+
+
+napi_value Init(napi_env env, napi_value exports)
+{
+    napi_status status;
+    napi_value fn;
+
+    // Arguments 2 and 3 are function name and length respectively
+    // We will leave them as empty for this example
+    status = napi_create_function(env, NULL, 0, MyFunction_wrapped, NULL, &fn);
+    if (status != napi_ok) napi_throw_error(env, NO_ERRCODE, "Unable to wrap native function");
+    status = napi_set_named_property(env, exports, "my_function", fn);
+    if (status != napi_ok) napi_throw_error(env, NO_ERRCODE, "Unable to populate exports");
+
+    status = napi_create_function(env, NULL, 0, Hello_wrapped, NULL, &fn);
+    if (status != napi_ok) napi_throw_error(env, NO_ERRCODE, "Unable to wrap native function");
+    status = napi_set_named_property(env, exports, "hello", fn);
+    if (status != napi_ok) napi_throw_error(env, NO_ERRCODE, "Unable to populate exports");
+    return exports;
+}
+// NODE_API_MODULE(testaddon, Init)
+// NODE_API_MODULE(NODE_GYP_MODULE_NAME, Init)
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 
 
 #if 0
