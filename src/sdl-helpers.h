@@ -404,7 +404,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
 }; //mySDL_Rect;
 #define SDL_Point  mySDL_Point //use my def instead of SDL def
 //#define NO_RECT  NULL
-#define NO_POINT  NULL
+#define NO_POINT  (SDL_Point*)NULL
 
 
 /*typedef*/ struct mySDL_Size //no: public SDL_Point
@@ -438,7 +438,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
 #define SDL_Size  mySDL_Size //use my def instead of SDL def (in case SDL defines one in future)
 //const SDL_Size& NO_SIZE = *(SDL_Size*)0; //&NO_SIZE == 0
 //SDL_Size NO_SIZE; //dummy value (settable)
-#define NO_SIZE  NULL
+#define NO_SIZE  (SDL_Size*)NULL
 
 
 //allow a rect to be used as a size or a point:
@@ -479,7 +479,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
 #define SDL_Rect  mySDL_Rect //use my def instead of SDL def
 //const SDL_Rect& NO_RECT = *(SDL_Rect*)0; //&NO_RECT == 0
 //SDL_Rect NO_RECT; //dummy value (settable)
-#define NO_RECT  NULL
+#define NO_RECT  (SDL_Rect*)NULL //static_cast<SDL_Rect*>(NULL)
 
 
 inline void mySDL_GetWindowRect(CONST SDL_Window* wnd, SDL_Rect* rect)
@@ -1365,7 +1365,7 @@ public: //static utility methods
 #endif        
     }
 //    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, NVL(srcline, SRCLINE)); }
-    static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Size* want_wh = NO_SIZE, const SDL_Point* want_xy = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
+    static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Point* want_xy = NO_POINT, const SDL_Size* want_wh = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
     {
         /*Uint32*/ SDL_Format fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
         if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", srcline);

@@ -1,3 +1,4 @@
+//light weight semaphore
 //from https://github.com/preshing/cpp11-on-multicore/blob/master/common/sema.h
 // https://github.com/preshing/cpp11-on-multicore
 
