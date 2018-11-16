@@ -12,8 +12,11 @@
 #include <utility> //std::forward<>
 #include <stdio.h> //<cstdio> //vsnprintf()
 #include <stdarg.h> //varargs
+#include <string>
 
 #include "msgcolors.h" //MSG_*, ENDCOLOR_*
+#include "str-helpers.h" //NVL()
+#include "elapsed.h" //elapsed_msec()
 
 
 //set default if caller didn't specify:
@@ -141,6 +144,30 @@ void myprintf(int level, std::/*ostringstream*/ostream& fmt, ARGS&& ... args) //
 //}
 
 
+//utility class for tracing function in/out:
+#define DebugInOut(...)  InOutDebug inout(std::ostringstream() << __VA_ARGS__)
+class InOutDebug
+{
+public:
+//kludge: overload until implicit cast ostringstream -> const char* works
+    explicit InOutDebug(std::/*ostringstream*/ostream& label, SrcLine srcline = 0): InOutDebug(static_cast<std::ostringstream&>(label).str().c_str(), srcline) {} //delegated ctor
+    explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << " IN" ENDCOLOR_ATLINE(srcline)); }
+    /*virtual*/ ~InOutDebug() { debug(BLUE_MSG << m_label << " OUT after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
+public: //methods
+    double restart() //my_elapsed_msec(bool restart = false)
+    {
+        double retval = elapsed_msec() - m_started;
+        /*if (restart)*/ m_started = elapsed_msec();
+        return retval;
+    }
+protected: //data members
+    /*const*/ int m_started; //= -elapsed_msec();
+//    const char* m_label;
+    std::string m_label; //make a copy in case caller's string is on stack
+    SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+};
+
+
 #endif //ndef _DEBUGEXC_H
 
 
@@ -166,7 +193,7 @@ void func(int val = -1, SrcLine srcline = 0)
 }
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
 //    debug(BLUE_MSG "SDL_Lib: init 0x%x" ENDCOLOR_ATLINE(srcline), flags);
     func();

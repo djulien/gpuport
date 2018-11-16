@@ -118,7 +118,7 @@ std::string timestamp()
 //#endif
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     debug(BLUE_MSG << timestamp() << "start" << ENDCOLOR);
     sleep(2); //give parent head start

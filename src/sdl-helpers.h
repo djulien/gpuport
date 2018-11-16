@@ -195,28 +195,6 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 #endif
 
 
-//utility class for tracing in/out:
-class InOutDebug
-{
-public:
-//kludge: overload until implicit cast ostringstream -> const char* works
-    InOutDebug(std::/*ostringstream*/ostream& label, SrcLine srcline = 0): InOutDebug(static_cast<std::ostringstream&>(label).str().c_str(), srcline) {} //delegated ctor
-    explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
-    /*virtual*/ ~InOutDebug() { debug(BLUE_MSG << m_label << ": out after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
-public: //methods
-    double restart() //my_elapsed_msec(bool restart = false)
-    {
-        double retval = elapsed_msec() - m_started;
-        /*if (restart)*/ m_started = elapsed_msec();
-        return retval;
-    }
-protected: //data members
-    /*const*/ int m_started; //= -elapsed_msec();
-    const char* m_label;
-    SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-};
-
-
 ////////////////////////////////////////////////////////////////////////////////
 ////
 /// SDL headers, wrappers, utility functions, etc:

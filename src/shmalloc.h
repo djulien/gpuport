@@ -155,7 +155,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     ShmHdr* ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
 //printf("here4 %p\n", ptr); fflush(stdout);
     if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
-    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " => " << commas(shminfo.shm_segsz) << " (hdr " << sizeof(ShmHdr) << "), existed? " << existed << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << ", hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
     ptr->id = shmid;
     ptr->key = key;
     ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
