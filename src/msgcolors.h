@@ -10,6 +10,12 @@
 
 #include "srcline.h" //SrcLine, shortsrc()
 
+//accept variable # up to 1 -2 macro args:
+#ifndef UPTO_2ARGS
+ #define UPTO_2ARGS(one, two, three, ...)  three
+#endif
+
+
 //ANSI color codes (for console output):
 //https://en.wikipedia.org/wiki/ANSI_escape_code
 #define ANSI_COLOR(code)  "\x1b[" code "m"
@@ -25,13 +31,20 @@
 #define ENDCOLOR_NOLINE  ANSI_COLOR("0")
 
 //append the src line# to make debug easier:
+#if 1
 //#define ENDCOLOR_ATLINE(srcline)  " &" TOSTR(srcline) ANSI_COLOR("0") "\n"
 //#define ENDCOLOR_ATLINE(srcline)  "  &" << static_cast<const char*>(shortsrc(srcline, SRCLINE)) << ENDCOLOR_NOLINE "\n"
 #define ENDCOLOR_ATLINE(srcline)  "  &" << shortsrc(srcline, SRCLINE) << ENDCOLOR_NOLINE //"\n"
 //#define ENDCOLOR_MYLINE  ENDCOLOR_ATLINE(%s) //%d) //NOTE: requires extra param
 #define ENDCOLOR  ENDCOLOR_ATLINE(SRCLINE) //__LINE__)
 //#define ENDCOLOR_LINE(line)  FMT(ENDCOLOR_MYLINE) << (line? line: __LINE__) //show caller line# if available
+#else /TODO
+ #define ENDCOLOR_1ARG(blend, val1, val2)  ((int)((val1) * (blend) + (val2) * (1 - (blend)))) //uses floating point
+ #define ENDCOLOR_2ARGS(num, den, val1, val2)  (((val1) * (num) + (val2) * (den - num)) / (den)) //use fractions to avoid floating point at compile time
+ #define ENDCOLOR(...)  UPTO_2ARGS(__VA_ARGS__, ENDCOLOR_2ARGS, ENDCOLOR_1ARG) (__VA_ARGS__)
+#endif
 #define ENDCOLOR_NEWLINE  ENDCOLOR "\n"
+
 
 #endif //ndef _COLORS_H
 

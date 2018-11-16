@@ -121,8 +121,8 @@ class BkgSync
     std::mutex m_mtx;
 //    std::atomic<std::condition_variable> m_cv; //avoid mutex locks except when waiting
     std::condition_variable m_cv;
-//??    using LOCK = std::unique_lock<decltype(m_mtx)>;
-    using LOCK = std::lock_guard<decltype(m_mtx)>;
+    using LOCK = std::unique_lock<decltype(m_mtx)>;
+//??    using LOCK = std::lock_guard<decltype(m_mtx)>;
 public: //ctors/dtors
     explicit BkgSync(VALTYPE init = 0): m_val(init) {}
 public: //operators
@@ -131,19 +131,22 @@ public: //operators
     {
 //        LOCK lock(m_mtx);
         m_val.store(newval);
-        m_cv.notify_all();
+        notify(); //m_cv.notify_all();
         return m_val.load();
     }
     VALTYPE operator|=(VALTYPE moreval)
     {
 //        LOCK lock(m_mtx);
         m_val |= moreval;
-        m_cv.notify_all();
+        notify(); //m_cv.notify_all();
         return m_val.load();
     }
 public: //methods
-    inline VALTYPE load() const { return m_val.load(); } //compatibility with std::atomic<> api
-    inline void store(VALTYPE newval) { m_val.store(newval); } //compatibility with std::atomic<> api
+//make interchangeable with std::atomic<>:
+//TODO: perfect fwd or derive?
+    inline VALTYPE load() const { return m_val.load(); }
+    inline void store(VALTYPE newval) { VOID m_val.store(newval); }
+    inline auto fetch_or(VALTYPE bits) { return m_val.fetch_or(bits); }
 //    void set(VALTYPE newval, want_or = false) //, bool all = false)
 //    {
 //        LOCK lock(m_mtx);
@@ -151,12 +154,17 @@ public: //methods
 ////        all? m_cv.notify_all(): m_cv.notify_one();
 //        m_cv.notify_all();
 //    }
-    void wait(VALTYPE want_value = 0, bool no_block = false)
+#define DESC(str)  std::ostringstream() << YELLOW_MSG "bgsync." << str << ": thr " << std::hex << std::this_thread::get_id() << std::dec << ", val " << m_val
+    void notify() { InOutDebug(DESC("notify"), SRCLINE); VOID m_cv.notify_all(); }
+    bool wait(VALTYPE want_value = 0, bool no_block = false)
     {
+        InOutDebug(DESC("wait for " << want_value), SRCLINE);
         if (no_block) return (m_val.load() == want_value);
         LOCK lock(m_mtx); //assume will block
         while (m_val.load() != want_value) m_cv.wait(lock); //filter out spurious wakeups
+        return true;
     }
+#undef DESC
 };
 
 #if 0
@@ -208,13 +216,14 @@ public: //data members
     enum class Protocol: int { NONE = 0, DEV_MODE, WS281X};
 //        std::mutex mutex; //TODO: multiple render threads/processes
     Protocol protocol;
+//    const SDL_Size wh;
     const double frame_time;
     const int NumUniv, UnivLen;
     const std::thread::id owner; //window/renderer owner
     const elapsed_t started;
 //make these atomic so multiple threads can access changing values without locks:
 //    std::atomic<MASK_TYPE> ready; //= 0; //one Ready bit for each universe; NOTE: need to init to avoid "deleted function" errors
-    BkgSync<MASK_TYPE> ready; //one Ready bit for each universe
+    BkgSync<MASK_TYPE> dirty; //one Ready bit for each universe
     std::atomic<uint32_t> numfr; //= 0; //#frames rendered / next frame#
 //        std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
     uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
@@ -229,7 +238,7 @@ public: //methods
 //reset state + stats:
     void reset()
     {
-        ready.store(0);
+        dirty.store(0);
         numfr.store(0);
 //            nexttime.store(0);
         for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
@@ -252,7 +261,7 @@ public: //operators
         ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
         ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
 //        ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
-        ostrm << ", ready " << sizeof(that.ready) << ": " << std::hex << that.ready.load() << std::dec;
+        ostrm << ", dirty " << sizeof(that.dirty) << ": " << std::hex << that.dirty.load() << std::dec;
         ostrm << ", #fr " << that.numfr.load();
 //                ostrm << ", time " << that.nexttime.load();
         ostrm << ", age " << elapsed(that.started) << " sec";
@@ -408,6 +417,7 @@ public:
     typedef typename FRAMEINFO::Protocol Protocol;
     typedef typename FRAMEINFO::MASK_TYPE MASK_TYPE; //kludge: propagate/expose to caller
 //        enum Protocol: int { NONE = 0, DEV_MODE, WS281X};
+    static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
 protected:
 //        Protocol m_protocol;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
@@ -447,7 +457,9 @@ public: //ctors/dtors:
         UNCONST(m_frinfo.sentinel) = FRAMEINFO::FRINFO_MAGIC;
 //initialize non-const info to initial state:
         m_frinfo.protocol = protocol;
-        m_frinfo.reset();
+//        clear_stats();
+        m_frinfo.reset(); //marks node buf empty
+        m_txtr.perftime(); //kludge: flush perf timer
     }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort_wker& that) CONST
@@ -470,6 +482,7 @@ public: //operators
         return ostrm; 
     }
 public: //methods
+#if 0
     void fill(NODEVAL color = BLACK, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
     {
         SDL_Rect region(0, 0, NUM_UNIV /*m_wh.w*/, m_wh.h);
@@ -496,47 +509,61 @@ public: //methods
 //        }
 //printf("here4\n"); fflush(stdout);
     }
+#endif
 //    FrameInfo* frinfo() const { return static_cast<FrameInfo*>(that.m_nodebuf.get()); }
 //void ready(SrcLine srcline = 0) { VOID ready(0, srcline); } //caller already updated frinfo->bits
+#if 0
     void clear_stats()
     {
 //        frinfo.numfr.store(0);
 //        frinfo.nexttime.store(0);
 //        for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] = 0;
-        m_frinfo.reset();
+        m_frinfo.reset(); //marks node buf empty
         m_txtr.perftime(); //kludge: flush perf timer
     }
-#if 0
-client (2 states): bkg (3+ states):
-  launch      -->   cre wnd
-  {                 {
-    wait-!busy <--    set-!busy
-    render            render+sync-wait
-    set-ready  -->    wait-ready
-  }                   encode
-                    }
 #endif
-fix this; mv 2-state perf time to wrapper object; aggregate perf stats across all shm wrappers
-//CAUTION: for use only by non-wker threads:
+#if 0
+//client (2 states): bkg (3+ states):
+//  launch      -->   cre wnd
+//  {                 {
+//    wait-!busy <--    set-!busy
+//    render            render+sync-wait
+//    set-ready  -->    wait-ready
+//  }                   encode
+//                    }
+//client threads call this after their universes have been rendered:
+//CAUTION: for use only by non-wker (client) threads
     bool ready(MASK_TYPE more = 0, SrcLine srcline = 0) //mark universe(s) as ready/rendered, wait for them to be processed; CAUTION: blocks caller
     {
+        if (m_frinfo.ismine()) exc(RED_MSG "calling myself ready?" ENDCOLOR_ATLINE(srcline));
 //printf("here1\n"); fflush(stdout);
+//TODO: mv 2-state perf time to wrapper object; aggregate perf stats across all shm wrappers
         perf_stats[0] = m_txtr.perftime(); //caller's render time (sec)
 //        /*UNIV_MASK new_bits =*/ frinfo.bits.fetch_or(more); //atomic; //frinfo.bits |= more;
 //        UNIV_MASK old_bits = frinfo.bits.load(), new_bits = old_bits | more;
 //        while (!frinfo.bits.compare_exchange_weak(old_bits, new_bits)); //atomic |=; example at https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
-        auto new_ready = m_frinfo.ready |= more; //.fetch_or(more);
-        if (!m_frinfo.ismine())
+//        auto new_dirty = m_frinfo.dirty |= more; //.fetch_or(more);
+        auto old_dirty = m_frinfo.dirty.fetch_or(more); //mark rendered universes
+        if (((old_dirty | more) == ALL_UNIV) && (old_dirty != ALL_UNIV)) m_frinfo.dirty.notify(); //my universe(s) was last one to be rendered; tell bkg wker to send to GPU
+ //TODO       else if (num_threads() < 2) error; //nobody else to wait for
+        m_frinfo.dirty.wait(0); //wait for node buf to be cleared before rendering more
+        return (old_dirty | more) == ALL_UNIV;
+    }
+#endif
+//bkg wker loop:
+//client (2 states): bkg (3+ states):
+//  launch      -->   cre wnd
+//  {                 {
+//    wait-!busy <--    set-!busy
+//    render            render+sync-wait
+//    set-ready  -->    wait-ready
+//  }                   encode
+//                    }
+    void bkg_loop(SrcLine srcline = 0)
+    {
+        if (!m_frinfo.ismine()) exc(RED_MSG "only bkg thread should call loop" ENDCOLOR_ATLINE(srcline));
+        for (;;)
         {
-//printf("here2\n"); fflush(stdout);
-            /*auto*/uint32_t svnumfr = m_frinfo.numfr;
-            if (new_ready == ALL_UNIV) wake(); //wake owner to xfr all universes to GPU
-            while (m_frinfo.numfr.load() == svnumfr) wait(); //wait for GPU xfr to finish; loop compensates for spurious wakeups; ABA problem avoided because numfr always increases; https://en.wikipedia.org/wiki/ABA_problem
-            return (num_threads() > 1); //return to caller to render next frame
-        }
-//printf("here3\n"); fflush(stdout);
-        while (m_frinfo.ready.load() != ALL_UNIV) wait(); //wait for remaining universes; loop handles spurious wakeups
-        perf_stats[1] = m_txtr.perftime(); //1000); //ipc wait time (msec)
 //all universes rendered; send to GPU:
 //        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
 //        perf_stats[1] = m_txtr.perftime(); //bitbang time
@@ -559,16 +586,20 @@ fix this; mv 2-state perf time to wrapper object; aggregate perf stats across al
             if (u) bbdata[y][xofs - 1] = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
         }
 #endif
-        static int count = 0;
-        if (!count++)
-            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; printf("here42 ..."); fflush(stdout); _.xfr = m_xfr; printf("here43\n"); fflush(stdout); _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
-        else
+            m_frinfo.dirty.wait(ALL_UNIV); //wait for all universes to be rendered
+            perf_stats[1] = m_txtr.perftime(); //1000); //ipc wait time (msec)
+//            m_frinfo.dirty.store(0); //mark node buf empty
+//pivot/encode and send rendered nodes to GPU:
+//            static int count = 0;
+//            if (!count++)
+//            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; printf("here42 ..."); fflush(stdout); _.xfr = m_xfr; printf("here43\n"); fflush(stdout); _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+//            else
             VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //printf("here5\n"); fflush(stdout);
 //TODO: fix ipc race condition here:
-        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
+            for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
 //printf("here6\n"); fflush(stdout);
-        return true;
+        }
     }
 //inter-thread/process sync:
 //SDL is not thread-safe; only owner thread is allowed to render to window
@@ -578,7 +609,7 @@ fix this; mv 2-state perf time to wrapper object; aggregate perf stats across al
 //TODO        if (NUM_THREAD > 1) wake_others(NVL(srcline, SRCLINE)); //let other threads/processes overwrite nodebuf while xfrbuf is going to GPU
 //    static inline auto /*std::thread::id*/ thrid() { return std::this_thread::get_id(); }
     int num_threads() { return 1; } //TODO: fix; shmnattch(m_nodebuf.get()); }
-    static const typename FRAMEINFO::MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
+#if 0
     void wait()
     {
         if (num_threads() < 2) return; //no other threads/processes can wake me; get fresh count in case #threads changed
@@ -595,7 +626,8 @@ fix this; mv 2-state perf time to wrapper object; aggregate perf stats across al
     else wake(waiters());
 #endif
     }
-public: //utility methods
+#endif
+public: //utility methods; exposed in case clients want to use it (shouldn't need to, though)
 //limit brightness:
 //NOTE: A bits are dropped/ignored
     static NODEVAL limit(NODEVAL color)
@@ -718,7 +750,7 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
 //adds no extra run-time overhead if protocol is checked outside the loops
 //3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
         static bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
-        auto /*UNIV_MASK*/ dirty = gp.m_frinfo.ready.load() | (255 * Ashift); //use dirty/ready bits as start bits
+        auto /*UNIV_MASK*/ dirty = gp.m_frinfo.dirty.load() | (255 * Ashift); //use dirty/ready bits as start bits
         switch (gp.m_frinfo.protocol)
         {
             default: //NONE (raw)
@@ -806,9 +838,9 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
                 break;
         }
 //printf("here9\n"); fflush(stdout);
-        gp.m_frinfo.ready.store(0); //clear dirty bits
         ++gp.m_frinfo.numfr;
-        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+        gp.m_frinfo.dirty.store(0); //clear dirty bits; NOTE: this will wake client rendering threads
+//        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
     }
 #endif
 protected: //data members
@@ -922,10 +954,12 @@ public: //static helper methods
 //    struct DebugThing { template <typename TYPE> explicit DebugThing(TYPE&& val) { debug(BLUE_MSG "debug: val " << val << ENDCOLOR); }}; //        ~DebugThing() {}
 //    DebugThing m_debug9, m_debug0, m_debug1;
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
-    using WKER = GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX>;
+//    using WKER = GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX>;
+    typedef GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX> WKER;
+//    using ALL_UNIV = WKER::ALL_UNIV;
 //    WKER* m_wker;
-    std::unique_ptr<WKER> m_wker;
-    std::thread m_bkg; //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
+//    std::unique_ptr<WKER> m_wker;
+//    std::thread m_bkg; //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
 //    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
 protected: //data members
 //    /*SDL_AutoTexture<XFRTYPE>*/ txtr_bb m_txtr;
@@ -943,11 +977,13 @@ protected: //data members
 //    using FRAMEINFO = SHARED_INFO::FRAMEINFO;
     typedef typename SHARED_INFO::NODEBUF NODEBUF;
     typedef typename SHARED_INFO::FRAMEINFO FRAMEINFO;
+    typedef typename SHARED_INFO::MASK_TYPE MASK_TYPE;
 //    XFRTYPE bbdata[UNIV_MAX][3 * NODEBITS]; //bit-bang buf; dcl in heap so it doesn't need to be fully re-initialized every time
 //    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before frame_time (below)
 //    const std::function<void(void*, const void*, size_t)> m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
 public: //data members
+    static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
     typedef typename FRAMEINFO::Protocol Protocol;
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
 //    const double& frame_time;
@@ -1020,12 +1056,20 @@ public: //ctors/dtors:
 //no        if (/*!shmexisted(m_nodebuf.get()) ||*/ !frinfo.owner)
 //        frinfo.protocol = protocol;
         if (m_nodebuf.numatt() == 1) //TODO: || owner thread !exist) //initialize shm and start up wker thread
-//        {
+        {
 //            auto bkg = [](){ get_params(params); }; //NOTE: must be captureless, so wrap it
-//            m_bkg = []() { m_wker.reset(new WKER(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, protocol, init_color, NVL(srcline, SRCLINE))); } //open connection to GPU
-            m_wker.reset(new WKER(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, protocol, init_color, NVL(srcline, SRCLINE))); //open connection to GPU
+            std::thread m_bkg( //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
+            /*m_bkg =*/ [screen, /*frinfo,*/ vgroup, protocol, init_color, srcline, this]()
+            {
+//                debug(YELLOW_MSG "start bkg thread" ENDCOLOR_ATLINE(srcline));
+//                std::unique_ptr<WKER> m_wker;
+//                m_wker.reset(new WKER(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, protocol, init_color, NVL(srcline, SRCLINE))); //open connection to GPU
+                WKER wker(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, protocol, init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+                wker.bkg_loop(NVL(srcline, SRCLINE));
+            });
+            m_bkg.detach(); //async completion; allow bkg thread to outlive caller
 //            frinfo.init(thrid()); //init if no owner (take ownership if first attach)
-//        }
+        }
 //        debug(YELLOW_MSG << "sizeof(NODEBUF) = " << sizeof(NODEBUF) << " vs. " << sizeof(NODEVAL) << "*" << NUM_UNIV << "*" << H_PADDED << " = " << (sizeof(NODEVAL) * NUM_UNIV * H_PADDED) << ", sizeof(NODEVAL) " << sizeof(NODEVAL) << ", sizeof(node row) " << sizeof(NODEVAL[H_PADDED]) << ", " << m_wh << ENDCOLOR);
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
 //        ready(ALL_UNIV, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible
@@ -1054,10 +1098,11 @@ public: //operators
 //        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
 //        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", time " << that.frinfo.nexttime;
 //        ostrm << ", protocol " << NVL(ProtocolName(that.m_protocol), "?PROTOCOL?");
-        ostrm << ", nodebuf " << that.m_nodebuf; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
+        ostrm << ", nodebuf " << that.m_nodebuf; //nodebuf will report frinfo; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
 //        ostrm << ", txtr " << that.m_txtr; //should be 71x1111=78881 on RPi, 71*768=54528 on laptop
-        ostrm << ", wker " << *that.m_wker.get();
+//        ostrm << ", wker " << *that.m_wker.get();
+//        ostrm << ", bkg " << that.m_bkg; //::get_id();
         ostrm << ", age " << elapsed(that.m_started) << " sec";
         ostrm << "}";
         return ostrm; 
@@ -1068,21 +1113,75 @@ public: //methods
 //these are thread-safe (they use shm only):
     template <typename ... ARGS>
     static inline NODEVAL limit(ARGS&& ... args) { return WKER::limit(std::forward<ARGS>(args) ...); } //perfect fwd
-    template <typename ... ARGS>
-    inline void clear_stats(ARGS&& ... args) { VOID m_wker.get()->clear_stats(std::forward<ARGS>(args) ...); } //perfect fwd
-    template <typename ... ARGS>
-    inline void fill(ARGS&& ... args) { VOID m_wker.get()->fill(std::forward<ARGS>(args) ...); } //perfect fwd
-//this one is not thread-safe:
-//client:             bkg:
+//    template <typename ... ARGS>
+//    inline void clear_stats(ARGS&& ... args) { VOID m_wker.get()->clear_stats(std::forward<ARGS>(args) ...); } //perfect fwd
+    void clear_stats()
+    {
+//        frinfo.numfr.store(0);
+//        frinfo.nexttime.store(0);
+//        for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] = 0;
+        frinfo.reset(); //marks node buf empty
+//        m_txtr.perftime(); //kludge: flush perf timer
+    }
+//    template <typename ... ARGS>
+//    inline void fill(ARGS&& ... args) { VOID m_wker.get()->fill(std::forward<ARGS>(args) ...); } //perfect fwd
+    void fill(NODEVAL color = BLACK, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
+    {
+        SDL_Rect region(0, 0, NumUniv, UnivLen); //NUM_UNIV /*m_wh.w*/, m_wh.h);
+//        if (!rect) rect = &all;
+//        printf("&rect %p, &region %p\n", rect, &region);
+        if (rect)
+        {
+            region.x = rect->x;
+            region.y = rect->y;
+            region.w = std::min(NumUniv, rect->x + rect->w);
+            region.h = std::min(UnivLen, rect->y + rect->h);
+        }
+//        printf("region %d %d %d %d\n", region.x, region.y, region.w, region.h);
+//        debug(BLUE_MSG "fill " << region << " with 0x%x" ENDCOLOR_ATLINE(srcline), color);
+//printf("here3 %d %d %d %d %p %p %p\n", region.x, region.y, region.w, region.h, &nodes[0][0], &nodes[1][0], &nodes[region.w][0]); fflush(stdout);
+        for (int x = region.x, xlimit = region.x + region.w; x < xlimit; ++x)
+//      {
+//          printf("fill row %d\n", x);
+            for (int y = region.y, ylimit = region.y + region.h; y < ylimit; ++y)
+//            {
+//                if ((&nodes[x][y] < (NODEVAL*)m_nodebuf.get()->nodes) || (&nodes[x][y] >= (NODEVAL*)m_nodebuf.get()->nodes + NUM_UNIV * H_PADDED)) exc(RED_MSG "node[" << x << "," << y << "] addr exceeds bounds[" << NUM_UNIV << "," << H_PADDED << "]" ENDCOLOR);
+                nodes[x][y] = color;
+//            }
+//        }
+//printf("here4\n"); fflush(stdout);
+    }
+//client-side proc sync:
+//TODO: ipc for multiple procs
+//    template <typename ... ARGS>
+//    inline bool ready(ARGS&& ... args) { return m_wker.get()->ready(std::forward<ARGS>(args) ...); } //perfect fwd
+//client (2 states): bkg (3+ states):
 //  launch      -->   cre wnd
 //  {                 {
 //    wait-!busy <--    set-!busy
 //    render            render+sync-wait
 //    set-ready  -->    wait-ready
 //  }                   encode
-//TODO: ipc for multiple procs:
-    template <typename ... ARGS>
-    inline bool ready(ARGS&& ... args) { return m_wker.get()->ready(std::forward<ARGS>(args) ...); } //perfect fwd
+//                    }
+//client threads call this after their universes have been rendered
+//CAUTION: for use only by non-wker (client) threads
+    bool ready(MASK_TYPE more = 0, SrcLine srcline = 0) //mark universe(s) as ready/rendered, wait for them to be processed; CAUTION: blocks caller
+    {
+        InOutDebug("gp.ready(client)");
+        if (frinfo.ismine()) exc(RED_MSG "calling myself ready?" ENDCOLOR_ATLINE(srcline));
+//printf("here1\n"); fflush(stdout);
+//TODO: mv 2-state perf time to wrapper object; aggregate perf stats across all shm wrappers
+//TODO        perf_stats[0] = m_txtr.perftime(); //caller's render time (sec)
+//        /*UNIV_MASK new_bits =*/ frinfo.bits.fetch_or(more); //atomic; //frinfo.bits |= more;
+//        UNIV_MASK old_bits = frinfo.bits.load(), new_bits = old_bits | more;
+//        while (!frinfo.bits.compare_exchange_weak(old_bits, new_bits)); //atomic |=; example at https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
+//        auto new_dirty = m_frinfo.dirty |= more; //.fetch_or(more);
+        auto old_dirty = frinfo.dirty.fetch_or(more); //mark rendered universes
+        if (((old_dirty | more) == ALL_UNIV) && (old_dirty != ALL_UNIV)) frinfo.dirty.notify(); //my universe(s) was last one to be rendered; tell bkg wker to send to GPU
+ //TODO       else if (num_threads() < 2) error; //nobody else to wait for
+        frinfo.dirty.wait(0); //wait for node buf to be cleared before rendering more
+        return (old_dirty | more) == ALL_UNIV;
+    }
 public: //named arg variants
 #if 0
         struct //CtorParams
@@ -1694,11 +1793,8 @@ void gpstats(const char* desc, GPTYPE&& gp, int often = 1)
 
 
 //int main(int argc, const char* argv[])
-void unit_test(ARGS& args)
+void api_test(ARGS& args)
 {
-    Uint32 tb1 = 0xff80ff, tb2 = 0xffddbb;
-    debug(BLUE_MSG "limit blue 0x%x, cyan 0x%x, white 0x%x, 0x%x -> 0x%x, 0x%x -> 0x%x" ENDCOLOR, GpuPort<>::limit(BLUE), GpuPort<>::limit(CYAN), GpuPort<>::limit(WHITE), tb1, GpuPort<>::limit(tb1), tb2, GpuPort<>::limit(tb2));
-
 //    bind_test(); return;
     int screen = 0, vgroup = 0, delay_msec = 100; //default
 //    for (auto& arg : args) //int i = 0; i < args.size(); ++i)
@@ -1814,6 +1910,57 @@ if ((x < 4) && (y < 4)) printf("%sset pixel[%d,%d] @%p = 0x%x...\n", timestamp()
 //        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
 //    }
 #endif
+}
+
+void limit_test()
+{
+    Uint32 tb1 = 0xff80ff, tb2 = 0xffddbb;
+    debug(BLUE_MSG "limit blue 0x%x, cyan 0x%x, white 0x%x, 0x%x -> 0x%x, 0x%x -> 0x%x" ENDCOLOR, GpuPort<>::limit(BLUE), GpuPort<>::limit(CYAN), GpuPort<>::limit(WHITE), tb1, GpuPort<>::limit(tb1), tb2, GpuPort<>::limit(tb2));
+}
+
+
+std::string info()
+{
+    std::ostringstream ostrm;
+    ostrm << timestamp() << std::hex << FrameInfo<>::thrid() << std::dec << " ";
+    return ostrm.str();
+}
+
+void sync_test()
+{
+    BkgSync<> bs;
+    std::thread bkg([&bs]()
+    {
+        bs.store(0);
+        for (int i = 0; i < 3; ++i)
+        {
+            debug(CYAN_MSG << info() << "BKG wait for 7" ENDCOLOR);
+            bs.wait(7);
+            debug(CYAN_MSG << info() << "BKG got 7" ENDCOLOR);
+            SDL_Delay(0.5 sec);
+            debug(CYAN_MSG << info() << "BKG reset to 0" ENDCOLOR);
+            bs.store(0);
+        }
+    });
+    bkg.detach();
+    for (int i = 0; i < 5; ++i)
+    {
+        debug(CYAN_MSG << info() << "FG wait for 0" ENDCOLOR);
+        bs.wait(0);
+        debug(CYAN_MSG << info() << "FG got 0" ENDCOLOR);
+        SDL_Delay(0.25 sec);
+        debug(CYAN_MSG << info() << "FG set %d" ENDCOLOR, 1 << (i % 3));
+        bs |= 1 << (i % 3);
+    }
+}
+
+
+//int main(int argc, const char* argv[])
+void unit_test(ARGS& args)
+{
+    limit_test();
+    sync_test();
+//    api_test(args);
     debug(BLUE_MSG << "finish" << ENDCOLOR);
 //    return 0;
 }

@@ -199,6 +199,8 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 class InOutDebug
 {
 public:
+//kludge: overload until implicit cast ostringstream -> const char* works
+    InOutDebug(std::/*ostringstream*/ostream& label, SrcLine srcline = 0): InOutDebug(static_cast<std::ostringstream&>(label).str().c_str(), srcline) {} //delegated ctor
     explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << ": in" ENDCOLOR_ATLINE(srcline)); }
     /*virtual*/ ~InOutDebug() { debug(BLUE_MSG << m_label << ": out after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
 public: //methods
