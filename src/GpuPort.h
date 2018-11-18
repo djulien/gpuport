@@ -150,7 +150,7 @@ void unit_test(ARGS& args) { GpuPort_wker<> gpwkr; }
 #include <thread> //std::thread::get_id(), std::thread()
 #include <bitset>
 #include <mutex>
-//#include <condition_variable>
+#include <condition_variable> //TODO: why is this line needed?
 #include <iostream>
 #include <exception>
 #include <stdexcept>
