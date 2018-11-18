@@ -114,11 +114,11 @@ struct WithShmHdr
 //check if mem ptr is valid:
 //template <bool IPC>
 //static MemHdr<IPC>* memptr(void* addr, const char* func)
-ShmHdr* get_shmhdr(void* addr, SrcLine srcline = 0)
+const ShmHdr* get_shmhdr(const void* addr, SrcLine srcline = 0)
 {
 //    MemHdr<IPC>* ptr = static_cast<MemHdr<IPC>*>(addr);
 //printf("here5 %p\n", addr); fflush(stdout);
-    ShmHdr* ptr = static_cast<ShmHdr*>(addr);
+    const ShmHdr* ptr = static_cast<const ShmHdr*>(addr);
     if (ptr-- && !((ptr->marker ^ SHM_MAGIC) & ~1)) return ptr;
 //printf("here6\n"); fflush(stdout);
 //    char buf[64];
@@ -155,17 +155,17 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     ShmHdr* ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
 //printf("here4 %p\n", ptr); fflush(stdout);
     if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
-    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << ", hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
     ptr->id = shmid;
     ptr->key = key;
     ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
     ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
     err_ret(ptr + 1, 0);
 }
-template <typename TYPE = uint8_t>
-TYPE* shmalloc_typed(size_t size = 1, key_t key = 0, SrcLine srcline = 0)
+template <typename TYPE> //= uint8_t>
+TYPE* shmalloc_typed(key_t key = 0, size_t numents = 1, SrcLine srcline = 0)
 {
-    return (TYPE*)shmalloc(sizeof(TYPE) * size, key, srcline);
+    return (TYPE*)shmalloc(sizeof(TYPE) * numents, key, srcline);
 }
 //#define shmalloc  shmallc_typesafe
 
@@ -176,7 +176,7 @@ key_t shmkey(void* addr, SrcLine srcline = 0)
     return get_shmhdr(addr, srcline)->key;
 }
 
-size_t shmsize(void* addr, SrcLine srcline = 0)
+size_t shmsize(const void* addr, SrcLine srcline = 0)
 {
 //printf("here11 %p\n", addr); fflush(stdout);
 //    struct shmid_ds shminfo;
@@ -186,13 +186,13 @@ size_t shmsize(void* addr, SrcLine srcline = 0)
     return get_shmhdr(addr, srcline)->size;
 }
 
-key_t shmexisted(void* addr, SrcLine srcline = 0)
+key_t shmexisted(const void* addr, SrcLine srcline = 0)
 {
 //printf("here12 %p\n", addr); fflush(stdout);
     return (get_shmhdr(addr, srcline)->marker != SHM_MAGIC);
 }
 
-int shmnattch(void* addr, SrcLine srcline = 0)
+int shmnattch(const void* addr, SrcLine srcline = 0)
 {
     struct shmid_ds shminfo;
     return (shmctl(get_shmhdr(addr, srcline)->id, IPC_STAT, &shminfo) != -1)? shminfo.shm_nattch: 0;
@@ -200,7 +200,7 @@ int shmnattch(void* addr, SrcLine srcline = 0)
 
 
 //release shm:
-int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid after
+int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not valid after
 {
 //    char buf[64];
 //    snprintf(buf, sizeof(buf), "%s: bad shmem pointer %p", func, addr);
@@ -209,7 +209,7 @@ int shmfree(void* addr, SrcLine srcline = 0) //CAUTION: data members not valid a
 //    if (!shmptr-- || (shmptr->marker != SHM_MAGIC)) return;
 //printf("here7\n"); fflush(stdout);
     struct shmid_ds shminfo;
-    ShmHdr* ptr = get_shmhdr(addr, srcline), svhdr = *ptr; //copy before destroying memory
+    const ShmHdr* ptr = get_shmhdr(addr, srcline), svhdr = *ptr; //copy before destroying memory
     if (shmdt(ptr) == -1) throw std::runtime_error(strerror(errno));
     if (shmctl(svhdr.id, IPC_STAT, &shminfo) == -1) throw std::runtime_error(strerror(errno));
 //printf("here8\n"); fflush(stdout);
@@ -233,7 +233,7 @@ void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine 
 }
 #define shmalloc  shmalloc_debug
 
-int shmfree_debug(void* addr, SrcLine srcline = 0)
+int shmfree_debug(const void* addr, SrcLine srcline = 0)
 {
     int retval = shmfree(addr, srcline);
     debug(BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(strerror(errno), "??error??"): "no error");

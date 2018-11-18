@@ -119,6 +119,9 @@ void myprintf(int level, const char* fmt, ...)
     if (needlen >= sizeof(fmtbuf)) tooshort << " (fmt buf too short: needed " << needlen << " bytes) ";
 //    /*if (stm == stderr)*/ printf("%.*s%s%.*s%s!%d%s\n", (int)srcline_ofs, fmtbuf, details.c_str(), (int)(lastcolor_ofs - srcline_ofs), fmtbuf + srcline_ofs, tooshort.str().c_str(), /*shortname*/ Thread::isBkgThread(), fmtbuf + lastcolor_ofs);
 //TODO: combine with env/command line options, write to file, etc 
+    static std::mutex mtx;
+    using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
+    LOCKTYPE lock(mtx); //avoid interleaved output
     if (level < 0) //error
     {
         fprintf(stderr, RED_MSG "%s%s\n" ENDCOLOR_NOLINE, fmtbuf, tooshort.str().c_str()); fflush(stderr);

@@ -32,9 +32,17 @@
 
 
 //dummy defs for readability:
-#define VOID
-#define CONST
-#define STATIC
+#ifndef VOID
+ #define VOID //dummy keyword for readability
+#endif
+
+#ifndef CONST
+ #define CONST //dummy keyword for readability
+#endif
+
+#ifndef STATIC
+ #define STATIC //dummy keyword for readability
+#endif
 //#define RET_VOID
 
 
@@ -246,7 +254,7 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 //timing stats:
 #define now()  SDL_Ticks() //nsec -> usec
 //inline uint64_t now() { return SDL_Ticks(); }
-#define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
+//#define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
 #define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
 typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement
 inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second

@@ -63,6 +63,13 @@ double elapsed_msec()
 }
 
 
+//from https://stackoverflow.com/questions/19555121/how-to-get-current-timestamp-in-milliseconds-since-1970-just-the-way-java-gets
+int64_t now_msec()
+{
+    using namespace std::chrono;
+    return /*std::chrono::*/duration_cast</*std::chrono::*/milliseconds>(/*std::chrono::*/system_clock::now().time_since_epoch()).count();
+}
+ 
 #if 0
 class Stopwatch
 {

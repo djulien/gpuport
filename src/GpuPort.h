@@ -1,5 +1,11 @@
 //GPU Port and helpers
 
+//TOFIX:
+//-wnd !blank/painted at start
+//-cache pad NODEBUF
+//-ipc BkgSync
+
+
 //useful refs:
 // https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
 // https://preshing.com/20150316/semaphores-are-surprisingly-versatile/
@@ -7,7 +13,7 @@
 // https://github.com/preshing/cpp11-on-multicore
 //https://github.com/vheuken/SDL-Render-Thread-Example/
 
-//corefile:
+//to get corefiles:
 // https://stackoverflow.com/questions/2065912/core-dumped-but-core-file-is-not-in-current-directory
 // echo "[main]\nunpackaged=true" > ~/.config/apport/settings
 // puts them in /var/crash
@@ -17,24 +23,141 @@
 #ifndef _GPU_PORT_H
 #define _GPU_PORT_H
 
+#if 0
+#include "sdl-helpers.h"
+#include "debugexc.h"
+class AA
+{
+    Uint32 buf[2][5];
+    Uint32 tail;
+public:
+    AA()
+    {
+        debug("this " << sizeof(*this) << ":" << this << ", &buf[0][0] " << &buf[0][0] << ", &buf[0][1] " << &buf[0][1] << ", &buf[1][0] " << &buf[1][0] << ", &buf[2][0] " << &buf[2][0] << ", &tail " << &tail << ", size of item " << sizeof(buf[0][0]) << ", size of row " << sizeof(buf[0]) << ENDCOLOR);
+    }
+};
+class BB
+{
+//    typedef alignas(16) Uint32 row[5];
+//    row buf[2];
+//    struct alignas(16) ROW { Uint32 row[5]; }; ROW buf[2];
+//    typename std::aligned_storage<sizeof(T), alignof(T)>::type data[N];
+    typedef typename std::aligned_storage<sizeof(Uint32), 16>::type ROW[5];
+    ROW buf[2];
+    Uint32 tail;
+public:
+    BB()
+    {
+        debug("this " << sizeof(*this) << ":" << this << ", &buf[0][0] " << &buf[0][0] << ", &buf[0][1] " << &buf[0][1] << ", &buf[1][0] " << &buf[1][0] << ", &buf[2][0] " << &buf[2][0] << ", &tail " << &tail << ", size of item " << sizeof(buf[0][0]) << ", size of row " << sizeof(buf[0]) << ENDCOLOR);
+    }
+};
+class CC
+{
+//    typedef alignas(16) Uint32 row[5];
+//    row buf[2];
+//    struct alignas(16) ROW { Uint32 row[5]; }; ROW buf[2];
+//    typename std::aligned_storage<sizeof(T), alignof(T)>::type data[N];
+    typedef struct { Uint32 row[5]; } ROW;
+//    typedef Uint32 ROW[5];
+    typedef typename std::aligned_storage<sizeof(ROW), 16>::type buf[2];
+    Uint32 tail;
+public:
+    CC()
+    {
+        debug("this " << sizeof(*this) << ":" << this << ", &buf[0][0] " << &buf[0][0] << ", &buf[0][1] " << &buf[0][1] << ", &buf[1][0] " << &buf[1][0] << ", &buf[2][0] " << &buf[2][0] << ", &tail " << &tail << ", size of item " << sizeof(buf[0][0]) << ", size of row " << sizeof(buf[0]) << ENDCOLOR);
+    }
+};
+void unit_test(ARGS& args) { AA test1; BB test2; CC test3; }
+#endif
+#if 0
+#include "debugexc.h"
+#include <mutex>
+#include <string>
+#include <sstream>
+#include <memory> //std::unique_ptr<>
+
+#include "shmalloc.h"
+
+#define static
+#define CONST
+
+template <int NUM = 1>
+class GpuPort_wker
+{
+public:
+    struct shdata
+    {
+    public: //data members
+        const uint32_t init_flag = 0xfeed;
+        int i;
+        std::string s;
+        std::mutex m;
+    public: //operators
+        bool isvalid() const { return (init_flag == 0xfeed); }
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const shdata& that) CONST
+        {
+            ostrm << "{" << sizeof(that) << ": @" << &that;
+            if (!&that) { ostrm << " (NO DATA)"; return ostrm; }
+            if (!that.isvalid()) ostrm << ", init " << std::hex << that.init_flag << " INVALID" << std::dec;
+            ostrm << ", i " << that.i;
+            if (that.isvalid()) ostrm << ", s " << that.s;
+            ostrm << ", #att " << shmnattch(&that);
+            return ostrm;
+        }
+    };
+protected:
+    std::unique_ptr<shdata, std::function<int(shdata*)>> m_ptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+public:
+//        m_nodebuf(shmalloc_typed<SharedInfo/*NODEBUF_FrameInfo*/>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
+    GpuPort_wker(SrcLine srcline = 0): m_ptr(shmalloc_typed<shdata>(0, 1, SRCLINE), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))) //shim; put nodes in shm so multiple procs/threads can render
+    {
+        debug(BLUE_MSG "ptr " << m_ptr.get() << ENDCOLOR);
+        debug(BLUE_MSG "first state: " << *m_ptr.get() << ENDCOLOR);
+        new (m_ptr.get()) shdata; //placement new to init shm in place
+        m_ptr->s = "hello";
+        debug(BLUE_MSG "valid state: " << *m_ptr.get() << ENDCOLOR);
+    }
+    ~GpuPort_wker() { debug(BLUE_MSG "dtor" ENDCOLOR); }
+};
+
+template <int NUM = 1>
+class GpuPort
+{
+public:
+    explicit GpuPort() {}
+    ~GpuPort() {}
+};
+void unit_test(ARGS& args) { GpuPort_wker<> gpwkr; }
+#endif
+//#endif
+//#ifdef WANT_UNIT_TEST
+// #undef WANT_UNIT_TEST
+//#endif
+//#if 0
+
+
 //C++11 implements a lot of SDL functionality in a more C++-friendly way, so let's use it! :)
 #if __cplusplus < 201103L
  #pragma message("CAUTION: this file probably needs c++11 to compile correctly")
 #endif
 
 #include <unistd.h> //sysconf()
-#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
+//#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 #include <functional> //std::function<>, std::bind(), std::ref(), std::placeholders
-#include <type_traits> //std::enable_if<>, std::remove_const<>, std::decay<>
+#include <type_traits> //std::enable_if<>, std::remove_const<>, std::decay<>, std::result_of<>, std::remove_cvref<>
 #include <algorithm> //std::min()
 #include <unistd.h> //usleep()
-#include <thread> //std::thread::get_id()
+#include <thread> //std::thread::get_id(), std::thread()
 #include <bitset>
 #include <mutex>
-#include <condition_variable>
+//#include <condition_variable>
+#include <iostream>
+#include <exception>
+#include <stdexcept>
 
 #include "sdl-helpers.h"
 #include "rpi-helpers.h"
+#include "thr-helpers.h" //thrid(), thinx()
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
 #include "debugexc.h" //debug(), exc()
 #include "srcline.h" //SrcLine, TEMPL_ARGS
@@ -50,8 +173,14 @@
 #endif
 
 
-#ifndef UNCONST
- #define UNCONST(var)  *((typename std::remove_const<decltype(var)>::type*)(&var)) //https://stackoverflow.com/questions/19235496/using-decltype-to-get-an-expressions-type-without-the-const
+//#ifndef UNCONST
+// #define UNCONST(var)  *((typename std::remove_const<decltype(var)>::type*)(&var)) //https://stackoverflow.com/questions/19235496/using-decltype-to-get-an-expressions-type-without-the-const
+//#endif
+
+
+#if __cplusplus < 202000L //pre-C++20 polyfill
+ template <class T>
+ struct remove_cvref { typedef std::remove_cv_t<std::remove_reference_t<T>> type; };
 #endif
 
 
@@ -64,14 +193,10 @@
 #endif
 
 
-////////////////////////////////////////////////////////////////////////////////
-////
-/// High-level interface to GpuPort:
-//
+//#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
 
-#define MHz  *1000000 //must be int for template param; //*1e6
-
-#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA; safely allows 300 LEDs per 20A at "full" (83%) white
+//pad Uint32 array for better memory cache performance:
+#define cache_pad32(len)  cache_pad(len * sizeof(Uint32)) / sizeof(Uint32)
 
 
 //timing constraints:
@@ -91,6 +216,7 @@
 //#define HRES_LIMIT(clock, vres, fps)  ((clock) / (vres) / (fps))
 //#define FPS_LIMIT(clock, hres, vres)  ((clock) / (hres) / (vres))
 //#define CLOCK_LIMIT(hres, vres, fps)  ((hres) * (vres) * (fps))
+#define MHz  *1000000 //must be int for template param; //*1e6
 
 #define CLOCK_CONSTRAINT_2ARGS(hres, nodetime)  ((hres) / (nodetime))
 #define CLOCK_CONSTRAINT_3ARGS(hres, vres, fps)  ((hres) * (vres) * (fps))
@@ -105,128 +231,20 @@
 #define FPS_CONSTRAINT(clock, hres, vres)  ((clock) / (hres) / (vres))
 
 
-#define cache_pad32(len)  cache_pad(len * sizeof(Uint32)) / sizeof(Uint32)
-
-
-////////////////////////////////////////////////////////////////////////////////
-////
-/// IPC/thread stuff:
-//
-
-//TODO: move to shm
-inline auto /*std::thread::id*/ thrid()
-{
-//TODO: add pid for multi-process uniqueness?
-    return std::this_thread::get_id();
-}
-
-//reduce verbosity by using a unique small int instead of thread id:
-int thrinx(const std::thread::id/*auto*/& myid = thrid())
-{
-    static std::vector</*std::decay<decltype(thrid())>*/std::thread::id> ids;
-    static std::mutex mtx;
-    std::unique_lock<decltype(mtx)> lock(mtx);
-
-    for (auto it = ids.begin(); it != ids.end(); ++it)
-        if (*it == myid) return it - ids.begin();
-    int newinx = ids.size();
-    ids.push_back(myid);
-    return newinx;
-}
-
-//STATIC /*friend*/ std::ostream& operator<<(std::ostream& ostrm, const std::thread::id& thrid)
-//{
-//    ostrm << "0x" << std::hex << thrid << std::dec << " ";
-//    return ostrm;
-//}
-
-
-class thread_det: std::thread
-{
-    using super = std::thread;
-public:
-    template <typename ... ARGS>
-    explicit thread_det(ARGS&& ... args): super(std::forward<ARGS>(args) ...) { detach(); } //perfect fwd to ctor, then detach
-};
-
-
-//sync with bkg thread:
-#define DEBUG(desc, srcline)  debug(GREEN_MSG << desc << ENDCOLOR_ATLINE(srcline))
-template <typename VALTYPE = Uint32, bool WANT_DEBUG = false>
-class BkgSync
-{
-    std::atomic<VALTYPE> m_val; //avoid mutex locks except when waiting; //= 0; //init to !busy
-    std::mutex m_mtx;
-//    std::atomic<std::condition_variable> m_cv; //avoid mutex locks except when waiting
-    std::condition_variable m_cv;
-    using LOCK = std::unique_lock<decltype(m_mtx)>;
-//??    using LOCK = std::lock_guard<decltype(m_mtx)>;
-public: //ctors/dtors
-    explicit inline BkgSync(VALTYPE init = 0): m_val(init) {}
-public: //operators
-    inline operator VALTYPE() { return m_val.load(); }
-    inline VALTYPE operator=(VALTYPE newval) { store(newval); return m_val.load(); } //m_val = newval; //m_cv.notify_all();
-    inline VALTYPE operator|=(VALTYPE moreval) { fetch_or(moreval); return m_val.load(); } //m_val |= moreval; //m_cv.notify_all();
-public: //methods
-//make interchangeable with std::atomic<>:
-//TODO: perfect fwd or derive?
-    inline /*VALTYPE*/ auto load() const { return m_val.load(); }
-    inline void store(VALTYPE newval, SrcLine srcline = 0)
-    {
-        if (WANT_DEBUG) DEBUG("= " << newval, srcline);
-        LOCK lock(m_mtx); //NOTE: mutex must be held while var is changed even if atomic, according to https://en.cppreference.com/w/cpp/thread/condition_variable
-//        want_or? m_val |= newval: m_val = newval;
-        VOID m_val.store(newval);
-        notify(srcline);
-    }
-    inline auto fetch_or(VALTYPE bits, SrcLine srcline = 0)
-    {
-        if (WANT_DEBUG) DEBUG("|= " << bits, srcline);
-        LOCK lock(m_mtx); //NOTE: mutex must be held while var is changed even if atomic, according to https://en.cppreference.com/w/cpp/thread/condition_variable
-        VALTYPE retval = m_val.fetch_or(bits);
-        notify(srcline);
-        return retval; //give old value to caller
-    }
-    void notify(SrcLine srcline = 0)
-    {
-        if (WANT_DEBUG) DEBUG("notify all", srcline);
-////        all? m_cv.notify_all(): m_cv.notify_one();
-//        m_cv.notify_all();
-        VOID m_cv.notify_all();
-    }
-    bool wait(VALTYPE want_value = 0, bool blocking = true, SrcLine srcline = 0)
-    {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "bgsync wait for " << want_value << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
-        if (load() == want_value) return true; //no need to wait, already has desired value
-        if (blocking) { LOCK lock(m_mtx); m_cv.wait(lock, [this, want_value]{ return load() == want_value; }); } //filter out spurious wakeups
-        return blocking;
-    }
-};
-#undef DEBUG
-
 #if 0
-//from https://stackoverflow.com/questions/4792449/c0x-has-no-semaphores-how-to-synchronize-threads
-class semaphore
+//static member wrapper:
+//avoids trailing static decl at global scope (helps keep template params DRY)
+template <typename TYPE>
+class StaticMember
 {
-private:
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    unsigned long count_ = 0; // Initialized as locked.
-public:
-    void notify() {
-        std::lock_guard<decltype(mutex_)> lock(mutex_);
-        ++count_;
-        condition_.notify_one();
-    }
-    void wait() {
-        std::unique_lock<decltype(mutex_)> lock(mutex_);
-        while(!count_) condition_.wait(lock); // Handle spurious wake-ups.
-        --count_;
-    }
-    bool try_wait() {
-        std::lock_guard<decltype(mutex_)> lock(mutex_);
-        if(count_) { --count_; return true; }
-        return false;
+public: //ctors/dtors
+    template <typename ... ARGS>
+    explicit StaticMember(ARGS&& ... args): m_value(std::forward<ARGS>(args) ...) {} //perfect fwd; need this to prevent "deleted function" errors
+public: //operators
+    inline operator TYPE&() const //static member wrapper
+    {
+        static TYPE m_value;
+        return m_value;
     }
 };
 #endif
@@ -234,98 +252,7 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////
 ////
-/// Shared header/control info:
-//
-
-
-//header/control info:
-//NOTE: moved out of GpuPort to reduce clutter, but GpuPort is the only consumer
-//placed in shm so all callers/threads can access (mostly read-only, limited writes)
-template<
-    int NUM_UNIV = 24,
-    int NUM_STATS = 4>
-struct FrameInfo //72 bytes; rnd up to 128 bytes for memory cache performance
-{
-public: //data types
-//    class TODO_t; //TODO: use bitmap type for more #univ (h/w mux could)
-//    using /*typename*/ READY_MASK = uint32_t;
-//    using /*typename*/ READY_MASK = std::enable_if<(NUM_UNIV > 32), uint64_t>::type; //SFINAE
-//    using /*typename*/ READY_MASK = std::enable_if<(NUM_UNIV <= 32), uint32_t>::type; //SFINAE
-//    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
-//    typedef std::bitset<NUM_UNIV> MASK_TYPE;
-    typedef uint32_t MASK_TYPE; //TODO: how to handle > 32 univ? (h/w mux)
-//TODO:    using typename READY_MASK = std::enable_if<(NUM_UNIV > 64), uint128_t>::type; //SFINAE
-public: //data members
-    enum class Protocol: int { NONE = 0, DEV_MODE, WS281X};
-//        std::mutex mutex; //TODO: multiple render threads/processes
-    Protocol protocol;
-//    const SDL_Size wh;
-    const double frame_time;
-    const int NumUniv, UnivLen;
-    const std::thread::id owner; //window/renderer owner
-    const elapsed_t started;
-//make these atomic so multiple threads can access changing values without locks:
-//    std::atomic<MASK_TYPE> ready; //= 0; //one Ready bit for each universe; NOTE: need to init to avoid "deleted function" errors
-    BkgSync<MASK_TYPE/*, true*/> dirty; //one Ready bit for each universe
-    std::atomic<uint32_t> numfr; //= 0; //#frames rendered / next frame#
-//        std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
-    uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
-    static const uint32_t FRINFO_MAGIC = 0x12345678;
-    const uint32_t sentinel = FRINFO_MAGIC;
-public: //methods
-//        void init(std::thread::id new_owner)
-//        {
-//            owner = new_owner;
-//            init();
-//        }
-//reset state + stats:
-    void reset(SrcLine srcline = 0)
-    {
-//no; interferes with sync        dirty.store(0, NVL(srcline, SRCLINE));
-        numfr.store(0);
-//            nexttime.store(0);
-        for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
-//            sentinel = FRINFO_MAGIC;
-    }
-//    void owner_init()
-//    {
-//        owner = std::thread::get_id();
-//    }
-public: //operators
-    bool ismine() const { return (owner == thrid()); }//std::thread::get_id(); }
-    bool isvalid() const { return (sentinel == FRINFO_MAGIC); }
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameInfo& that) CONST
-    {
-        ostrm << "{" << sizeof(that) << ": @" << &that;
-        if (!&that) { ostrm << " (NO DATA)"; return ostrm; }
-        if (!that.isvalid()) ostrm << ", magic " << std::hex << that.sentinel << " INVALID" << std::dec;
-        ostrm << ", protocol " << NVL(ProtocolName(that.protocol), "??PROTOCOL??");
-        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
-        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
-//        ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
-        ostrm << ", dirty " << sizeof(that.dirty) << ": " << std::hex << that.dirty.load() << std::dec;
-        ostrm << ", #fr " << that.numfr.load();
-//                ostrm << ", time " << that.nexttime.load();
-        ostrm << ", age " << elapsed(that.started) << " sec";
-        return ostrm;
-    }
-protected: //helpers
-    static inline const char* ProtocolName(Protocol key)
-    {
-        static const std::map<Protocol, const char*> names =
-        {
-            {Protocol::NONE, "NONE"},
-            {Protocol::DEV_MODE, "DEV MODE"},
-            {Protocol::WS281X, "WS281X"},
-        };
-        return unmap(names, key); //names;
-    }
-};
-
-
-////////////////////////////////////////////////////////////////////////////////
-////
-/// Shared node buffer:
+/// Shared header/control info, node buffer:
 //
 
 //    using FrameInfo_pad = char[divup(sizeof(FrameInfo), sizeof(NODEROW))]; //#extra NODEROWs needed to hold FrameInfo; kludge: "using" needs struct/type; use sizeof() to get value
@@ -352,64 +279,191 @@ protected: //helpers
 template<
     int NUM_UNIV, //= (1 << HWMUX) * (IOPINS - HWMUX), //max #univ with external h/w mux
     int UNIV_MAX, //= VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
-    int NUM_STATS, //= 4> //SIZEOF(perf_stats)
-    typename NODEVAL> //= Uint32; //data type for node colors
-//NOTE: moved out of GpuPort to reduce clutter, but GpuPort is the only consumer
-class /*NODEBUF_debug*/SharedInfo //: public SharedInfo_super //NODEBUF_debug_super //std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>
+    int NUM_STATS = 4, //SIZEOF(perf_stats)
+    typename NODEVAL = Uint32> //data type for node colors
+//NOTE: moved out of GpuPort to reduce clutter, but GpuPort/GpuPort_wker are the only consumers (GpuPort_wker is the owner)
+//this struct is placed in shm so it can be shared across processes
+class /*NODEBUF_debug*/GpuPort_shdata //SharedInfo //: public SharedInfo_super //NODEBUF_debug_super //std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>
 {
-public: //types
+//    WithShmHdr
+    ShmHdr shmpad; //kludge: for more accurate alignment
+public: //data types
 //    using NODEBUF = NODEVAL[NUM_UNIV][cache_pad32(UNIV_MAX)]; //NODEROW[NUM_UNIV]; //caller-rendered 2D node buffer (pixels); this is max size (actual size chosen at run-time)
 //    using FRAMEINFO = FrameInfo<NUM_UNIV, NUM_STATS>;
     typedef NODEVAL NODEBUF[NUM_UNIV][cache_pad32(UNIV_MAX)]; //NODEROW[NUM_UNIV]; //caller-rendered 2D node buffer (pixels); this is max size (actual size chosen at run-time)
-    typedef FrameInfo<NUM_UNIV, NUM_STATS> FRAMEINFO;
-    typedef typename FRAMEINFO::MASK_TYPE MASK_TYPE; //kludge: propagate/expose to caller
+//header/control info:
+//NOTE: moved out of GpuPort to reduce clutter, but GpuPort is the only consumer
+//placed in shm so all callers/threads can access (mostly read-only, limited writes)
+//    struct FrameInfo //72 bytes; rnd up to 128 bytes for memory cache performance
+//    {
+//public: //data types
+//    class TODO_t; //TODO: use bitmap type for more #univ (h/w mux could)
+//    using /*typename*/ READY_MASK = uint32_t;
+//    using /*typename*/ READY_MASK = std::enable_if<(NUM_UNIV > 32), uint64_t>::type; //SFINAE
+//    using /*typename*/ READY_MASK = std::enable_if<(NUM_UNIV <= 32), uint32_t>::type; //SFINAE
+    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
+//    typedef std::bitset<NUM_UNIV> MASK_TYPE;
+//        typedef uint32_t MASK_TYPE; //TODO: how to handle > 32 univ? (h/w mux)
+//TODO:    using typename READY_MASK = std::enable_if<(NUM_UNIV > 64), uint128_t>::type; //SFINAE
+public: //data members
+    enum class Protocol: int { NONE = 0, DEV_MODE, WS281X};
+//        std::mutex mutex; //TODO: multiple render threads/processes
+    Protocol protocol; //= WS281X;
+//    const SDL_Size wh;
+    const double frame_time; //msec
+    const SDL_Size wh; //int NumUniv, UnivLen;
+    const /*elapsed_t*/ /*std::result_of<now_msec()>::type*/ decltype(now_msec()) started;
+//make these atomic so multiple threads can access changing values without locks:
+//    std::atomic<MASK_TYPE> ready; //= 0; //one Ready bit for each universe; NOTE: need to init to avoid "deleted function" errors
+    std::atomic</*uint32_t*/ int> numfr; //= 0; //#frames rendered / next frame#
+    BkgSync<MASK_TYPE, true> dirty; //one Ready bit for each universe
+//        std::atomic<uint32_t> nexttime; //= 0; //time of next frame (msec)
+    uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
+    static const uint32_t FRINFO_VALID = 0x12345678;
+    const /*uint32_t*/ /*std::*/remove_cvref<decltype(FRINFO_VALID)>::type sentinel; //= FRINFO_VALID;
+    const /*std::thread::id*/ /*std::result_of<thrid()>::type*/ decltype(thrid()) owner; //window/renderer owner
+//CAUTION: not safe across procs, only threads:
+//    std::exception_ptr excptr; //= nullptr; //TODO: check for thread-safe access
+public: //ctors/dtors
+    explicit GpuPort_shdata(const SDL_Size& wh, double frtime, SrcLine srcline = 0): //need this to prevent "deleted function" errors
+        protocol(Protocol::WS281X),
+        frame_time(frtime),
+        wh(wh),
+        started(now_msec()),
+        sentinel(FRINFO_VALID),
+        owner(thrid())
+//        excptr(nullptr)
+        {
+//no                dirty.store(0); //causes sync
+            reset();
+            INSPECT(GREEN_MSG << "ctor " << *this, srcline);
+        }
+    /*virtual*/ ~GpuPort_shdata() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << commas(elapsed()) << " msec"); } //, m_srcline); } //if (m_inner) delete m_inner; }
+
+public: //methods
+//        void init(std::thread::id new_owner)
+//        {
+//            owner = new_owner;
+//            init();
+//        }
+//reset state + stats:
+    void reset(SrcLine srcline = 0)
+    {
+//no; interferes with sync        dirty.store(0, NVL(srcline, SRCLINE));
+        numfr.store(0);
+//            nexttime.store(0);
+        for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
+//            sentinel = FRINFO_MAGIC;
+    }
+//    void owner_init()
+//    {
+//        owner = std::thread::get_id();
+//    }
+public: //operators
+    bool ismine() const { if (owner != thrid()) debug(YELLOW_MSG "not mine: owner " << owner << " vs. me " << thrid() << ENDCOLOR); return (owner == thrid()); } //std::thread::get_id(); }
+    bool isvalid() const { return (sentinel == FRINFO_VALID); }
+    /*double*/ int elapsed() const { return (now_msec() - started) / 1000; } //.0; }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort_shdata& that) CONST
+    {
+        ostrm << "GpuPort_shdata";
+        if (!&that) { ostrm << " (NO DATA)"; return ostrm; }
+        ostrm << "{" << commas(sizeof(that)) << ": @" << &that;
+        if (!that.isvalid()) ostrm << ", valid " << std::hex << that.sentinel << " INVALID" << std::dec;
+        ostrm << ", protocol " << NVL(ProtocolName(that.protocol), "??PROTOCOL??");
+        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
+        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
+//        ostrm << ", exc " << that.excptr.what(); //that.excptr << " (" <<  << ")"; //= nullptr; //TODO: check for thread-safe access
+//        ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
+        ostrm << ", dirty " << that.dirty; //sizeof(that.dirty) << ": 0x" << std::hex << that.dirty.load() << std::dec;
+        ostrm << ", #fr " << that.numfr.load();
+        ostrm << ", wh " <<that.wh;
+        SDL_Size wh(SIZEOF(that./*shdata.*/nodes), SIZEOF(that./*shdata.*/nodes[0]));
+        ostrm << ", nodes@ " << &that.nodes[0][0] << "..+" << commas(sizeof(that.nodes)) << " (" << wh << ")";
+//                ostrm << ", time " << that.nexttime.load();
+        ostrm << ", age " << /*elapsed(that.started)*/ that.elapsed() << " sec";
+        return ostrm;
+    }
+protected: //helpers
+    static inline const char* ProtocolName(Protocol key)
+    {
+        static const std::map<Protocol, const char*> names =
+        {
+            {Protocol::NONE, "NONE"},
+            {Protocol::DEV_MODE, "DEV MODE"},
+            {Protocol::WS281X, "WS281X"},
+        };
+        return unmap(names, key); //names;
+    }
+//};
+//    typedef FrameInfo<NUM_UNIV, NUM_STATS> FRAMEINFO;
+//    typedef typename FrameInfo::MASK_TYPE MASK_TYPE; //kludge: propagate/expose to caller
 //    using deleter_t = SharedInfo_deleter; //NODEBUF_deleter; //std::function<int(NODEBUF_FrameInfo*)>; //shmfree signature
 //    using super = SharedInfo_super; //NODEBUF_debug_super; //std::unique_ptr<NODEBUF_FrameInfo, deleter_t>; //std::function<int(NODEBUF_FrameInfo*)>>; //NOTE: shmfree returns int, not void
 protected:
 //combine nodes and frame info into one struct for simpler shm mgmt:
-    struct shdata //NODEBUF_FrameInfo
-    {
-        union
-        {
-            FRAMEINFO frinfo; //put frame info < nodes to reduce chance of overwrites with faulty bounds checking
-            char pad[cache_pad(sizeof(FRAMEINFO), true)]; //pad to reduce memory cache contention
-        } frinfo_padded; //TODO: use unnamed element
-        NODEBUF nodes;
-    };
+//    struct shdata //NODEBUF_FrameInfo
+//    {
+//        union padded_info
+//        {
+//            FrameInfo frinfo; //put frame info < nodes to reduce chance of overwrites with faulty bounds checking
+#if 0 //TODO
+    char pad[1]; //TODO: cache_pad(sizeof(FrameInfo), true)]; //pad to reduce memory cache contention
+    typedef typename std::aligned_storage<sizeof(Uint32), 16>::type ROW[5];
+#endif
+//            explicit padded_info() {} //need this to prevent "deleted function" errors
+//            ~padded_info() {} //need this to prevent "deleted function" errors
+//        } frinfo_padded; //TODO: use unnamed element
+//            NODEBUF nodes;
+//        explicit shdata() {} //need this to prevent "deleted function" errors
+//    };
+//    shdata m_shdata;
 //    shdata* m_shmptr;
-    std::unique_ptr<shdata, std::function<int(shdata*)>> m_shmptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+//    std::unique_ptr<shdata, std::function<int(shdata*)>> m_shmptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+public: //data members
+    NODEBUF/*&*/ nodes; //() { return this->get()->nodes; } //CAUTION: "this" needed; compiler forgot about base class methods?
+//    FrameInfo& frinfo; //() { return this->get()->frinfo; }
 public: //ctors/dtors
 //        template <typename ... ARGS>
 //        NODEBUF_debug(ARGS&& ... args):
 //            super(std::forward<ARGS>(args) ...), //perfect fwd; avoids "no matching function" error in ctor init above
-    explicit SharedInfo(key_t shmkey = 0, SrcLine srcline = 0): m_shmptr/*SharedInfo*/(shmalloc_typed<shdata /*SharedInfo NODEBUF_FrameInfo*/>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
+//    explicit /*SharedInfo*/ GpuPort_shdata(key_t shmkey = 0, SrcLine srcline = 0): //: m_shmptr/*SharedInfo*/(shmalloc_typed<shdata /*SharedInfo NODEBUF_FrameInfo*/>(shmkey, /*SIZEOF(nodes) + 1*/ 1, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
 //    SharedInfo /*NODEBUF_debug*/(/*NODEBUF_FrameInfo*/ shdata* ptr, deleter_t deleter): //std::function<void(void*)> deleter):
 //        super(ptr, deleter),
-        nodes(m_shmptr.get()->nodes), //CAUTION: "this" needed; compiler forgot about base class methods?
-        frinfo(m_shmptr.get()->frinfo_padded.frinfo) {}
-public: //data members
-    NODEBUF& nodes; //() { return this->get()->nodes; } //CAUTION: "this" needed; compiler forgot about base class methods?
-    FRAMEINFO& frinfo; //() { return this->get()->frinfo; }
+//hide internal structure, just expose useful items:
+//        nodes(/*m_shmptr.get()*/ this->m_shdata.nodes), //CAUTION: "this" needed; compiler forgot about base class methods?
+//        frinfo(/*m_shmptr.get()->*/ this->m_shdata.frinfo_padded.frinfo)
+//    {
+//NOTE: shmatt clears shm to 0, but that doesn't call ctors
+//use placement new to init shm (call ctors) in place; *first time only*
+//        debug(YELLOW_MSG "GpuPort_shdata ctor: #att %d, init in-place? %d" ENDCOLOR, numatt(), numatt() == 1);
+//        if (numatt() > 1) return;
+//        memset(&frinfo, 0, sizeof(frinfo)); //shmget only clears when shm seg is created; clear it here in case it already existed
+//        new (m_shmptr.get()) shdata(); //apply ctors so shm is really inited in valid state (esp mutex)
+//        INSPECT(GREEN_MSG << "ctor " << *this, srcline);
+//    }
 public: //operators
-    key_t key() const { return shmkey(m_shmptr.get()); } //might have changed; return real key to caller
-    int numatt() const { return shmnattch(m_shmptr.get()); } //#threads/procs using this shm block
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const SharedInfo& that) CONST //NODEBUF_debug& that)
+//    key_t key() const { return shmkey(m_shmptr.get()); } //might have changed; return real key to caller
+//    int numatt() const { return shmnattch(m_shmptr.get()); } //#threads/procs using this shm block
+#if 0
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const /*SharedInfo*/ GpuPort_shdata& that) CONST //NODEBUF_debug& that)
     {
 //            ostrm << "NODEBUF"; //<< my_templargs();
         ostrm << "{" << sizeof(that) << ": @" << &that;
         if (!&that) { ostrm << " (NO DATA)"; return ostrm; }
 //            if (!that.frinfo.isvalid()) ostrm << " INVALID";
-        ostrm << ", key " << std::hex << shmkey(that.m_shmptr.get()) << std::dec;
-        ostrm << ", size " << /*std::dec <<*/ commas(shmsize(that.m_shmptr.get())); //<< " (" << (shmsize(that.get()) / sizeof(NODEROW)) << " rows)";
-        ostrm << ", #attch " << shmnattch(that.m_shmptr.get());
-        ostrm << shmexisted(that.m_shmptr.get())? " existed": " !existed";
-        ostrm << ", nodes@ " << &that.nodes[0][0] << "..+" << commas(sizeof(that.nodes));
+//        ostrm << ", key " << std::hex << shmkey(that.m_shmptr.get()) << std::dec;
+//        ostrm << ", size " << /*std::dec <<*/ commas(shmsize(that.m_shmptr.get())); //<< " (" << (shmsize(that.get()) / sizeof(NODEROW)) << " rows)";
+//        ostrm << ", #attch " << shmnattch(that.m_shmptr.get());
+//        ostrm << shmexisted(that.m_shmptr.get())? " existed": " !existed";
+        SDL_Size wh(SIZEOF(that.shdata.nodes), SIZEOF(that.shdata.nodes[0]));
+        ostrm << ", nodes@ " << &that.nodes[0][0] << "..+" << commas(sizeof(that.nodes)) << " (" << wh << ")";
         ostrm << ", frinfo " << that.frinfo;
 //            ostrm << ", size(frinfo) " << commas(sizeof(that.get()->frinfo_padded.frinfo));
 //            ostrm << ", size(frinfo padded) " << commas(sizeof(that.get()->frinfo_padded));
         ostrm << "}";
         return ostrm; 
     }
+#endif
 };
 
 
@@ -424,14 +478,16 @@ template<
 //    int CLOCK = 52 MHz, //pixel clock speed (constrained by GPU)
 //    int HTOTAL = 1536, //total x res including blank/sync (might be contrained by GPU); 
 //    int FPS = 30, //target #frames/sec
-    int BRIGHTEST, //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+    int MAXBRIGHT, //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //    int IOPINS = 24, //total #I/O pins available (h/w dependent)
 //    int HWMUX = 0, //#I/O pins to use for external h/w mux
     int NODEBITS, //= 24, //# bits to send for each WS281X node (protocol dependent)
     int NUM_UNIV, //= (1 << HWMUX) * (IOPINS - HWMUX), //max #univ with external h/w mux
-    int UNIV_MAX> //= VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
+    int UNIV_MAX, //= VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
+    bool BKG_THREAD = true> //STRICT_OWNER
 class GpuPort_wker
 {
+    InOutDebug m_debug1;
 protected:
 //    using NODEVAL = Uint32; //data type for node colors
 //    using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
@@ -451,36 +507,45 @@ protected:
 //    using SHARED_INFO = SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL>;
     static const int NUM_STATS = SIZEOF(m_txtr.perf_stats);
 public:
-    typedef /*typename*/ SharedInfo<NUM_UNIV, UNIV_MAX, NUM_STATS, NODEVAL> SHARED_INFO;
+//    typedef /*typename*/ SharedInfo<NUM_UNIV, UNIV_MAX, NUM_STATS, NODEVAL> SHARED_INFO;
+//give consumers access to my shm data:
+    typedef GpuPort_shdata<NUM_UNIV, UNIV_MAX, NUM_STATS, NODEVAL> shdata; //SHARED_INFO; //SharedInfo //: public SharedInfo_super //NODEBUF_debug_super //std::unique_ptr<NODEBUF_FrameInfo, std::function<int(NODEBUF_FrameInfo*)>>
 //protected:
 //    using /*NODEBUF =*/ SHARED_INFO::NODEBUF;
 //    using /*typename FRINFO =*/ SHARED_INFO::FRAMEINFO;
-    typedef typename SHARED_INFO::NODEBUF NODEBUF;
-    typedef typename SHARED_INFO::FRAMEINFO FRAMEINFO;
+    typedef shdata FRAMEINFO; //shim
+    typedef typename shdata::NODEBUF NODEBUF;
+//    typedef typename shdata::FrameInfo FRAMEINFO;
     typedef typename FRAMEINFO::Protocol Protocol;
     typedef typename FRAMEINFO::MASK_TYPE MASK_TYPE; //kludge: propagate/expose to caller
 //        enum Protocol: int { NONE = 0, DEV_MODE, WS281X};
     static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
 protected:
 //    SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL> m_nodebuf;
-    SHARED_INFO m_nodebuf;
+//    SHARED_INFO m_nodebuf;
+    InOutDebug m_debug2;
+    std::unique_ptr<shdata, std::function<int(shdata*)>> m_shmptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
 //        Protocol m_protocol;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //    using PERF_STATS = decltype(m_txtr.perf_stats); //double[SIZEOF(txtr_bb.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     elapsed_t perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+    shdata& m_shdata; //m_nodebuf;
+public:
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ m_nodes;
 //    const double& frame_time;
     FRAMEINFO& m_frinfo;
+    InOutDebug m_debug3;
 public: //ctors/dtors:
 //    explicit inline GpuPort_wker(SrcLine srcline = 0): GpuPort_wker(0, 0, 1, srcline) {} //default ctor
 //#define SHARE
-#ifndef SHARE
- #pragma message("!SHARE")
+//#ifndef SHARE
+// #pragma message("!SHARE")
     GpuPort_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey = 0, /*NODEBUF& nodes, FRAMEINFO& frinfo,*/ int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0):
-#else
- #pragma message("SHARE")
-    GpuPort_wker(int screen /*= FIRST_SCREEN*/, /*key_t shmkey = 0,*/ NODEBUF& nodes, FRAMEINFO& frinfo, int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0):
-#endif
+        m_debug1("here1"),
+//#else
+// #pragma message("SHARE")
+//    GpuPort_wker(int screen /*= FIRST_SCREEN*/, /*key_t shmkey = 0,*/ NODEBUF& nodes, FRAMEINFO& frinfo, int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0):
+//#endif
         UNIV_LEN(divup(/*m_cfg? m_cfg->vdisplay: UNIV_MAX*/ ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds.h, vgroup)), //univ len == display height
 //        m_debug2(UNIV_LEN),
         m_wh(/*SIZEOF(bbdata[0])*/ BIT_SLICES /*3 * NODEBITS*/, std::min(UNIV_LEN, UNIV_MAX)), //texture (virtual window) size; kludge: need to init before passing to txtr ctor below
@@ -490,17 +555,24 @@ public: //ctors/dtors:
         m_xfr(std::bind(/*GpuPort::*/xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE))), //memcpy shim
 //            m_protocol(protocol),
 //            m_started(now()),
-#ifndef SHARE
-        m_nodebuf(shmkey, srcline),
-        m_nodes(m_nodebuf.nodes),
-        m_frinfo(m_nodebuf.frinfo),
-#else
-        m_nodes(nodes),
-        m_frinfo(frinfo),
-#endif
+//#ifndef SHARE
+//        m_nodebuf(shmkey, srcline),
+//        m_shmptr/*SharedInfo*/(shmalloc_typed<shdata /*SharedInfo NODEBUF_FrameInfo*/>(shmkey, /*SIZEOF(nodes) + 1*/ 1, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
+        m_debug2("here2"),
+        m_shmptr(shmalloc_typed<shdata>(shmkey/*, 1, NVL(srcline, SRCLINE)*/), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
+        m_shdata(*m_shmptr.get()),
+        m_nodes(m_shdata.nodes),
+        m_frinfo(m_shdata), //.frinfo),
+        m_debug3("here3"),
+//#else
+//        m_nodes(nodes),
+//        m_frinfo(frinfo),
+//#endif
+        m_started(now()),
         m_srcline(srcline)
     {
-debug(YELLOW_MSG "wker: nodes@ " << &m_nodes << ", frinfo@ " << &m_frinfo << ENDCOLOR);
+//        new (&m_nodebuf.frinfo) FRAMEINFO(); //placement new to init shm in place
+//debug(YELLOW_MSG "wker: nodes@ " << &m_nodes << ", frinfo@ " << &m_frinfo << ENDCOLOR);
         const ScreenConfig* const m_cfg = getScreenConfig(screen, NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
 //        if (sizeof(frinfo) > sizeof(nodes[0] /*NODEROW*/)) exc_hard(RED_MSG << "FrameInfo " << sizeof(frinfo) << " too large for node buf row " << sizeof(nodes[0] /*NODEROW*/) << ENDCOLOR_ATLINE(srcline));
         if (!m_cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
@@ -508,28 +580,36 @@ debug(YELLOW_MSG "wker: nodes@ " << &m_nodes << ", frinfo@ " << &m_frinfo << END
         if (UNIV_LEN > UNIV_MAX) exc_soft(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgroup << " require univ len " << UNIV_LEN << " exceeding max " << UNIV_MAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
 //initial shared frame const info:
 //override "const" to allow initial value to be set
-        UNCONST(m_frinfo.frame_time) = m_cfg->frame_time(NVL(srcline, SRCLINE)); //actual refresh rate based on video config (sec)
-        UNCONST(m_frinfo.NumUniv) = NUM_UNIV; //tell caller what the limits are
-        UNCONST(m_frinfo.UnivLen) = UNIV_LEN;
-        UNCONST(m_frinfo.owner) = thrid(); //std::thread::get_id(); //window/renderer owner
-        UNCONST(m_frinfo.started) = now();
-        UNCONST(m_frinfo.sentinel) = FRAMEINFO::FRINFO_MAGIC;
-debug(YELLOW_MSG "here3" ENDCOLOR);
+//        UNCONST(m_frinfo.frame_time) = m_cfg->frame_time(NVL(srcline, SRCLINE)); //actual refresh rate based on video config (sec)
+//        UNCONST(m_frinfo.wh) = SDL_Size(NUM_UNIV, UNIV_LEN); //tell caller what the limits are
+//        UNCONST(m_frinfo.UnivLen) = UNIV_LEN;
+//        UNCONST(m_frinfo.owner) = thrid(); //std::thread::get_id(); //window/renderer owner
+//        UNCONST(m_frinfo.started) = now();
+//        UNCONST(m_frinfo.sentinel) = FRAMEINFO::FRINFO_MAGIC;
+//debug(YELLOW_MSG "here3" ENDCOLOR);
+        memset(&m_frinfo, 0, sizeof(m_frinfo)); //shmget only clears when shm seg is created; clear it here in case it already existed
+//tell caller what the limits are
+//actual refresh rate based on video config (sec)
+        new (&m_shdata) shdata(SDL_Size(NUM_UNIV, UNIV_LEN), m_cfg->frame_time()); //apply ctors so shm is *really* inited to valid state (esp mutex, cv)
 //initialize non-const info to initial state:
 //        m_frinfo.protocol = protocol;
 //        clear_stats();
         m_frinfo.reset(NVL(srcline, SRCLINE)); //marks node buf empty
         m_txtr.perftime(); //kludge: flush perf timer
-debug(YELLOW_MSG "here4" ENDCOLOR);
+//debug(YELLOW_MSG "here4" ENDCOLOR);
+        INSPECT(GREEN_MSG << "ctor " << *this, srcline);
     }
+    /*virtual*/ ~GpuPort_wker() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //if (m_inner) delete m_inner; }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort_wker& that) CONST
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
         ostrm << "GpuPort_wker"; //<< my_templargs();
-        if (!&that) { ostrm << "(NO WKER)"; return ostrm; }
+        if (!&that) { ostrm << " (NO WKER)"; return ostrm; }
 //        ostrm << "\n{cfg " << *that.m_cfg;
         ostrm << "{" << commas(sizeof(that)) << ": @" << &that;
+//        if (that.excptr()) ostrm << ", exc " << that.excptr()->what(); //m_frinfo.excptr->what();
+        if (that.excptr()) ostrm << ", exc " << excstr();
         ostrm << ", wh " << that.m_wh << " (view " << that.m_view << ")";
 //            ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
 //            ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
@@ -537,12 +617,23 @@ public: //operators
 //        ostrm << ", protocol " << NVL(ProtocolName(that.m_protocol), "?PROTOCOL?");
 //            ostrm << ", nodebuf " << that.m_nodebuf; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
+        ostrm << ", nodes@ " << &that.m_nodes;
+        ostrm << ", frinfo@ " << &that.m_frinfo; //client will report frinfo details
         ostrm << ", txtr " << that.m_txtr; //should be 71x1111=78881 on RPi, 71*768=54528 on laptop
 //        ostrm << ", frinfo " << that.frinfo;
+        ostrm << ", age " << elapsed(that.m_started) << " sec";
         ostrm << "}";
         return ostrm; 
     }
 public: //methods
+//check if bkg wker thread is still alive:
+    bool isvalid() const
+    {
+        if (!this) return false;
+//TODO: health check
+//        if (m_shdata.excptr) return false;
+        return true;
+    }
 #if 0
     void fill(NODEVAL color = BLACK, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
     {
@@ -620,12 +711,12 @@ public: //methods
 //    set-ready  -->    wait-ready
 //  }                   encode
 //                    }
-    void bkg_loop(SrcLine srcline = 0)
+    void bkg_proc1req(SrcLine srcline = 0)
     {
         debug(YELLOW_MSG "bkg wker start loop" ENDCOLOR);
-        if (!m_frinfo.ismine()) exc(RED_MSG "only bkg thread should call loop" ENDCOLOR_ATLINE(srcline));
-        for (;;)
-        {
+        if (BKG_THREAD && !m_frinfo.ismine()) exc_soft(RED_MSG "only bkg thread should call proc" ENDCOLOR_ATLINE(srcline));
+//no; allow caller to use loop        for (;;)
+//        {
 //all universes rendered; send to GPU:
 //        bitbang/*<NUM_UNIV, UNIV_LEN,*/(NVL(srcline, SRCLINE)); //encode nodebuf -> xfrbuf
 //        perf_stats[1] = m_txtr.perftime(); //bitbang time
@@ -648,21 +739,109 @@ public: //methods
             if (u) bbdata[y][xofs - 1] = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
         }
 #endif
-            m_frinfo.dirty.wait(ALL_UNIV, NVL(srcline, SRCLINE)); //wait for all universes to be rendered
-            perf_stats[1] = m_txtr.perftime(); //1000); //ipc wait time (msec)
+        m_frinfo.dirty.wait(ALL_UNIV, NVL(srcline, SRCLINE)); //wait for all universes to be rendered
+        perf_stats[1] = m_txtr.perftime(); //1000); //ipc wait time (msec)
 //            m_frinfo.dirty.store(0); //mark node buf empty
 //pivot/encode and send rendered nodes to GPU:
 //            static int count = 0;
 //            if (!count++)
 //            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; printf("here42 ..."); fflush(stdout); _.xfr = m_xfr; printf("here43\n"); fflush(stdout); _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //            else
-            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+//        {
+//            DebugInOut("bkg loop txtr update");
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+//            debug("dirty now %u" ENDCOLOR, m_frinfo.dirty.load());
+//        }
 //printf("here5\n"); fflush(stdout);
 //TODO: fix ipc race condition here:
-            for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
+        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
 //printf("here6\n"); fflush(stdout);
-        }
+//        }
     }
+public: //static methods
+    static inline GpuPort_wker*& wker() //WKER* ptr = 0) //kludge: use wrapper to avoid trailing static decl at global scope (DRY template params)
+    {
+        static GpuPort_wker* m_wker = 0;
+//        if (ptr) m_wker = ptr; //multi-purpose method
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+//        if (excptr()) std::rethrow_exception(excptr());
+        return m_wker;
+    }
+    static inline std::string& excstr() //WKER* ptr = 0) //kludge: use wrapper to avoid trailing static decl at global scope (DRY template params)
+    {
+        static std::string m_excstr;
+        return m_excstr;
+    }
+    static inline std::exception_ptr& excptr() //WKER* ptr = 0) //kludge: use wrapper to avoid trailing static decl at global scope (DRY template params)
+    {
+        static std::exception_ptr m_excptr = nullptr; //nullptr redundant (default init)
+//        if (ptr) m_wker = ptr; //multi-purpose method
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+        if (m_excptr) //caller is going to want desc, so get it also
+            try { std::rethrow_exception(m_excptr); }
+//            catch (...) { excstr = std::current_exception().what(); }
+            catch (const std::exception& exc) { excstr() = exc.what(); }
+            catch (...) { excstr() = "??EXC??"; }
+        return m_excptr;
+    }
+    static void bkg_loop(int screen, key_t shmkey, int vgroup, NODEVAL init_color, SrcLine srcline = 0)
+    {
+//                [screen, /*&nodes, &frinfo,*/ shmkey, vgroup, /*protocol,*/ init_color, srcline]() //, this]()
+        debug(YELLOW_MSG "start bkg thread" ENDCOLOR_ATLINE(srcline));
+//        if (!m_frinfo.ismine()) exc(RED_MSG "only bkg thread should call loop" ENDCOLOR_ATLINE(srcline));
+//                std::unique_ptr<WKER> m_wker;
+//                m_wker.reset(new WKER(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, protocol, init_color, NVL(srcline, SRCLINE))); //open connection to GPU
+//NOTE: pass shmkey so bkgwker can attach shm to its own thread; this allows continuity if caller detaches from shm (avoid crash)
+//#ifndef SHARE
+        try
+        {
+//no: don't destroy when leaves scope                    WKER new_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+//                    wker() = &new_wker;
+            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+            debug(YELLOW_MSG "hello inside" ENDCOLOR);
+//#else
+//                WKER wker(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+//#endif
+            while (!excptr()) wker()->bkg_proc1req(NVL(srcline, SRCLINE)); //allow subscribers to request cancel
+        }
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+        catch (...) { excptr() = std::current_exception(); debug(RED_MSG "bkg wker exc" ENDCOLOR); }
+        debug(YELLOW_MSG "bkg wker exit loop" ENDCOLOR_ATLINE(srcline));
+    }
+//    template<typename ... ARGS>
+//    static inline WKER*& wker(ARGS&& ... args)
+//factory method:
+    static inline GpuPort_wker*& new_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*-/Protocol protocol = /-*FRAMEINFO::*-/Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0)
+    {
+        static std::mutex mtx;
+        using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
+//        static GpuPort_wker* wker = 0;
+        LOCKTYPE lock(mtx);
+//            try { std::rethrow_exception(teptr); }
+//            catch (const std::exception &ex) { std::cerr << "Thread exited with exception: " << ex.what() << "\n"; }
+        if (excptr()) std::rethrow_exception(excptr()); //TODO: more health check
+        if (wker()->isvalid()) return wker(); //already have a bkg wker; don't need another one
+        debug(YELLOW_MSG "need a bkg wker" ENDCOLOR);
+//NOTE: SDL is not thread-safe; need to create wker (and SDL objects) on separate thread
+//        wker() = new WKER(std::forward<ARGS>(args) ...); //perfect fwd
+        if (BKG_THREAD)
+        {
+            std::thread m_bkg(bkg_loop, screen, shmkey, vgroup, init_color, NVL(srcline, SRCLINE)); //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
+            m_bkg.detach(); //async completion; allow bkg thread to outlive caller or to live past scope
+            while (!wker()) { debug(YELLOW_MSG "waiting for new bkg wker" ENDCOLOR); SDL_Delay(.1 sec); } //kludge: wait for bkg wker to init; TODO: use sync/wait
+        }
+        else
+//no: don't destroy when leaves scope                    WKER new_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+//                    wker() = &new_wker;
+            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+        return wker();
+    }
+//    static inline std::exception_ptr& excptr()
+//    {
+//        static std::atomic<std::exception_ptr> excptr = nullptr;
+//        static std::exception_ptr excptr = nullptr; //TODO: check for thread-safe access
+//        return excptr;
+//    }
 //inter-thread/process sync:
 //SDL is not thread-safe; only owner thread is allowed to render to window
 //TODO: use ipc?; causes extra overhead but avoids polling (aside from extraneous wakeups)
@@ -670,7 +849,7 @@ public: //methods
 //            usleep(2000); //2 msec; wait for remaining universes to be rendered (by other threads or processes)
 //TODO        if (NUM_THREAD > 1) wake_others(NVL(srcline, SRCLINE)); //let other threads/processes overwrite nodebuf while xfrbuf is going to GPU
 //    static inline auto /*std::thread::id*/ thrid() { return std::this_thread::get_id(); }
-    int num_threads() { return 1; } //TODO: fix; shmnattch(m_nodebuf.get()); }
+//    int num_threads() { return 1; } //TODO: fix; shmnattch(m_nodebuf.get()); }
 #if 0
     void wait()
     {
@@ -694,7 +873,8 @@ public: //utility methods; exposed in case clients want to use it (shouldn't nee
 //NOTE: A bits are dropped/ignored
     static NODEVAL limit(NODEVAL color)
     {
-        if (!BRIGHTEST || (BRIGHTEST >= 3 * 255)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
+        /*using*/ static const int BRIGHTEST = 3 * 255 * MAXBRIGHT / 100;
+        if (!MAXBRIGHT || (MAXBRIGHT >= 100)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
 //#pragma message "limiting R+G+B brightness to " TOSTR(LIMIT_BRIGHTNESS)
         unsigned int r = R(color), g = G(color), b = B(color);
         unsigned int sum = r + g + b; //max = 3 * 255 = 765
@@ -849,11 +1029,11 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
 //NOTE: xmask loop assumes ARGB or ABGR fmt (A in upper byte)
                     for (uint32_t x = 0, xofs = 0, xmask = NODEVAL_MSB /*1 << (NUM_UNIV - 1)*/; x < NUM_UNIV; ++x, xofs += nodes_wh.h, xmask >>= 1) //inner loop = universe#
                     {
-                        XFRTYPE color_out = gp.m_nodes[x][y]; //[0][xofs + y]; //pixels? pixels[xofs + y]: fill;
+                        XFRTYPE color_out = limit(gp.m_nodes[x][y]); //[0][xofs + y]; //pixels? pixels[xofs + y]: fill;
 //                            if (!A(color) || (!R(color) && !G(color) && !B(color))) continue; //no data to pivot
 //                        if (rbswap) color_out = ARGB2ABGR(color_out); //user-requested explicit R <-> G swap
 //no                            color = ARGB2ABGR(color); //R <-> G swap doesn't need to be automatic for RPi; user can swap GPIO pins
-                        if (BRIGHTEST && (BRIGHTEST < 3 * 255)) color_out = limit(color_out); //limit brightness/power
+//                        if (MAXBRIGHT && (MAXBRIGHT < 100)) color_out = limit(color_out); //limit brightness/power
 //WS281X encoding: 1/3 white, 1/3 data, 1/3 black
 //3x as many x accesses as y accesses, so favor pixels over nodes in memory cache
 //                        /*bbdata[y][xofs + 0]*/ *ptr++ = WHITE;
@@ -901,6 +1081,7 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
         }
 //printf("here9\n"); fflush(stdout);
         ++gp.m_frinfo.numfr;
+//NOTE: do this here so subscribers can work while RenderPresent waits for VSYNC
         gp.m_frinfo.dirty.store(0, NVL(srcline, SRCLINE)); //clear dirty bits; NOTE: this will wake client rendering threads
 //        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
     }
@@ -908,14 +1089,15 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
 protected: //data members
 //    static int m_count = 0;
 //    XFRBUF m_xfrbuf; //just use txtr
-    static inline std::vector<std::thread::id>& waiters() //kludge: use wrapper to avoid trailing static decl at global scope
-    {
-        static std::vector<std::thread::id> m_all;
-        return m_all;
-    }
+//    static inline std::vector<std::thread::id>& waiters() //kludge: use wrapper to avoid trailing static decl at global scope
+//    {
+//        static std::vector<std::thread::id> m_all;
+//        return m_all;
+//    }
 //    const int H;
 //    const ScreenConfig cfg;
 //        const elapsed_t m_started;
+    const elapsed_t m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
 
@@ -931,15 +1113,17 @@ protected: //data members
 //kludge: use template arg as vres placeholder (depends on run-time config info)
 template<
 //settings that must match config (config cannot exceed):
+//put 3 most important constraints first, 4th will be dependent on other 3
 //default values are for my layout
     int CLOCK = 52 MHz, //pixel clock speed (constrained by GPU)
     int HTOTAL = 1536, //total x res including blank/sync (might be contrained by GPU); 
     int FPS = 30, //target #frames/sec
-    int BRIGHTEST = 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+    int MAXBRIGHT = 83, //3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //settings that must match h/w:
     int IOPINS = 24, //total #I/O pins available (h/w dependent)
     int HWMUX = 0, //#I/O pins to use for external h/w mux
-    int NODEBITS = 24, //# bits to send for each WS281X node (protocol dependent)
+    bool BKG_THREAD = true>
+//    int NODEBITS = 24> //# bits to send for each WS281X node (protocol dependent)
 //settings determined by s/w:
 //    typename NODEVAL = Uint32, //data type for node colors
 //    typename XFRTYPE = Uint32, //data type for bit banged node bits (ARGB)
@@ -948,12 +1132,12 @@ template<
 //calculated values based on above constraints:
 //these must be defined here because they affect NODEBUF size and type *at compile-time*
 //they are treated as upper limits, but caller can use smaller values
-    int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX), //max #univ with/out external h/w mux
+//    int NUM_UNIV_hw = (1 << HWMUX) * (IOPINS - HWMUX), //max #univ with/out external h/w mux
 //    int XFRW = NODEBITS * 3 - 1, //last 1/3 of last node bit can overlap hsync so exclude it from display width
 //    int BIT_SLICES = NODEBITS * 3, //divide each node bit into 1/3s (last 1/3 of last node bit will be clipped)
 //    int NODEVAL_MSB = 1 << (NODEBITS - 1),
 //    int XFRW_PADDED = cache_pad(XFRW * sizeof(XFRTYPE)) / sizeof(XFRTYPE),
-    int UNIV_MAX = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
+//    int UNIV_MAX = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS)> //max #nodes per univ
 //    int H_PADDED = cache_pad(UNIV_MAX * sizeof(NODEVAL)) / sizeof(NODEVAL)> //avoid cross-universe memory cache contention
 //, unsigned H_PADDED = cache_pad(H * sizeof(NODEVAL)) / sizeof(NODEVAL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PADDED = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
 //template<unsigned W = 24, unsigned FPS = 30, typename PIXEL = Uint32, unsigned BPN = 24, unsigned HWMUX = 0, unsigned H_PADDED = cache_pad(H * sizeof(PIXEL)) / sizeof(PIXEL)> //unsigned UnivPadLen = cache_pad(H * sizeof(PIXEL)), unsigned H_PADDED = UnivPadLen / sizeof(PIXEL)> //, int BIT_BANGER = none>
@@ -961,12 +1145,16 @@ template<
 //manages shm also
 class GpuPort
 {
+    static const int NODEBITS = 24; //# bits to send for each WS281X node (protocol dependent)
+    static const int NUM_UNIV_hw = (1 << HWMUX) * (IOPINS - HWMUX); //max #univ with/out external h/w mux
+    static const int UNIV_MAX = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ
 //probably a little too much compile-time init, but here goes ...
     using NODEVAL = Uint32; //data type for node colors
     using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
     using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
     static const int BIT_SLICES = NODEBITS * 3; //divide each node bit into 1/3s (last 1/3 of last node bit will be clipped)
-    static const int NODEVAL_MSB = 1 << (NODEBITS - 1);
+    static const unsigned int NODEVAL_MSB = 1 << (NODEBITS - 1);
+    static const unsigned int NODEVAL_MASK = 1 << NODEBITS - 1;
 //public:
 //    DebugThing m_debug2;
 protected: //helper classes + structs
@@ -1017,7 +1205,8 @@ public: //static helper methods
 //    DebugThing m_debug9, m_debug0, m_debug1;
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
 //    using WKER = GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX>;
-    typedef GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX> WKER;
+    typedef GpuPort_wker<MAXBRIGHT, NODEBITS, NUM_UNIV_hw, UNIV_MAX, BKG_THREAD> WKER;
+    WKER* m_wker; //kludge: dummy member to allow inline call to static factory method
 //    using ALL_UNIV = WKER::ALL_UNIV;
 //    WKER* m_wker;
 //    std::unique_ptr<WKER> m_wker;
@@ -1032,26 +1221,26 @@ protected: //data members
 //    const std::function<int(void*)> shmfree_shim; //CAUTION: must be initialized before m_nodebuf
 //    /*NODEBUF_debug*/ SharedInfo m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
 //    using SHARED_INFO = WKER::SHARED_INFO;
-    typedef typename WKER::SHARED_INFO SHARED_INFO;
+    typedef typename WKER::shdata/*SHARED_INFO*/ SHARED_INFO;
 //    SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL> m_nodebuf;
-    SHARED_INFO m_nodebuf;
+//    SHARED_INFO& m_nodebuf;
 //    using NODEBUF = SHARED_INFO::NODEBUF;
 //    using FRAMEINFO = SHARED_INFO::FRAMEINFO;
     typedef typename SHARED_INFO::NODEBUF NODEBUF;
-    typedef typename SHARED_INFO::FRAMEINFO FRAMEINFO;
+    typedef /*typename*/ SHARED_INFO/*::FrameInfo*/ FRAMEINFO;
     typedef typename SHARED_INFO::MASK_TYPE MASK_TYPE;
 //    XFRTYPE bbdata[UNIV_MAX][3 * NODEBITS]; //bit-bang buf; dcl in heap so it doesn't need to be fully re-initialized every time
 //    AutoShmary<FrameInfo, false> m_frinfo; //initialized to 0
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before frame_time (below)
 //    const std::function<void(void*, const void*, size_t)> m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
 public: //data members
-    static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
+    static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV_hw) - 1;
     typedef typename FRAMEINFO::Protocol Protocol;
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ nodes;
 //    const double& frame_time;
     FRAMEINFO& frinfo;
-    const int& NumUniv;
-    const int& UnivLen;
+    const int& NUM_UNIV; //NumUniv;
+    const int& UNIV_LEN; //UnivLen;
     Protocol& protocol;
 //    const std::function<void(void*, const void*, size_t)>& my_xfr_bb; //memcpy signature; TODO: try to use AutoTexture<>::XFR
 //    SDL_AutoTexture<XFRTYPE>::XFR my_xfr_bb; //memcpy signature
@@ -1072,6 +1261,30 @@ public: //data members
 //    }
 //    Protocol m_protocol;
 //    double m_frame_time;
+    struct stats
+    {
+        int numfr;
+//        using elapsed_t = uint32_t;
+        elapsed_t caller_time, wait_time, m_latest;
+    public: //methods
+        inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; }
+        void clear()
+        {
+            numfr = 0;
+            caller_time = wait_time = 0;
+            perftime(); //flush
+        }
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const stats& that) CONST
+        {
+            ostrm << "{#fr " << commas(that.numfr);
+            ostrm << ", caller " << that.caller_time << " (" << (that.numfr? (that.caller_time / that.numfr): 0) << " avg)";
+            ostrm << ", wait " << that.wait_time << " (" << (that.numfr? (that.wait_time / that.numfr): 0) << " avg)";
+            ostrm << "}";
+            return ostrm; 
+        }
+    };
+    stats m_stats;
 public: //ctors/dtors:
     explicit inline GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {} //default ctor
     GpuPort(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*/Protocol protocol = /*FRAMEINFO::*/Protocol::WS281X, NODEVAL init_color = 0, SrcLine srcline = 0):
@@ -1087,14 +1300,16 @@ public: //ctors/dtors:
 //        m_txtr(SDL_AutoTexture<XFRTYPE>::create(NAMED{ _.wh = &m_wh; _.view_wh = &m_view, /*_.w_padded = XFRW_PADDED;*/ _.screen = screen; _.init_color = init_color; _.srcline = NVL(srcline, SRCLINE); })),
 //        m_wker(0), //only create if needed (by first caller)
 //        m_nodebuf(shmalloc_typed<SharedInfo/*NODEBUF_FrameInfo*/>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
-        m_nodebuf(shmkey, srcline),
-        nodes(m_nodebuf.nodes), //expose as property for simpler caller usage; /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
-        frinfo(m_nodebuf.frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
+//        m_nodebuf(shmkey, srcline),
+        m_wker(WKER::new_wker(screen, shmkey, vgroup, init_color, NVL(srcline, SRCLINE))), //create wker if not already; NOTE: must occur before dependent refs below
+//        m_nodebuf(wker()->)
+        nodes(m_wker->m_nodes), //expose as property for simpler caller usage; /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
+        frinfo(m_wker->m_frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
 //        NumUniv(NUM_UNIV), UnivLen(UNIV_LEN), //tell caller what the limits are
 //        frame_time(m_frame_time), //m_cfg->frame_time(NVL(srcline, SRCLINE))), //actual refresh rate based on video config (sec)
 //        m_protocol(protocol),
-        NumUniv(frinfo.NumUniv),
-        UnivLen(frinfo.UnivLen),
+        NUM_UNIV(frinfo.wh.w),
+        UNIV_LEN(frinfo.wh.h),
         protocol(frinfo.protocol),
         m_started(now()),
         m_srcline(srcline)
@@ -1104,7 +1319,7 @@ public: //ctors/dtors:
 //        if (!m_cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
 //        frame_time = cfg->frame_time();
 //        if (UNIV_LEN > UNIV_MAX) exc_soft(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgroup << " require univ len " << UNIV_LEN << " exceeding max " << UNIV_MAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
-        if (/*!m_nodebuf.get() ||*/ !&nodes || !&frinfo) exc_hard(RED_MSG "missing ptrs; shmalloc failed?" ENDCOLOR_ATLINE(srcline));
+        if (!m_wker || !&nodes || !&frinfo) exc_hard(RED_MSG "missing ptrs; wker/shmalloc failed?" ENDCOLOR_ATLINE(srcline));
 //const& broken; kludge: just initialize as var:
 //        m_frame_time = m_cfg->frame_time(NVL(srcline, SRCLINE)); //actual refresh rate based on video config (sec)
 //        m_xfr = std::bind((protocol == WS281X)? /*GpuPort::*/xfr_ws281x: (protocol == DEV_MODE)? xfr_devmode: xfr_raw, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, NVL(srcline, SRCLINE));
@@ -1117,10 +1332,36 @@ public: //ctors/dtors:
 //        const double FPS = (double)m_cfg->dot_clock * 1e3 / m_
 //no        if (/*!shmexisted(m_nodebuf.get()) ||*/ !frinfo.owner)
         frinfo.protocol = protocol; //allow any client to change protocol
+//        clear_stats();
+        m_stats.clear();
+#if 0
         if (m_nodebuf.numatt() == 1) //TODO: || owner thread !exist) //initialize shm and start up wker thread
         {
+//too late            new (m_shmptr.get()) shdata(); //CAUTION: first attached needs to do this immediately so other threads can sync; now shm is really inited
             key_t real_key = m_nodebuf.key(); //might have changed; pass real key to wker
 //            auto bkg = [](){ get_params(params); }; //NOTE: must be captureless, so wrap it
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+#if 0 //rethrow exc from other threads:
+static std::exception_ptr teptr = nullptr;
+void f()
+{
+    try
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        throw std::runtime_error("To be passed between threads");
+    }
+    catch(...) { teptr = std::current_exception(); }
+}
+int main(int argc, char **argv)
+{
+    std::thread mythread(f);
+    mythread.join();
+    if (teptr)
+        try { std::rethrow_exception(teptr); }
+        catch (const std::exception &ex) { std::cerr << "Thread exited with exception: " << ex.what() << "\n"; }
+    return 0;
+}
+#endif
             /*thread_det*/ std::thread m_bkg( //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
             /*m_bkg =*/ [screen, /*&nodes, &frinfo,*/ real_key, vgroup, /*protocol,*/ init_color, srcline, this]()
             {
@@ -1133,11 +1374,12 @@ public: //ctors/dtors:
 #else
                 WKER wker(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
 #endif
-                wker.bkg_loop(NVL(srcline, SRCLINE));
+                wker.bkg_proc(NVL(srcline, SRCLINE));
             });
             m_bkg.detach(); //async completion; allow bkg thread to outlive caller
 //            frinfo.init(thrid()); //init if no owner (take ownership if first attach)
         }
+#endif
 //        debug(YELLOW_MSG << "sizeof(NODEBUF) = " << sizeof(NODEBUF) << " vs. " << sizeof(NODEVAL) << "*" << NUM_UNIV << "*" << H_PADDED << " = " << (sizeof(NODEVAL) * NUM_UNIV * H_PADDED) << ", sizeof(NODEVAL) " << sizeof(NODEVAL) << ", sizeof(node row) " << sizeof(NODEVAL[H_PADDED]) << ", " << m_wh << ENDCOLOR);
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
 //        ready(ALL_UNIV, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible
@@ -1153,7 +1395,7 @@ public: //ctors/dtors:
         }
 #endif
     }
-    /*virtual*/ ~GpuPort() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //if (m_inner) delete m_inner; }
+    /*virtual*/ ~GpuPort() { quit_bkg(); INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //if (m_inner) delete m_inner; }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPort& that) CONST
     {
@@ -1166,11 +1408,13 @@ public: //operators
 //        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
 //        ostrm << ", frinfo #fr " << that.frinfo.numfr << ", time " << that.frinfo.nexttime;
 //        ostrm << ", protocol " << NVL(ProtocolName(that.m_protocol), "?PROTOCOL?");
-        ostrm << ", nodebuf " << that.m_nodebuf; //nodebuf will report frinfo; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
+        ostrm << ", bkg wker " << *WKER::wker(); //use live copy
+        ostrm << ", frinfo " << that.frinfo; //nodebuf will report frinfo; //should be 4*24*1111 = 106,656; //<< ", nodes at ofs " << sizeof(that.nodes[0]);
 //        ostrm << ", xfrbuf[" << W << " x " << V
 //        ostrm << ", txtr " << that.m_txtr; //should be 71x1111=78881 on RPi, 71*768=54528 on laptop
 //        ostrm << ", wker " << *that.m_wker.get();
 //        ostrm << ", bkg " << that.m_bkg; //::get_id();
+        ostrm << ", stats " << that.m_stats;
         ostrm << ", age " << elapsed(that.m_started) << " sec";
         ostrm << "}";
         return ostrm; 
@@ -1189,21 +1433,22 @@ public: //methods
 //        frinfo.nexttime.store(0);
 //        for (int i = 0; i < SIZEOF(perf_stats); ++i) frinfo.times[i] = 0;
         frinfo.reset(); //marks node buf empty
+        m_stats.clear();
 //        m_txtr.perftime(); //kludge: flush perf timer
     }
 //    template <typename ... ARGS>
 //    inline void fill(ARGS&& ... args) { VOID m_wker.get()->fill(std::forward<ARGS>(args) ...); } //perfect fwd
     void fill(NODEVAL color = BLACK, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0)
     {
-        SDL_Rect region(0, 0, NumUniv, UnivLen); //NUM_UNIV /*m_wh.w*/, m_wh.h);
+        SDL_Rect region(0, 0, NUM_UNIV, UNIV_LEN); //NumUniv, UnivLen); //NUM_UNIV /*m_wh.w*/, m_wh.h);
 //        if (!rect) rect = &all;
 //        printf("&rect %p, &region %p\n", rect, &region);
         if (rect)
         {
             region.x = rect->x;
             region.y = rect->y;
-            region.w = std::min(NumUniv, rect->x + rect->w);
-            region.h = std::min(UnivLen, rect->y + rect->h);
+            region.w = std::min(NUM_UNIV, rect->x + rect->w);
+            region.h = std::min(UNIV_LEN, rect->y + rect->h);
         }
 //        printf("region %d %d %d %d\n", region.x, region.y, region.w, region.h);
 //        debug(BLUE_MSG "fill " << region << " with 0x%x" ENDCOLOR_ATLINE(srcline), color);
@@ -1233,10 +1478,14 @@ public: //methods
 //                    }
 //client threads call this after their universes have been rendered
 //CAUTION: for use only by non-wker (client) threads
+//    /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
+//    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
     void ready(MASK_TYPE more = 0, SrcLine srcline = 0) //mark universe(s) as ready/rendered, wait for them to be processed; CAUTION: blocks caller
     {
+        m_stats.caller_time += m_stats.perftime();
 //        InOutDebug("gp.ready(client)");
-        if (frinfo.ismine()) exc(RED_MSG "calling myself ready?" ENDCOLOR_ATLINE(srcline));
+        if (BKG_THREAD && frinfo.ismine()) exc(RED_MSG "calling myself ready?" ENDCOLOR_ATLINE(srcline));
+        if (!WKER::wker()) exc(RED_MSG "no bkg wker" ENDCOLOR_ATLINE(srcline)); //use live copy to chcek
 //printf("here1\n"); fflush(stdout);
 //TODO: mv 2-state perf time to wrapper object; aggregate perf stats across all shm wrappers
 //TODO        perf_stats[0] = m_txtr.perftime(); //caller's render time (sec)
@@ -1252,11 +1501,26 @@ public: //methods
         return (old_dirty | more) == ALL_UNIV;
 #elif 1
         frinfo.dirty.fetch_or(more, SRCLINE); //mark rendered universes; bkg wker will be notified
+        if (!BKG_THREAD) WKER::wker()->bkg_proc1req(NVL(srcline, SRCLINE));
         frinfo.dirty.wait(0, SRCLINE); //wait for node buf to be cleared before rendering more
+        m_stats.wait_time += m_stats.perftime();
+        ++m_stats.numfr;
 #else
         frinfo.dirty |= more;
         frinfo.dirty.wait(0);
 #endif
+    }
+    static void quit_bkg(SrcLine srcline = 0)
+    {
+        debug(YELLOW_MSG "quit_bkg" ENDCOLOR_ATLINE(srcline));
+//http://peterforgacs.github.io/2017/06/25/Custom-C-Exceptions-For-Beginners/
+        struct QuitReqException: public std::exception
+        {
+            const char* what() const throw() { return "Bkg wker quit req"; }
+        };
+//        WKER::wker() = 0; //reset ptr; bkg wker will notice next time thru loop and exit
+        try { throw QuitReqException(); }
+        catch (...) { WKER::excptr() = std::current_exception(); }
     }
 public: //named arg variants
 #if 0
@@ -1930,8 +2194,8 @@ void api_test(ARGS& args)
     gp.clear_stats(); //frinfo.numfr.store(0); //reset frame count
 //    txtr.perftime(); //kludge: flush perf timer
     if (delay_msec) VOID SDL_Delay(delay_msec); //0.1 sec); //kludge: even out timer with loop
-    for (int y = 0, c = 0; y < gp.UnivLen; ++y)
-        for (int x = 0; x < gp.NumUniv; x += 4, ++c)
+    for (int y = 0, c = 0; y < gp.UNIV_LEN; ++y)
+        for (int x = 0; x < gp.NUM_UNIV; x += 4, ++c)
         {
             VOID gp.fill(BKG, NO_RECT, SRCLINE); //use up some CPU time
             Uint32 color = palette[c % SIZEOF(palette)]; //dimARGB(0.25, PINK);
@@ -1941,7 +2205,7 @@ void api_test(ARGS& args)
             desc << "node[" << x << "," << y << "] <- 0x" << std::hex << color << std::dec;
             VOID gpstats(desc.str().c_str(), gp, 100);
             if (delay_msec) SDL_Delay(delay_msec); //0.1 sec);
-            if (SDL_QuitRequested()) { y = gp.UnivLen; x = gp.NumUniv; break; } //Ctrl+C or window close enqueued
+            if (SDL_QuitRequested()) { y = gp.UNIV_LEN; x = gp.NUM_UNIV; break; } //Ctrl+C or window close enqueued
         }
     VOID gpstats("4x pixel text", gp);
     debug(YELLOW_MSG "quit" ENDCOLOR);
@@ -1996,69 +2260,10 @@ void limit_test()
 }
 
 
-std::string info()
-{
-    std::ostringstream ostrm;
-    ostrm << timestamp() /*<< std::hex << "0x"*/ << "thr#" << thrinx() << " (" << thrid() /*<< std::dec*/ << ") ";
-    return ostrm.str();
-}
-
-using SYNCTYPE = BkgSync<uint32_t, true>;
-
-//template <typename SYNCTYPE>
-void fg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int which)
-{
-    DebugInOut(PINK_MSG "FG thr#" << thrinx(), SRCLINE);
-    std::string status;
-    for (int i = 0; i < 3; ++i)
-    {
-        debug(CYAN_MSG << info() << "FG " << status << "set %d" ENDCOLOR, which);
-        for (int bit = 1; which & ~(bit - 1); bit <<= 1)
-            if (which & bit)
-            {
-                SDL_Delay(bit * 0.25 sec);
-                bs.fetch_or(bit, SRCLINE); // |= bit;
-            }
-        debug(CYAN_MSG << info() << "FG now wait for 0" ENDCOLOR);
-        bs.wait(0, SRCLINE);
-        status = "got 0, now ";
-    }
-}
-
-//template <typename SYNCTYPE>
-void bg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
-{
-    DebugInOut(PINK_MSG "bkg thr#" << thrinx(), SRCLINE);
-    std::string status;
-    for (int i = 0; i < 3; ++i)
-    {
-        bs.wait(want, SRCLINE);
-        debug(CYAN_MSG << info() << "BKG got %d, now reset to 0" ENDCOLOR, want);
-        SDL_Delay(0.5 sec);
-        bs.store(0, SRCLINE);
-        debug(CYAN_MSG << info() << "BKG wait for %d" ENDCOLOR, want);
-    }
-}
-
-void sync_test()
-{
-    /*BkgSync<uint32_t, true>*/ SYNCTYPE bs;
-#if 0
-    thread_det wker(bg, std::ref(bs), 7);
-//    wker.detach();
-    fg(std::ref(bs), 7);
-#else
-    thread_det fg1(fg, std::ref(bs), 1), fg2(fg, std::ref(bs), 2), fg3(fg, std::ref(bs), 4);
-    bg(std::ref(bs), 7);
-#endif
-}
-
-
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
     limit_test();
-//    sync_test();
     api_test(args);
     debug(BLUE_MSG << "finish" << ENDCOLOR);
 //    return 0;
