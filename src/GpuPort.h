@@ -1,5 +1,15 @@
 //GPU Port and helpers
 
+//client (2 states): bkg (3+ states):
+//  launch      -->   cre wnd
+//  {                 {
+//    render/collect
+//    set-ready  -->    wait-ready
+//                      encode
+//    wait-!busy <--    set-!busy
+//  }                   xfr+sync-wait
+//                    }
+
 //TOFIX:
 //-wnd !blank/painted at start
 //-cache pad NODEBUF
@@ -167,11 +177,6 @@ void unit_test(ARGS& args) { GpuPort_wker<> gpwkr; }
 #ifndef SIZEOF
  #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 #endif
-
-#ifndef rdiv
- #define rdiv(n, d)  int(((n) + ((d) >> 1)) / (d))
-#endif
-
 
 //#ifndef UNCONST
 // #define UNCONST(var)  *((typename std::remove_const<decltype(var)>::type*)(&var)) //https://stackoverflow.com/questions/19235496/using-decltype-to-get-an-expressions-type-without-the-const
@@ -871,7 +876,8 @@ public: //static methods
 public: //utility methods; exposed in case clients want to use it (shouldn't need to, though)
 //limit brightness:
 //NOTE: A bits are dropped/ignored
-    static NODEVAL limit(NODEVAL color)
+    static NODEVAL limit(NODEVAL color) { return limit<BRIGHTEST>(color); }
+#if 0
     {
         /*using*/ static const int BRIGHTEST = 3 * 255 * MAXBRIGHT / 100;
         if (!MAXBRIGHT || (MAXBRIGHT >= 100)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
@@ -887,6 +893,7 @@ public: //utility methods; exposed in case clients want to use it (shouldn't nee
 //printf("REDUCE: 0x%x, sum %d, R %d, G %d, B %d => r %d, g %d, b %d, 0x%x\n", sv, sum, R(sv), G(sv), B(sv), r, g, b, color);
         return color;
     }
+#endif
 protected: //helpers
 #if 0
 //raw (no formatting) for debug/dev only:

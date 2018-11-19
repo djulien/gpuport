@@ -83,10 +83,20 @@
 #endif
 
 
+#ifndef rdiv
+ #define rdiv(n, d)  int(((n) + ((d) >> 1)) / (d))
+#endif
+
+
 #ifndef clamp
  #define clamp(val, min, max)  ((val) < (min)? (min): (val) > (max)? (max): (val))
 #endif
 //#define clip_255(val)  ((val) & 0xFF)
+
+
+#ifndef pct
+ #define pct(val)  (100 * val)
+#endif
 
 
 //dim/mix/blend values:
@@ -724,6 +734,27 @@ std::ostream& operator<<(std::ostream& ostrm, const SDL_RendererInfo& rinfo)
 //??	if (!Amask(color) /*&& (color & 0xffffff)*/) color |= 0xff000000; //RGB present but no alpha; add full alpha to force color to show
 #define ARGB2ABGR(color)  ((color) & (Amask | Gmask) | (R(color) * Bshift) | (B(color) * Rshift)) //swap R <-> B
 //#define SWAP32(uint32)  ((Amask(uint32) >> 24) | (Rmask(uint32) >> 8) | (Gmask(uint32) << 8) | (Bmask(uint32) << 24))
+
+
+//limit brightness:
+//NOTE: A bits are dropped/ignored
+template<int MAXBRIGHT = pct(50/60), typename COLOR = Uint32> //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+COLOR limit(COLOR color)
+{
+    /*using*/ static const int BRIGHTEST = 3 * 255 * MAXBRIGHT / 100;
+    if (!MAXBRIGHT || (MAXBRIGHT >= 100)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
+//#pragma message "limiting R+G+B brightness to " TOSTR(LIMIT_BRIGHTNESS)
+    unsigned int r = R(color), g = G(color), b = B(color);
+    unsigned int sum = r + g + b; //max = 3 * 255 = 765
+    if (sum <= BRIGHTEST) return color;
+//reduce brightness, try to preserve relative colors:
+    r = rdiv(r * BRIGHTEST, sum);
+    g = rdiv(g * BRIGHTEST, sum);
+    b = rdiv(b * BRIGHTEST, sum);
+    color = /*Abits(color) |*/ (r * Rshift) | (g * Gshift) | (b * Bshift); //| Rmask(r) | Gmask(g) | Bmask(b);
+//printf("REDUCE: 0x%x, sum %d, R %d, G %d, B %d => r %d, g %d, b %d, 0x%x\n", sv, sum, R(sv), G(sv), B(sv), r, g, b, color);
+    return color;
+}
 
 
 //const uint32_t PALETTE[] = {RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE};

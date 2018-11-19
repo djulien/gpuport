@@ -20,38 +20,37 @@
     "url": "git://github.com/djulien/ws281x-gpu.git"
   },
   "gypfile": true,
+  "private": true,
   "bugs": {
     "url": "https://github.com/djulien/gpuport/issues"
   },
   "homepage": "https://github.com/djulien/gpuport",
   "main": "./index.js",
   "scripts": {
-    "test": "node-gyp rebuild && mocha --reporter spec",
-    "build": "node-gyp rebuild --verbose",
-    "clean": "node-gyp clean"
+    "xtest": "node-gyp rebuild && mocha --reporter spec",
+    "xbuild": "node-gyp rebuild --verbose",
+    "xclean": "node-gyp clean"
   },
   "old-dependencies": {
     "bindings": "^1.2.1",
-    "colors": "git+https://github.com/djulien/colors.js.git",
     "debug": "^2.2.0",
     "nan": "^2.2.0",
     "readable-stream": "^2.0.5"
   },
   "old-xxdevDependencies": {
-    "mocha": "^2.1.0"
-  },
-  "dependencies": {
     "nan": "^2.11.1",
-    "node-addon-api": "^1.6.0"
-  },
-  "devDependencies": {
+    "mocha": "^2.1.0",
+    "node-addon-api": "^1.6.0",
     "node-gyp": "^3.8.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "colors": "git+https://github.com/djulien/colors.js.git",
+    "magic-globals": "^0.9.1"
   },
   "demoDependencies": {
     "JSONStream": "^1.3.5",
-    "colors": "git+https://github.com/djulien/colors.js.git",
     "event-stream": "^4.0.1",
-    "magic-globals": "^0.9.1",
     "through2": "^3.0.0",
     "xregexp": "^4.2.0"
   }

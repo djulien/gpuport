@@ -26,8 +26,9 @@ const XRegExp = require("xregexp"); //https://github.com/slevithan/xregexp
 const JSONStream = require('JSONStream'); //https://github.com/dominictarr/JSONStream
 const evtstrm = require('event-stream'); //https://github.com/dominictarr/event-stream
 const thru2 = require("through2"); //https://www.npmjs.com/package/through2
+//const GpuPort = require("")
 elapsed.started = Date.now(); //msec
-extensions(); //hoist to top
+extensions(); //hoist so inline code below can use
 //const str = "{a}\n{b}\n{c}";
 //debug(JSON.stringify(str.splitr(/}\s*{/g, "}}{{")));
 //process.exit();
