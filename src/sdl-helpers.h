@@ -95,7 +95,7 @@
 
 
 #ifndef pct
- #define pct(val)  (100 * val)
+ #define pct(val)  rdiv(200 * val, 2) //NOTE: ridv used for int-only arithmetic (so it can be used as template arg); NOTE: don't enclose val in "()"; want 100* to occur first to delay round-off
 #endif
 
 
@@ -1716,6 +1716,7 @@ protected:
 //#define MAKE_WINDOW  (SDL_Window*)-1
 #define NO_ACCESS  (SDL_TEXTUREACCESS_STREAMING & ~SDL_TEXTUREACCESS_STREAMING)
 #define SDL_TextureAccess  Uint32 //kludge: enum type doesn't allow bitwise arithmetic so override it
+#define NO_REFILL  0
 #define NO_PITCH  0
 #define NO_PERF  0
 #define NO_XFR  0
@@ -1895,8 +1896,11 @@ public: //methods
     inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; }
 //    template <typename XFR> //allow lamba function as param; see https://stackoverflow.com/questions/16111285/how-to-pass-and-execute-anonymous-function-as-parameter-in-c11
 //        VOID memcpy(pxbuf, pixels, xfrlen);
-    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
-    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = NO_PITCH, elapsed_t* perf = NO_PERF, /*XFR&&*/ /*XFR xfr = 0*/ XFR xfr = NO_XFR, SrcLine srcline = 0)
+//    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
+    typedef std::function<void(void* dest, const void* src, size_t len)> XFR; //void* (*XFR)(void* dest, const void* src, size_t len); //NOTE: must match memcpy sig; //decltype(memcpy);
+//    using REFILL = std::function<void(void)>; //mySDL_AutoTexture* txtr)>;
+    typedef std::function<void(mySDL_AutoTexture* txtr)> REFILL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+    void update(const PXTYPE* pixels, const SDL_Rect* rect = NO_RECT, int want_pitch = NO_PITCH, elapsed_t* perf = NO_PERF, /*XFR&&*/ /*XFR xfr = 0*/ XFR xfr = NO_XFR, REFILL refill = NO_REFILL, SrcLine srcline = 0)
     {
 //printf("here10\n"); fflush(stdout);
         SDL_Texture* txtr = get();
@@ -1932,6 +1936,7 @@ public: //methods
 //printf("here14\n"); fflush(stdout);
             VOID SDL_UnlockTexture(txtr);
 #endif
+            if (refill) refill(this); //tell caller buf is available to refill
         }
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
         perf[1] = perftime(); //1000); //CPU-side data xfr time (msec)
@@ -2006,12 +2011,13 @@ public: //named arg variants
             int pitch = NO_PITCH;
             elapsed_t* perf = NO_PERF;
             XFR xfr = NO_XFR; //memcpy;
+            REFILL refill = NO_REFILL; //memcpy;
             SrcLine srcline = 0;
         } params;
 //printf("here20\n"); fflush(stdout);
         unpack(params, named_params);
 //printf("here21\n"); fflush(stdout);
-        VOID update(params.pixels, params.rect, params.pitch, params.perf, params.xfr, params.srcline);
+        VOID update(params.pixels, params.rect, params.pitch, params.perf, params.xfr, params.refill, params.srcline);
 //printf("here22\n"); fflush(stdout);
     }
 //protected: //named arg variant helpers

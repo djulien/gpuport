@@ -360,6 +360,14 @@ public: //methods
         for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
 //            sentinel = FRINFO_MAGIC;
     }
+    void refill()
+    {
+        ++numfr;
+//NOTE: do this here so subscribers can work while RenderPresent waits for VSYNC
+        dirty.store(0, SRCLINE); //clear dirty bits; NOTE: this will wake client rendering threads
+//        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+    }
+//    static void refill(GpuPort_shdata* ptr) { ptr->refill(); }
 //    void owner_init()
 //    {
 //        owner = std::thread::get_id();
@@ -507,8 +515,11 @@ protected:
     const SDL_Size m_wh, m_view; //kludge: need param to txtr ctor; CAUTION: must occur before m_txtr; //(XFRW, UNIV_LEN);
 //    DebugThing m_debug3;
 //kludge: need class member for SIZEOF, so define it up here:
-    /*txtr_bb*/ SDL_AutoTexture<XFRTYPE> m_txtr;
-    const std::function<void(void*, const void*, size_t)> m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
+public:
+    using TXTR = SDL_AutoTexture<XFRTYPE>;
+protected:
+    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr;
+    const /*std::function<void(void*, const void*, size_t)>*/TXTR::XFR m_xfr; //memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
 //    using SHARED_INFO = SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL>;
     static const int NUM_STATS = SIZEOF(m_txtr.perf_stats);
 public:
@@ -525,6 +536,7 @@ public:
     typedef typename FRAMEINFO::MASK_TYPE MASK_TYPE; //kludge: propagate/expose to caller
 //        enum Protocol: int { NONE = 0, DEV_MODE, WS281X};
     static const /*typename FRAMEINFO::*/MASK_TYPE ALL_UNIV = (1 << NUM_UNIV) - 1;
+    typedef typename TXTR::REFILL REFILL;
 protected:
 //    SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL> m_nodebuf;
 //    SHARED_INFO m_nodebuf;
@@ -535,6 +547,8 @@ protected:
 //    using PERF_STATS = decltype(m_txtr.perf_stats); //double[SIZEOF(txtr_bb.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     elapsed_t perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     shdata& m_shdata; //m_nodebuf;
+    const /*std::function<void()>*/ REFILL m_refill; //NOTE: must come after m_shdata
+    static void my_refill(TXTR* ignored, shdata* ptr) { ptr->refill(); }
 public:
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ m_nodes;
 //    const double& frame_time;
@@ -545,7 +559,7 @@ public: //ctors/dtors:
 //#define SHARE
 //#ifndef SHARE
 // #pragma message("!SHARE")
-    GpuPort_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey = 0, /*NODEBUF& nodes, FRAMEINFO& frinfo,*/ int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0):
+    GpuPort_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey = 0, /*NODEBUF& nodes, FRAMEINFO& frinfo,*/ int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, REFILL refill = 0, SrcLine srcline = 0):
         m_debug1("here1"),
 //#else
 // #pragma message("SHARE")
@@ -566,6 +580,7 @@ public: //ctors/dtors:
         m_debug2("here2"),
         m_shmptr(shmalloc_typed<shdata>(shmkey/*, 1, NVL(srcline, SRCLINE)*/), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
         m_shdata(*m_shmptr.get()),
+        m_refill(refill? refill: std::bind(my_refill, std::placeholders::_1, &m_shdata)),
         m_nodes(m_shdata.nodes),
         m_frinfo(m_shdata), //.frinfo),
         m_debug3("here3"),
@@ -754,7 +769,7 @@ public: //methods
 //            else
 //        {
 //            DebugInOut("bkg loop txtr update");
-        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes[0][0]; _.perf = &perf_stats[2 /*SIZEOF(perf_stats) - 4*/]; _.xfr = m_xfr; _.refill = m_refill; _.srcline = NVL(srcline, SRCLINE); }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //            debug("dirty now %u" ENDCOLOR, m_frinfo.dirty.load());
 //        }
 //printf("here5\n"); fflush(stdout);
@@ -789,7 +804,7 @@ public: //static methods
             catch (...) { excstr() = "??EXC??"; }
         return m_excptr;
     }
-    static void bkg_loop(int screen, key_t shmkey, int vgroup, NODEVAL init_color, SrcLine srcline = 0)
+    static void bkg_loop(int screen, key_t shmkey, int vgroup, NODEVAL init_color, REFILL refill = 0, SrcLine srcline = 0)
     {
 //                [screen, /*&nodes, &frinfo,*/ shmkey, vgroup, /*protocol,*/ init_color, srcline]() //, this]()
         debug(YELLOW_MSG "start bkg thread" ENDCOLOR_ATLINE(srcline));
@@ -802,7 +817,7 @@ public: //static methods
         {
 //no: don't destroy when leaves scope                    WKER new_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
 //                    wker() = &new_wker;
-            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, refill, NVL(srcline, SRCLINE)); //open connection to GPU
             debug(YELLOW_MSG "hello inside" ENDCOLOR);
 //#else
 //                WKER wker(screen, /*shmkey(m_nodebuf.get())*/ nodes, frinfo, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
@@ -816,7 +831,7 @@ public: //static methods
 //    template<typename ... ARGS>
 //    static inline WKER*& wker(ARGS&& ... args)
 //factory method:
-    static inline GpuPort_wker*& new_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*-/Protocol protocol = /-*FRAMEINFO::*-/Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0)
+    static inline GpuPort_wker*& new_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*-/Protocol protocol = /-*FRAMEINFO::*-/Protocol::WS281X,*/ NODEVAL init_color = 0, REFILL refill = 0, SrcLine srcline = 0)
     {
         static std::mutex mtx;
         using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
@@ -831,14 +846,14 @@ public: //static methods
 //        wker() = new WKER(std::forward<ARGS>(args) ...); //perfect fwd
         if (BKG_THREAD)
         {
-            std::thread m_bkg(bkg_loop, screen, shmkey, vgroup, init_color, NVL(srcline, SRCLINE)); //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
+            std::thread m_bkg(bkg_loop, screen, shmkey, vgroup, init_color, refill, NVL(srcline, SRCLINE)); //use bkg thread for GPU render to avoid blocking Node.js event loop on main thread
             m_bkg.detach(); //async completion; allow bkg thread to outlive caller or to live past scope
             while (!wker()) { debug(YELLOW_MSG "waiting for new bkg wker" ENDCOLOR); SDL_Delay(.1 sec); } //kludge: wait for bkg wker to init; TODO: use sync/wait
         }
         else
 //no: don't destroy when leaves scope                    WKER new_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
 //                    wker() = &new_wker;
-            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, NVL(srcline, SRCLINE)); //open connection to GPU
+            wker() = new GpuPort_wker(screen, shmkey, vgroup, /*protocol,*/ init_color, refill, NVL(srcline, SRCLINE)); //open connection to GPU
         return wker();
     }
 //    static inline std::exception_ptr& excptr()
@@ -876,7 +891,7 @@ public: //static methods
 public: //utility methods; exposed in case clients want to use it (shouldn't need to, though)
 //limit brightness:
 //NOTE: A bits are dropped/ignored
-    static NODEVAL limit(NODEVAL color) { return limit<BRIGHTEST>(color); }
+    static NODEVAL limit(NODEVAL color) { return ::limit<MAXBRIGHT>(color); }
 #if 0
     {
         /*using*/ static const int BRIGHTEST = 3 * 255 * MAXBRIGHT / 100;
@@ -1087,10 +1102,12 @@ static void xfr_ws281x(GpuPort& gp, void* txtrbuf, const void* nodebuf, size_t x
                 break;
         }
 //printf("here9\n"); fflush(stdout);
+#if 0
         ++gp.m_frinfo.numfr;
 //NOTE: do this here so subscribers can work while RenderPresent waits for VSYNC
         gp.m_frinfo.dirty.store(0, NVL(srcline, SRCLINE)); //clear dirty bits; NOTE: this will wake client rendering threads
 //        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+#endif
     }
 #endif
 protected: //data members
@@ -1152,6 +1169,7 @@ template<
 //manages shm also
 class GpuPort
 {
+public:
     static const int NODEBITS = 24; //# bits to send for each WS281X node (protocol dependent)
     static const int NUM_UNIV_hw = (1 << HWMUX) * (IOPINS - HWMUX); //max #univ with/out external h/w mux
     static const int UNIV_MAX = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ
@@ -1212,7 +1230,10 @@ public: //static helper methods
 //    DebugThing m_debug9, m_debug0, m_debug1;
 //    const ScreenConfig* const m_cfg; //CAUTION: must be initialized before txtr and frame_time (below)
 //    using WKER = GpuPort_wker<BRIGHTEST, NODEBITS, NUM_UNIV, UNIV_MAX>;
+public:
     typedef GpuPort_wker<MAXBRIGHT, NODEBITS, NUM_UNIV_hw, UNIV_MAX, BKG_THREAD> WKER;
+    typedef typename WKER::TXTR TXTR;
+protected:
     WKER* m_wker; //kludge: dummy member to allow inline call to static factory method
 //    using ALL_UNIV = WKER::ALL_UNIV;
 //    WKER* m_wker;
@@ -1229,6 +1250,9 @@ protected: //data members
 //    /*NODEBUF_debug*/ SharedInfo m_nodebuf; //CAUTION: must be initialized before nodes, frinfo (below)
 //    using SHARED_INFO = WKER::SHARED_INFO;
     typedef typename WKER::shdata/*SHARED_INFO*/ SHARED_INFO;
+public:
+    typedef typename WKER::REFILL REFILL;
+protected:
 //    SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL> m_nodebuf;
 //    SHARED_INFO& m_nodebuf;
 //    using NODEBUF = SHARED_INFO::NODEBUF;
@@ -1294,7 +1318,7 @@ public: //data members
     stats m_stats;
 public: //ctors/dtors:
     explicit inline GpuPort(SrcLine srcline = 0): GpuPort(0, 0, 1, srcline) {} //default ctor
-    GpuPort(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*/Protocol protocol = /*FRAMEINFO::*/Protocol::WS281X, NODEVAL init_color = 0, SrcLine srcline = 0):
+    GpuPort(int screen /*= FIRST_SCREEN*/, key_t shmkey /*= 0*/, int vgroup /*= 1*/, /*FRAMEINFO::*/Protocol protocol = /*FRAMEINFO::*/Protocol::WS281X, NODEVAL init_color = 0, REFILL refill = 0, SrcLine srcline = 0):
 //        m_debug0(&thing),
 //        m_debug1(vgroup),
 //        m_cfg(getScreenConfig(screen, NVL(srcline, SRCLINE))), //get this first for screen placement and size default
@@ -1308,7 +1332,7 @@ public: //ctors/dtors:
 //        m_wker(0), //only create if needed (by first caller)
 //        m_nodebuf(shmalloc_typed<SharedInfo/*NODEBUF_FrameInfo*/>(/*SIZEOF(nodes) + 1*/ 1, shmkey, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
 //        m_nodebuf(shmkey, srcline),
-        m_wker(WKER::new_wker(screen, shmkey, vgroup, init_color, NVL(srcline, SRCLINE))), //create wker if not already; NOTE: must occur before dependent refs below
+        m_wker(WKER::new_wker(screen, shmkey, vgroup, init_color, refill, NVL(srcline, SRCLINE))), //create wker if not already; NOTE: must occur before dependent refs below
 //        m_nodebuf(wker()->)
         nodes(m_wker->m_nodes), //expose as property for simpler caller usage; /*static_cast<NODEROW*>*/ &(m_nodebuf.get())[1]), //use first row for frame info
         frinfo(m_wker->m_frinfo), // /*static_cast<FrameInfo*>*/ (m_nodebuf.get())[0]),
@@ -1606,6 +1630,7 @@ public: //named arg variants
             key_t shmkey = 0;
 //            const SDL_Size* wh = NO_SIZE;
             int vgroup = 1; //mostly for DEV/debug to screen, but can be used stretch actual display pixels
+            REFILL refill = 0;
             NODEVAL init_color = BLUE; //BLACK;
             /*typename FRAMEINFO::*/Protocol protocol = Protocol::WS281X;
             SrcLine srcline = 0;
@@ -1620,7 +1645,7 @@ public: //named arg variants
     template <typename CALLBACK>
 //    inline GpuPort(CALLBACK&& named_params): GpuPort(unpack(ctor_params(), named_params), Unpacked{}) {} //perfect fwd to arg unpack
 //kludge: C++ doesn't guarantee order of eval of delegated ctor args, so unpack all:
-    inline GpuPort(CALLBACK&& named_params): GpuPort(ctor_params(named_params).screen, ctor_params(named_params).shmkey, ctor_params(named_params).vgroup, ctor_params(named_params).protocol, ctor_params(named_params).init_color, ctor_params(named_params).srcline) {}
+    inline GpuPort(CALLBACK&& named_params): GpuPort(ctor_params(named_params).screen, ctor_params(named_params).shmkey, ctor_params(named_params).vgroup, ctor_params(named_params).protocol, ctor_params(named_params).init_color, ctor_params(named_params).refill, ctor_params(named_params).srcline) {}
 #endif
 //protected: //named arg variants
 //    inline GpuPort(const CtorParams& params, Unpacked): GpuPort(params.screen, params.shmkey, params.vgroup, params.srcline) {}

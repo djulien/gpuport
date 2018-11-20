@@ -3,7 +3,7 @@
 "use strict";
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
-const {limit, GpuPort} = require('./build/Release/gpuport'); //.node');
+const /*GpuPort*/ {limit, listen} = require('./build/Release/gpuport'); //.node');
 extensions(); //hoist so inline code below can use
 
 //module.exports = gpuport;
@@ -44,26 +44,90 @@ debug(`
     limit blue ${hex(BLUE)} => ${hex(limit(BLUE))}, 
     cyan ${hex(CYAN)} => ${hex(limit(CYAN))},
     white ${hex(WHITE)} => 0x${hex(limit(WHITE))}, //should be reduced
-    ${hex(TB1)} -> ${hex(limit(TB1))}, //should be reduced
-//empty line here
-    ${hex(TB2)} -> ${hex(limit(TB2))} //should be reduced
-    `.unindent(/^\s*/gm).nocomment/*.escnl.nonempty.quote()*/.blue_lt);
+    ${hex(TB1)} => ${hex(limit(TB1))}, //should be reduced
+    ${hex(TB2)} => ${hex(limit(TB2))} //should be reduced
+    ${hex(limit(16777215.5))} //WHITE as float
+    `.unindent(/^\s*/gm).nocomment.nonempty.trimEnd()/*.escnl.quote().*/.blue_lt);
+//    ${limit("16777215")} //WHITE as string
+//    ${limit()} //missing value
+//    ${limit({})} //bad value
 
 //const value = 8;    
 //console.log(`${value} times 2 equals`, GpuPort.my_function(value));
 //console.log(GpuPort.hello());
-//GpuPort.startThread((thePrime) =>
-//{
-//    console.log("Received prime from secondary thread: " + thePrime);
-//    return (++this.count || (this.count = 1)) <= 10;
-//});
+const seqlen = 10;
+const opts =
+{
+};
+var count = 0;
+const gp = listen(opts, (frnum) =>
+{
+    console.log(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments[1]}`);
+    /*if (this.count == 1)*/ console.log("this", typeof this, this);
+    return ++count * 100;
+    return (++count < 10);
+    return (frnum < seqlen); //tell GpuPort when to stop
+});
+console.log("gpu:", typeof gp, gp);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());
+
+//doing something else while listening on gpu port:
+step.debug = false; //true;
+function* main()
+{
+    var seq = 0;
+    for (var i = 0; i < 100/20; ++i)
+    {
+        console.log({value: seq++});
+        yield wait(2000);
+    }
+    return -2;
+}
+//done(step(main)); //sync
+//step(main, done); //async
+function done(retval) { console.log("retval: " + retval); }
+console.log("after main");
+
 
 ///////////////////////////////////////////////////////////////////////////////
 ////
 /// Misc utility/helper functions:
 //
+
+//step thru generator function:
+//cb called async at end
+//if !cb, blocks until generator function exits
+function step(gen, async_cb)
+{
+    if (gen && !gen.next) gen = gen(); //func -> generator
+    step.gen || (step.gen = gen);
+    step.async_cb || (step.async_cb = async_cb);
+//    for (;;)
+//    {
+    var {done, value} = step.gen.next(step.value);
+    if (step.debug) console.log("done? " + done + ", value " + typeof(value) + ": " + value + ", async? " + !!step.async_cb);
+//    if (typeof value == "function") value = value(); //execute wakeup events
+    step.value = value;
+    if (done)
+    {
+        step.gen = null; //prevent further execution
+        if (step.async_cb) step.async_cb(value);
+        return value;
+    }
+}
+
+
+//delay for step/generator function:
+function wait(msec)
+{
+//    if (!step.async_cb)
+//    return setTimeout.bind(null, step, msec); //defer to step loop
+    setTimeout(step, msec);
+//    return msec; //dummy retval for testing
+    return +4; //dummy value for debug
+}
+
 
 function debug(args) { console.log.apply(null, arguments); }
 
@@ -84,7 +148,7 @@ function extensions()
     Object.defineProperties(String.prototype,
     {
         escnl: { get() { return this.replace(/\n/g, "\\n"); }}, //escape all newlines
-        nocomment: { get() { return this.replace(/(#|\/\/).*?$/gm, ""); }}, //strip comments; CAUTION: no parsing
+        nocomment: { get() { return this.replace(/\/\*.*?\*\//gm, "").replace(/(#|\/\/).*?$/gm, ""); }}, //strip comments; multi-line has priority over single-line; CAUTION: no parsing or overlapping
         nonempty: { get() { return this.replace(/^\s*\r?\n/gm , ""); }}, //strip empty lines
         escre: { get() { return this.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }}, //escape all RE special chars
     });

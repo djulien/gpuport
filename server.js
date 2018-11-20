@@ -13,6 +13,7 @@
 //    setInterval(() => resp.write(JSON.stringify({value: seq++}) + '\n'), 1000);
 //}
 
+step.debug = false; //true;
 function* main()
 {
     var seq = 0;
@@ -23,8 +24,8 @@ function* main()
     }
     return -2;
 }
-done(step(main)); //sync
-//step(main, done); //async
+//done(step(main)); //sync
+step(main, done); //async
 function done(retval) { console.log("retval: " + retval); }
 console.log("after");
 
@@ -39,7 +40,7 @@ function step(gen, async_cb)
 //    for (;;)
 //    {
     var {done, value} = step.gen.next(step.value);
-    console.log("done? " + done + ", value " + typeof(value) + ": " + value + ", async? " + !!step.async_cb);
+    if (step.debug) console.log("done? " + done + ", value " + typeof(value) + ": " + value + ", async? " + !!step.async_cb);
 //    if (typeof value == "function") value = value(); //execute wakeup events
     step.value = value;
     if (done)

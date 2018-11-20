@@ -14,9 +14,10 @@
 #include <stdarg.h> //varargs
 #include <string>
 
-#include "msgcolors.h" //MSG_*, ENDCOLOR_*
-#include "str-helpers.h" //NVL()
-#include "elapsed.h" //elapsed_msec()
+//#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+//#include "str-helpers.h" //NVL()
+//#include "thr-helpers.h" //thrid(), thrinx()
+//#include "elapsed.h" //elapsed_msec()
 
 
 //set default if caller didn't specify:
@@ -102,6 +103,13 @@ public: //operators
 #define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
 
 
+//CAUTION: cyclic #includes; put these after #def debug
+#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+#include "str-helpers.h" //NVL()
+#include "thr-helpers.h" //thrid(), thrinx()
+#include "elapsed.h" //elapsed_msec()
+
+
 //display a message:
 //popup + console for dev/debug only
 //NOTE: must come before perfect fwding overloads (or else use fwd ref)
@@ -118,17 +126,20 @@ void myprintf(int level, const char* fmt, ...)
     std::ostringstream tooshort;
     if (needlen >= sizeof(fmtbuf)) tooshort << " (fmt buf too short: needed " << needlen << " bytes) ";
 //    /*if (stm == stderr)*/ printf("%.*s%s%.*s%s!%d%s\n", (int)srcline_ofs, fmtbuf, details.c_str(), (int)(lastcolor_ofs - srcline_ofs), fmtbuf + srcline_ofs, tooshort.str().c_str(), /*shortname*/ Thread::isBkgThread(), fmtbuf + lastcolor_ofs);
+//    const char* tsbuf = timestamp(), endts = strchr(tsbuf, ' ');
+//    if (*tsbuf == '[') ++tsbuf;
+//    if (!endts) endts = tsbuf + strlen(tsbuf);
 //TODO: combine with env/command line options, write to file, etc 
     static std::mutex mtx;
     using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
     LOCKTYPE lock(mtx); //avoid interleaved output
     if (level < 0) //error
     {
-        fprintf(stderr, RED_MSG "%s%s\n" ENDCOLOR_NOLINE, fmtbuf, tooshort.str().c_str()); fflush(stderr);
+        fprintf(stderr, RED_MSG "[%s $%d] %s%s\n" ENDCOLOR_NOLINE, timestamp(true).c_str(), thrinx(), fmtbuf, tooshort.str().c_str()); fflush(stderr);
         if (level == -1) throw std::runtime_error(fmtbuf);
     }
     else //debug
-        printf("%s%s\n", fmtbuf, tooshort.str().c_str());
+        printf("[%s $%d] %s%s\n", timestamp(true).c_str(), thrinx(), fmtbuf, tooshort.str().c_str());
 }
 
 

@@ -89,13 +89,14 @@ private: //data members
 #endif
 
 
-std::string timestamp()
+std::string timestamp(bool undecorated = false)
 {
     std::stringstream ss;
 //    ss << thrid;
 //    ss << THRID;
 //    float x = 1.2;
 //    int h = 42;
+    if (undecorated) { ss << FMT("%4.3f") << elapsed_msec(); return ss.str(); }
     ss << FMT("[%4.3f msec") << elapsed_msec();
 #ifdef IPC_THREAD
     ss << " " << getpid();
