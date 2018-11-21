@@ -69,7 +69,7 @@ void func(int a, SrcLine srcline = 0)
 
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     std::cout << BLUE_MSG /*<<*/ "start" /*<<*/ ENDCOLOR_NEWLINE;
     func(1);

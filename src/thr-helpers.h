@@ -11,9 +11,9 @@
 #include <vector>
 #include <bitset>
 
-#include "srcline.h"
-#include "msgcolors.h"
-#include "debugexc.h"
+//#include "srcline.h"
+//#include "msgcolors.h"
+//#include "debugexc.h"
 
 #ifndef STATIC
  #define STATIC //dummy keyword for readability
@@ -71,6 +71,11 @@ public:
     explicit thread_det(ARGS&& ... args): super(std::forward<ARGS>(args) ...) { detach(); } //perfect fwd to ctor, then detach
 };
 
+
+//put down here to avoid cyclic #include errors (debugexc uses thrid() and thrinx()):
+#include "srcline.h"
+#include "msgcolors.h"
+#include "debugexc.h"
 
 //sync with bkg thread:
 //NOTE: std::mutex, std::condition_variable in shm *cannot* be used across processes (read that Posix ipc not implemented in stl)

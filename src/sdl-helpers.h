@@ -131,23 +131,6 @@ namespace CompileTime //keep separate from run-time functions in math.h
 #endif
 
 
-//lookup table (typically int -> string):
-//use this function instead of operator[] on const maps (operator[] is not const - will add an entry)
-template <typename MAP, typename VAL> //... ARGS>
-inline const char* unmap(MAP&& map, VAL&& value) //Uint32 value) //ARGS&& ... args)
-{
-    return map.count(value)? map.find(value)->second: "";
-}
-//template <typename KEY, typename VAL> //... ARGS>
-//VAL unmap(const std::map<KEY, VAL>& map, VAL&& value)
-//{
-//    return map.count(value)? map.find(value)->second: "";
-//}
-//const std::map<Uint32, const char*> SDL_SubSystems =
-//    SDL_AutoSurface SDL_CreateRGBSurfaceWithFormat(ARGS&& ... args, SrcLine srcline = 0) //UNUSED, TXR_WIDTH, univ_len, SDL_BITSPERPIXEL(fmt), fmt);
-//        return SDL_AutoSurface(::SDL_CreateRGBSurfaceWithFormat(std::forward<ARGS>(args) ...), srcline); //perfect fwd
-
-
 //define lamba function for named args:
 #ifndef NAMED
  #define NAMED  /*SRCLINE,*/ /*&*/ [&](auto& _)

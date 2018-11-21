@@ -365,7 +365,7 @@ private: //data members
 #include "shmalloc.h" //shmalloc(), shmfree(), AutoShmary<>
 
 
-void unit_test()
+void unit_test(ARGS& args)
 {
 #if 0
     void* ptr = shmalloc(100, 0, SRCLINE);

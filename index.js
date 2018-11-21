@@ -4,6 +4,7 @@
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
 const /*GpuPort*/ {limit, listen} = require('./build/Release/gpuport'); //.node');
+//console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
 
 //module.exports = gpuport;
@@ -13,6 +14,27 @@ extensions(); //hoist so inline code below can use
 //const napi = require('node-addon-api');
 //console.log("\nnapi.incl", JSON.stringify(napi.include));
 //console.log("\nnapi.gyp", JSON.stringify(napi.gyp));
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// NAPI test:
+//
+
+// Use the "bindings" package to locate the native bindings.
+const binding = require('./build/Release/gpuport'); //.node');
+
+// Call the function "startThread" which the native bindings library exposes.
+// The function accepts a callback which it will call from the worker thread and
+// into which it will pass prime numbers. This callback simply prints them out.
+binding.startThread((thePrime) =>
+{
+  console.log("cb", `(${typeof this})`, this);
+  ++this.prime_count || (this.prime_count = 1);
+  console.log(`Received prime# ${this.prime_count} from secondary thread: ` + thePrime);
+  return (this.prime_count < 10);
+});
+//process.exit();
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -40,13 +62,14 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
+if (false)
 debug(`
     limit blue ${hex(BLUE)} => ${hex(limit(BLUE))}, 
     cyan ${hex(CYAN)} => ${hex(limit(CYAN))},
     white ${hex(WHITE)} => 0x${hex(limit(WHITE))}, //should be reduced
     ${hex(TB1)} => ${hex(limit(TB1))}, //should be reduced
     ${hex(TB2)} => ${hex(limit(TB2))} //should be reduced
-    ${hex(limit(16777215.5))} //WHITE as float
+    white float => ${hex(limit(16777215.5))} //WHITE as float
     `.unindent(/^\s*/gm).nocomment.nonempty.trimEnd()/*.escnl.quote().*/.blue_lt);
 //    ${limit("16777215")} //WHITE as string
 //    ${limit()} //missing value
@@ -58,22 +81,24 @@ debug(`
 const seqlen = 10;
 const opts =
 {
+    vgroup: 30,
+    color: -1, //0xffff00ff,
 };
 var count = 0;
-const gp = listen(opts, (frnum) =>
+const gp = false && listen(opts, (frnum) =>
 {
     console.log(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments[1]}`);
-    /*if (this.count == 1)*/ console.log("this", typeof this, this);
+    /*if (this.count == 1)*/ console.log("this", `(${typeof this})`, this);
     return ++count * 100;
     return (++count < 10);
     return (frnum < seqlen); //tell GpuPort when to stop
 });
-console.log("gpu:", typeof gp, gp);
+console.log("gpu listen:", `(${typeof gp})`, gp);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());
 
 //doing something else while listening on gpu port:
-step.debug = false; //true;
+//step.debug = true;
 function* main()
 {
     var seq = 0;
@@ -85,9 +110,15 @@ function* main()
     return -2;
 }
 //done(step(main)); //sync
-//step(main, done); //async
+step(main, done); //async
 function done(retval) { console.log("retval: " + retval); }
 console.log("after main");
+
+(function idle()
+{
+    if ((++idle.count || (idle.count = 1)) < 5) setTimeout(idle, 250);
+    console.log("idle", idle.count);
+})();
 
 
 ///////////////////////////////////////////////////////////////////////////////

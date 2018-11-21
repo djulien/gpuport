@@ -43,9 +43,9 @@
 //#define USE_NAN
 //NAPI perf notes: https://github.com/nodejs/node/issues/14379
 
-#define WANT_REAL_CODE
+//#define WANT_REAL_CODE
 //#define WANT_SIMPLE_EXAMPLE
-//#define WANT_CALLBACK_EXAMPLE
+#define WANT_CALLBACK_EXAMPLE
 
 
 #if defined(USE_NAPI)
@@ -59,9 +59,13 @@
  #error Use which Node api?
 #endif
 
+#include <sstream> //std::ostringstream
 #include <utility> //std::forward<>
 #include <string>
-#include <sstream> //std::ostringstream
+//#include <map> //std::map<>
+#include "str-helpers.h" //unmap()
+#include "thr-helpers.h" //thrnx()
+#include "msgcolors.h"
 
 #if __cplusplus < 201103L
  #pragma message("CAUTION: this file probably needs c++11 or later to compile correctly")
@@ -100,14 +104,14 @@ std::string NAPI_ErrorMessage(napi_env env)
     std::ostringstream ss;
     const napi_extended_error_info* errinfo;
     if (napi_get_last_error_info(env, &errinfo) != napi_ok) ss << "Can't get error " << NAPI_LastStatus << " info!";
-    else ss << errinfo->error_message << " (errcode " << errinfo->error_code << ", " << NAPI_LastStatus << ")";
+    else ss << errinfo->error_message << " (errcode " << errinfo->error_code << ", status " << NAPI_LastStatus << ", thr# " << thrinx() << ")";
     return ss.str(); //NOTE: returns stack var by value, not by ref
 }
 
 //TODO: add SRCLINE
 #define NAPI_exc_1ARG(msg)  NAPI_exc_2ARGS(DEF_ENV, msg)
 #define NAPI_exc_2ARGS(env, msg)  NAPI_exc_3ARGS(env, NO_ERRCODE, msg)
-#define NAPI_exc_3ARGS(env, errcode, msg)  (napi_throw_error(env, errcode, std::ostringstream() << msg), false) //dummy "!okay" result to allow usage in conditional expr; throw() won't fall thru at run-time, though
+#define NAPI_exc_3ARGS(env, errcode, msg)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), false) //dummy "!okay" result to allow usage in conditional expr; throw() won't fall thru at run-time, though
 #define NAPI_exc(...)  UPTO_3ARGS(__VA_ARGS__, NAPI_exc_3ARGS, NAPI_exc_2ARGS, NAPI_exc_1ARG) (__VA_ARGS__)
 inline napi_status napi_throw_error(napi_env env, const char* errcode, std::/*ostringstream*/ostream& errmsg)
 {
@@ -134,20 +138,82 @@ inline napi_status napi_throw_error(napi_env env, const char* errcode, std::/*os
 //}
 
 
-//for debug or error msgs:
-struct { napi_env env; napi_value value; } napi_valenv;
-friend std::ostream& operator<<(std::ostream& ostrm, const napi_valenv& napval)
+static inline const char* TypeName(napi_valuetype key)
 {
-    int str_len;
+    static const std::map<napi_valuetype, const char*> names =
+    {
+        {napi_undefined, "undef"},
+        {napi_null, "null"},
+        {napi_boolean, "bool"},
+        {napi_string, "string"},
+        {napi_number, "number"},
+//TODO if needed:
+//napi_symbol,
+//napi_object,
+//napi_function,
+//napi_external,
+//napi_bigint,
+    };
+    return unmap(names, key); //names;
+}
+
+//kludge: composite object for operator<< specialization:
+struct napi_thingy
+{
+    napi_env env;
+    napi_value value;
+public: //ctors/dtors
+    explicit napi_thingy() {}
+    napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {}
+public: //operators
+    inline operator napi_env() const { return env; }
+    inline operator napi_value() const { return value; }
+};
+//napi_thingy;
+
+napi_valuetype valtype(napi_env env, napi_value value)
+{
+    napi_valuetype valtype;
+    !NAPI_OK(napi_typeof(env, value, &valtype), "Get val type failed");
+    return valtype;
+}
+napi_valuetype valtype(napi_thingy napval) { return valtype(napval.env, napval.value); }
+
+
+//template <typename napi_status (*getval)
+napi_status get_prop(napi_env env, napi_value obj, const char* name, bool* has_prop, napi_value* valp)
+{
+//    bool has_prop;
+//    napi_value prop_val;
+    if (!NAPI_OK(napi_has_named_property(env, obj, name, has_prop)) || !*has_prop) return NAPI_LastStatus;
+    return napi_get_named_property(env, obj, name, valp);
+}
+//type-specific overloads:
+napi_status get_prop(napi_env env, napi_value obj, const char* name, int32_t* valp)
+{
+    bool has_prop;
+    napi_value prop_val;
+    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
+    return napi_get_value_int32(env, prop_val, valp);
+}
+napi_status get_prop(napi_env env, napi_value obj, const char* name, uint32_t* valp)
+{
+    bool has_prop;
+    napi_value prop_val;
+    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
+    return napi_get_value_uint32(env, prop_val, valp);
+}
+
+
+//for debug or error msgs:
+std::ostream& operator<<(std::ostream& ostrm, const napi_thingy& napval)
+{
     bool bool_val;
+    size_t str_len;
     char str_val[200];
     double float_val;
-    napi_valuetype vtype;
-    !NAPI_OK(napi_typeof(napval.env, napval.value, &vtype), napval.env, "Get typeof failed");
-    switch (vtype)
+    switch (valtype(napval))
     {
-        case napi_undefined: ostrm << "napi undef"; break;
-        case napi_null: ostrm << "napi null"; break;
         case napi_boolean:
             !NAPI_OK(napi_get_value_bool(napval.env, napval.value, &bool_val), napval.env, "Get bool value failed");
             ostrm << "napi bool " << bool_val;
@@ -158,8 +224,13 @@ friend std::ostream& operator<<(std::ostream& ostrm, const napi_valenv& napval)
             ostrm << "napi str " << str_len << ": '" << str_val << "'";
             break;
         case napi_number:
-            !NAPI_OK(napi_get_value_numbernapval.env, napval.value, &float_val), napval.env, "Get number value failed");
+            !NAPI_OK(napi_get_value_double(napval.env, napval.value, &float_val), napval.env, "Get number value failed");
             ostrm << "napi number " << float_val;
+            break;
+//valueless types:
+        case napi_null:
+        case napi_undefined:
+            ostrm << "napi " << NVL(TypeName(valtype(napval)), "??TYPE??");
             break;
 //TODO if needed:
 //napi_symbol,
@@ -167,7 +238,7 @@ friend std::ostream& operator<<(std::ostream& ostrm, const napi_valenv& napval)
 //napi_function,
 //napi_external,
 //napi_bigint,
-        default: ostrm << "napi type " << vtype; break;
+        default: ostrm << "napi type " << valtype(napval); break;
     }
     return ostrm;
 }
@@ -198,36 +269,6 @@ using GPUPORT = GpuPort
 //#define LIMIT  limit<pct(50/60)> //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
 //using GPUPORT = GpuPort<> gp/* = GpuPort<>::factory*/(NAMED{ _.screen = screen; _.vgroup = vgroup; /*_.wh = wh*/; _.protocol = static_cast<GpuPort<>::Protocol>(protocol) /*GpuPort<>::NONE WS281X*/; _.init_color = dimARGB(0.25, RED); SRCLINE; }); //NAMED{ .num_univ = NUM_UNIV, _.univ_len = UNIV_LEN, SRCLINE});
 
-//limit brightness:
-//NOTE: JS <-> C++ overhead is significant for this function
-//it's probably better to just use a pure JS function for high-volume usage
-napi_value Limit_NAPI(napi_env env, napi_callback_info info)
-{
-    napi_value argv[1], This;
-    size_t argc = SIZEOF(argv);
-//    napi_status status;
-    void* aodata;
-  // Retrieve the JavaScript callback we should call with items generated by the
-  // worker thread, and the per-addon data.
-//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
-    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Get cb info extract failed");
-//    if (argc < 1) 
-//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
-//    char str[1024];
-//    size_t str_len;
-//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
-//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
-//    Napi::String str = Napi::String::New(env, )
-    Uint32 color; //= BLACK;
-    !NAPI_OK(napi_get_value_uint32(env, argv[0], &color), "Invalid uint32 arg");
-//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
-    color = GPUPORT::limit(color); //actual work done here; the rest is overhead :(
-    napi_value retval;
-    !NAPI_OK(napi_create_uint32(env, color, &retval), "Retval failed");
-    return retval;
-}
-
-
 //below loosely based on object_wrap and async_work_thread_safe_function examples at https://github.com/nodejs/node-addon-examples.git
 //#include <assert.h>
 //#include <stdlib.h>
@@ -235,22 +276,42 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 
 typedef struct aodata
 {
-    int valid = VALID;
+    const int valid1 = VALID;
     static const int VALID = 0x1234beef;
 //    int frnum;
 //    int the_prime;
     GPUPORT* gpu_port = 0;
-    bool want_continue;
+    struct { int numfr; } gpdata;
+//    napi_value junk1;
+//    bool want_continue;
+//    napi_value junk2;
 //    napi_ref gpwrap;
-    struct { int x; bool y; int numfr; } gpdata;
 //    GPUPORT::SHAREDINFO gpdata;
   //  GPUPORT::WKER* wker;
 //    std::thread wker; //kludge: force thread affinity by using explicit thread object
-    /*napi_async_work*/ void* work = NULL;
+    struct { napi_thingy obj; napi_ref ref; bool busy = false; } listener;
+//    /*napi_async_work*/ void* work = NULL;
     napi_threadsafe_function fats; //tsfn; //asynchronous thread-safe JavaScript call-back function
-    napi_ref aoref; //ref to wrapped version of this object
+//    napi_ref aoref; //ref to wrapped version of this object
+    const int valid2 = VALID;
+public: //ctors/dtors
+    explicit aodata(napi_env env)
+    {
+        listener.obj.env = env;
+        !NAPI_OK(napi_get_undefined(listener.obj.env, &listener.obj.value), "Get undef failed");
+        listener.busy = false;
+    }
+    ~aodata()
+    {
+        listener.busy = false;
+        if (valtype(listener.obj) != napi_undefined)
+            !NAPI_OK(napi_delete_reference(listener.obj.env, listener.ref), listener.obj.env, "Del ref failed");
+        !NAPI_OK(napi_get_undefined(listener.obj.env, &listener.obj.value), listener.obj.env, "Get undef failed");
+        if (gpu_port) delete gpu_port; //close at playlist end, not after each sequence
+        gpu_port = 0;
+    }
 public: //methods
-    bool isvalid() const { return this && (valid == VALID); }
+    bool isvalid() const { return this && (valid1 == VALID) && (valid2 == VALID); }
 } AddonData;
 
 
@@ -283,6 +344,39 @@ private:
 #endif
 
 
+//limit brightness:
+//NOTE: JS <-> C++ overhead is significant for this function
+//it's probably better to just use a pure JS function for high-volume usage
+napi_value Limit_NAPI(napi_env env, napi_callback_info info)
+{
+    AddonData* aodata;
+    napi_value argv[1], This;
+    size_t argc = SIZEOF(argv);
+//    napi_status status;
+  // Retrieve the JavaScript callback we should call with items generated by the
+  // worker thread, and the per-addon data.
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+    if (!env) return NULL; //Node in clean up mode?
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Get cb info extract failed");
+    if (argc > 1) NAPI_exc("expected color param, got " << argc << " params");
+    if (!aodata->isvalid()) NAPI_exc("aodata invalid"); //doesn't matter here, but check anyway
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+    Uint32 color; //= BLACK;
+    !NAPI_OK(napi_get_value_uint32(env, argv[0], &color), "Invalid uint32 arg");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+    color = GPUPORT::limit(color); //actual work done here; the rest is overhead :(
+    napi_value retval;
+    !NAPI_OK(napi_create_uint32(env, color, &retval), "Retval failed");
+    return retval;
+}
+
+
 #if 0
 typedef struct
 {
@@ -311,39 +405,45 @@ public: //ctors/dtors:
 
 
 //convert results from wker thread to napi and pass to JavaScript callback:
-static void Listen_cb(napi_env env, napi_value js_fats, void* context, void* data)
+//NOTE: this executes on Node main thread only
+static void Listen_cb(napi_env env, napi_value js_func, void* context, void* data)
 {
     UNUSED(context);
   // Retrieve the prime from the item created by the worker thread.
 //    int the_prime = *(int*)data;
     AddonData* aodata = static_cast<AddonData*>(data);
+    if (!aodata->isvalid()) NAPI_exc("aodata invalid");
+    if (!aodata->listener.busy) NAPI_exc("not listening");
   // env and js_cb may both be NULL if Node.js is in its cleanup phase, and
   // items are left over from earlier thread-safe calls from the worker thread.
   // When env is NULL, we simply skip over the call into Javascript and free the
   // items.
 //    debug(CYAN_MSG "cb %p" ENDCOLOR, aodata);
-    if (!env) return; // != NULL)
+    if (!env) return; //Node in clean up state
 //    {
-    napi_valenv retval; retval.env = env;
-    napi_value argv[1], /*retval,*/ bool_retval, This;
+//    napi_thingy retval; retval.env = env;
+    napi_value argv[1], retval, bool_retval, This;
 // Convert the integer to a napi_value.
     !NAPI_OK(napi_create_int32(env, aodata->gpdata.numfr, &argv[0]), "Create arg failed");
 //        !NAPI_OK(napi_get_undefined(env, &argv[1]), "Create null this failed");
   //  !NAPI_OK(napi_create_int32(env, aodata->the_prime, &argv[1]), "Create arg[1] failed"); //TODO: get rid of
 // Retrieve the JavaScript `undefined` value so we can use it as the `this`
 // value of the JavaScript function call.
-//        !NAPI_OK(napi_get_undefined(env, &This), "Create null this failed");
+    !NAPI_OK(napi_get_undefined(env, &This), "Create null this failed");
 // Call the JavaScript function and pass it the prime that the secondary
 // thread found.
-    debug(BLUE_MSG "cb: call fats" ENDCOLOR);
-    !NAPI_OK(napi_call_function(env, /*aodata->gpwrap*/This, js_fats, SIZEOF(argv), argv, &retval.value), "Call JS fats failed");
+//    !NAPI_OK(napi_get_global(env, &This), "Get global failed");
+    debug(BLUE_MSG "cb: call fats, context %p, data %p" ENDCOLOR, context, data);
+    !NAPI_OK(napi_call_function(env, /*aodata->listener.obj*/This, js_func, SIZEOF(argv), argv, &retval), "Call JS fats failed");
 //    debug(BLUE_MSG "cb: check fats retval" ENDCOLOR);
 //        /*int32_t*/ bool want_continue;
-    INSPECT(GREEN_MSG << "retval " << retval << ENDCOLOR);
-    !NAPI_OK(napi_coerce_to_bool(env, retval.value, &bool_retval), "Can't get JS fats retval as bool");
-//    debug(BLUE_MSG "cb: get bool %p" ENDCOLOR, aodata);
-    !NAPI_OK(napi_get_value_bool/*int32*/(env, bool_retval, &aodata->want_continue), "Can't get JS fats bool retval");
-    debug(BLUE_MSG "js fats: continue? %d" ENDCOLOR, aodata->want_continue);
+    INSPECT(GREEN_MSG << "retval " << napi_thingy(env, retval) << ENDCOLOR);
+//static int count = 0; aodata->want_continue = (count++ < 7); return;
+    !NAPI_OK(napi_coerce_to_bool(env, retval, &bool_retval), "Can't get JS fats retval as bool");
+    debug(BLUE_MSG "cb: get bool %p" ENDCOLOR, aodata);
+    !NAPI_OK(napi_get_value_bool/*int32*/(env, bool_retval, &aodata->listener.busy), "Can't get JS fats bool retval");
+    debug(BLUE_MSG "js fats: continue? %d" ENDCOLOR, aodata->listener.busy);
+//NOTE: bkg thread will respond to busy resest
 //    }
 //    if (!aodata->want_continue) //tell NAPI js fats will no longer be used
 //        !NAPI_OK(napi_release_threadsafe_function(aodata->fats, napi_tsfn_release), "Can't release JS fats");
@@ -432,46 +532,19 @@ void gpdata_dtor(napi_env env, void* nativeObject, void* hint)
 #endif
 
 
-void my_refill(GPUPORT::TXTR* ignored, AddonData* aodata)
+#if 0
+void my_refill(napi_env env, AddonData* aodata, GPUPORT::TXTR* ignored)
 {
-    napi_env env;
 //    debug(CYAN_MSG "refill: get ctx" ENDCOLOR);
-    if (!NAPI_OK(napi_get_threadsafe_function_context(aodata->fats, (void**)&env))) //what to do?
-    {
-        debug(BLUE_MSG "cant get fats env" ENDCOLOR);
-        return;
-    }
+//    !NAPI_OK(napi_get_threadsafe_function_context(aodata->fats, (void**)&env), "Get fats env failed"); //what to do?
     if (!aodata->isvalid()) NAPI_exc("aodata invalid");
+//    if (!env) return; //Node in clean up state
 //TODO: blocking or non-blocking?
 //    debug(BLUE_MSG "refill: call cb" ENDCOLOR);
     !NAPI_OK(napi_call_threadsafe_function(aodata->fats, aodata, napi_tsfn_blocking), "Can't call JS fats");
-    ++aodata->gpdata.numfr;
+    ++aodata->gpdata.numfr; //prep for next frame
 }
-
-
-//template <typename napi_status (*getval)
-napi_status get_prop(napi_env env, napi_value obj, const char* name, bool* has_prop, napi_value* valp)
-{
-//    bool has_prop;
-//    napi_value prop_val;
-    if (!NAPI_OK(napi_has_named_property(env, obj, name, has_prop)) || !*has_prop) return NAPI_LastStatus;
-    return napi_get_named_property(env, obj, name, valp);
-}
-//type-specific overloads:
-napi_status get_prop(napi_env env, napi_value obj, const char* name, int32_t* valp)
-{
-    bool has_prop;
-    napi_value prop_val;
-    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
-    return napi_get_value_int32(env, prop_val, valp);
-}
-napi_status get_prop(napi_env env, napi_value obj, const char* name, uint32_t* valp)
-{
-    bool has_prop;
-    napi_value prop_val;
-    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
-    return napi_get_value_uint32(env, prop_val, valp);
-}
+#endif
 
 
 // Create a thread-safe function and an async queue work item. We pass the
@@ -481,78 +554,129 @@ napi_status get_prop(napi_env env, napi_value obj, const char* name, uint32_t* v
 //main entry point for this add-on:
 static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 {
+    AddonData* aodata;
     napi_value argv[2], This; //*This_DONT_CARE = NULL;
     size_t argc = SIZEOF(argv);
-    AddonData* aodata;
   // Retrieve the JavaScript callback we should call with items generated by the
   // worker thread, and the per-addon data.
+    if (!env) return NULL; //Node in clean up mode?
     !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Get cb info extract failed");
-    debug(CYAN_MSG "listen: aodata %p" ENDCOLOR, aodata);
+    debug(CYAN_MSG "listen: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
     if ((argc < 1) || (argc > 2)) NAPI_exc("expected [{opts}], cb() params, got " << argc << " params");
     if (!aodata->isvalid()) NAPI_exc("aodata invalid");
-    if (aodata->work) NAPI_exc("Already listening (only one work item must exist at a time)"); //check if que empty
-    if (aodata->gpu_port) NAPI_exc("Gpu port already open");
+    if (aodata->listener.busy) NAPI_exc("Already listening (single threaded for now)"); //check if que empty
+//ok    if (aodata->gpu_port) NAPI_exc("Gpu port already open");
+
+//create listener's "this" object for use with js callback function:
+    if (valtype(aodata->listener.obj) == napi_undefined) //create new object if none previous
+    {
+        void* NO_HINT = NULL; //optional finalize_hint
+//    napi_ref* NO_REF = NULL; //optional ref to wrapped object
+        napi_finalize NO_FINAL = 0; //module finalize will delete add-on data; no need to do it again here
+//    napi_value listener_obj;
+        debug(BLUE_MSG "cre listener obj" ENDCOLOR);
+        !NAPI_OK(napi_create_object(env, &aodata->listener.obj.value), "Cre obj failed");
+//BROKEN:
+        !NAPI_OK(napi_wrap(env, aodata->listener.obj.value, aodata, NO_FINAL, NO_HINT, &aodata->listener.ref), "Wrap listen obj failed"); //NOTE: weak ref
+    }
+
+//create thread-safe wrapper for caller's callback function:
   // Convert the callback retrieved from JavaScript into a thread-safe function
   // which we can call from a worker thread.
+    const napi_value NO_RESOURCE = NULL; //optional, for init hooks
+    const int QUE_NOMAX = 0; //no limit; TODO: should this be 1 to prevent running ahead? else requires multi-frame pixel bufs
+    const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
+//    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
+    napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
+//    void* CONTEXT = NULL; //optional data to attach to tsfn
+    napi_finalize /*std::function<void(napi_env, void*, void*)>*/ thread_final = [](napi_env env, void* data, void* hint)
+    {
+        UNUSED(hint);
+        AddonData* aodata = static_cast<AddonData*>(data); //(AddonData*)data;
+//    if (!env) return; //Node in clean up state
+        debug(RED_MSG "thread final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
+        if (!aodata->isvalid()) NAPI_exc("aodata invalid");
+        if (aodata->listener.busy) NAPI_exc("Listener still active at thread final");
+//  free(addon_data);
+//not yet        delete aodata;
+    };
     napi_value work_name;
     !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &work_name), "Cre wkitem desc str failed");
-    const napi_value NO_RESOURCE = NULL; //optional, for init hooks
-    const int QUE_LEN = 0; //no limit
-    const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
-    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
-    napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
-    void* CONTEXT = NULL; //optional data to attach to tsfn
-    !NAPI_OK(napi_create_threadsafe_function(env, argv[argc - 1], NO_RESOURCE, work_name, QUE_LEN, NUM_THREADS, FINAL_DATA, THREAD_FINAL, CONTEXT, Listen_cb, &aodata->fats), "Cre JS fats failed");
-//wrapped object for state info:
-//    void* NO_HINT = NULL; //optional finalize_hint
-//    napi_ref* NO_REF = NULL; //optional ref to wrapped object
-//    !NAPI_OK(napi_wrap(env, This, aodata, addon_dtor, NO_HINT, NO_REF), "Wrap failed");
-  // Create an async work item, passing in the addon data, which will give the worker thread access to the above-created thread-safe function.
+    !NAPI_OK(napi_create_threadsafe_function(env, argv[argc - 1], /*aodata->listener.obj.value*/ NO_RESOURCE, work_name, QUE_NOMAX, NUM_THREADS, NULL /*aodata*/, NULL /*thread_final*/, NULL /*aodata*/, Listen_cb, &aodata->fats), "Cre JS fats failed");
+//  status = napi_set_named_property(env, obj, "msg", args[0]);
+
+//prep caller's port params:
     int screen = FIRST_SCREEN;
     key_t shmkey = 0;
     int vgroup = 1;
     GPUPORT::NODEVAL init_color = 0;
-    GPUPORT::REFILL refill = std::bind(my_refill, std::placeholders::_1, aodata);
     if (argc > 1) //unpack option values
     {
-        bool has_prop;
+//        bool has_prop;
 //        napi_value propval;
-        napi_valuetype valtype;
-        !NAPI_OK(napi_typeof(env, argv[0], &valtype), "Get arg type failed");
-        if (valtype != napi_object) NAPI_exc("Expected object as first param"); //TODO: allow other types?
+//        napi_valuetype valtype;
+//        !NAPI_OK(napi_typeof(env, argv[0], &valtype), "Get arg type failed");
+        if (valtype(env, argv[0]) != napi_object) NAPI_exc("Expected object as first param"); //TODO: allow other types?
         !NAPI_OK(get_prop(env, argv[0], "screen", &screen), "Invalid .screen prop");
         !NAPI_OK(get_prop(env, argv[0], "shmkey", &shmkey), "Invalid .shmkey prop");
         !NAPI_OK(get_prop(env, argv[0], "vgroup", &vgroup), "Invalid .vgroup prop");
         !NAPI_OK(get_prop(env, argv[0], "color", &init_color), "Invalid .color prop");
     }
+    debug(BLUE_MSG "listen opts: screen %d, shmkey %lx, vgroup %d, init_color 0x%x" ENDCOLOR, screen, shmkey, vgroup, init_color);
+//wrapped object for state info:
+//    void* NO_HINT = NULL; //optional finalize_hint
+//    napi_ref* NO_REF = NULL; //optional ref to wrapped object
+//    !NAPI_OK(napi_wrap(env, This, aodata, addon_dtor, NO_HINT, NO_REF), "Wrap failed");
+  // Create an async work item, passing in the addon data, which will give the worker thread access to the above-created thread-safe function.
+    std::function<void(napi_env, AddonData*, GPUPORT::TXTR*)> my_refill = [](napi_env env, AddonData* aodata, GPUPORT::TXTR* ignored)
+    {
+//    debug(CYAN_MSG "refill: get ctx" ENDCOLOR);
+//    !NAPI_OK(napi_get_threadsafe_function_context(aodata->fats, (void**)&env), "Get fats env failed"); //what to do?
+        if (!aodata->isvalid()) NAPI_exc("aodata invalid");
+//    if (!env) return; //Node in clean up state
+//TODO: blocking or non-blocking?
+//    debug(BLUE_MSG "refill: call cb" ENDCOLOR);
+        !NAPI_OK(napi_call_threadsafe_function(aodata->fats, aodata, napi_tsfn_blocking), "Can't call JS fats");
+        ++aodata->gpdata.numfr; //prep for next frame
+    };
+    GPUPORT::REFILL refill = std::bind(my_refill, env, aodata, std::placeholders::_1);
+
+//open Gpu port:
+#if 0
+    if (!aodata->gpu_port)
+        if (!(aodata->gpu_port = new GPUPORT(NAMED{ _.screen = screen; _.shmkey = shmkey; _.vgroup = vgroup; _.init_color = init_color; _.refill = refill; SRCLINE; }))
+            NAPI_exc("Cre bkg gpu port failed");
+#endif
+
+//start bkg thread for async xfr to GPU and ask caller for more data:
+//    aodata->want_continue = true;
 //    aodata->gpdata.numfr = 0;
 //    aodata->wkr = std::thread(bkg_wker, aodata, screen, shmkey, vgroup, init_color, SRCLINE);
 //    !NAPI_OK(napi_acquire_threadsafe_function(aodata->fats), "Can't acquire JS fats");
-#if 0
-    aodata->gpu_port = new GPUPORT(NAMED{ _.screen = screen; _.shmkey = shmkey; _.vgroup = vgroup; _.init_color = init_color; _.refill = refill; SRCLINE; });
-    if (!aodata->gpu_port) NAPI_exc("Cre bkg gpu port failed");
-#endif
-    aodata->want_continue = true;
     std::thread bkg([refill, aodata, env]()
     {
-        debug(PINK_MSG "bkg: aodata %p" ENDCOLOR, aodata);
-        aodata->work = (void*)1;
+        debug(PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
+        uint32_t ref_count;
+        aodata->listener.busy = true; //(void*)1;
+        aodata->gpdata.numfr = 0; //start at beginning; TODO: allow skip ahead?
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
         !NAPI_OK(napi_acquire_threadsafe_function(aodata->fats), "Can't acquire JS fats");
+//        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
         for (;;) //int i = 0; i < 5; ++i)
         {
             debug(YELLOW_MSG "bkg refill" ENDCOLOR);
             refill(NULL);
-            if (!aodata->want_continue) break;
+            if (!aodata->listener.busy) break;
 //            debug(YELLOW_MSG "bkg pivot encode + xfr" ENDCOLOR);
             SDL_Delay(0.5 sec);
 //            debug(YELLOW_MSG "bkg present + wait vsync" ENDCOLOR);
             SDL_Delay(0.5 sec);
         }
 //        debug(YELLOW_MSG "bkg release" ENDCOLOR);
+//        !NAPI_OK(napi_reference_unref(env, aodata->listener.ref, &ref_count), "Listener unref failed");
         !NAPI_OK(napi_release_threadsafe_function(aodata->fats, napi_tsfn_release), "Can't release JS fats");
         aodata->fats = NULL;
-        aodata->work = 0;
+//        aodata->listener.busy = false; //work = 0;
         debug(YELLOW_MSG "bkg exit" ENDCOLOR);
     });
     bkg.detach();
@@ -564,25 +688,26 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
     !NAPI_OK(napi_queue_async_work(env, aodata->work), "Enqueue async wkitem failed");
 #endif
 //    return NULL; //return "undefined" to JavaScript
-    napi_value retval;
-    !NAPI_OK(napi_get_reference_value(env, aodata->aoref, &retval), "Cre retval ref failed");
-    return retval;
+//    napi_value retval;
+//??    !NAPI_OK(napi_get_reference_value(env, aodata->aoref, &retval), "Cre retval ref failed");
+    return aodata->listener.obj;
 }
 
 
+#if 0
 // Free the per-addon-instance data.
-static void addon_destroy(napi_env env, void* data, void* hint)
+static void addon_final(napi_env env, void* data, void* hint)
 {
     UNUSED(hint);
     AddonData* aodata = static_cast<AddonData*>(data); //(AddonData*)data;
-    debug(RED_MSG "napi destroy: aodata %p" ENDCOLOR, aodata);
+//    if (!env) return; //Node in clean up state
+    debug(RED_MSG "napi destroy: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
     if (!aodata->isvalid()) NAPI_exc("aodata invalid");
-    if (!aodata->work) NAPI_exc("Work item still in progress at module unload");
-    if (aodata->gpu_port) delete aodata->gpu_port; //close at playlist end, not after each sequence
-    aodata->gpu_port = 0;
+    if (aodata->listener.busy) NAPI_exc("Listener still active at module unload");
 //  free(addon_data);
     delete aodata;
 }
+#endif
 
 
 // The commented-out return type and the commented out formal function
@@ -596,13 +721,17 @@ napi_value ModuleInit(napi_env env, napi_value exports)
 {
   // Define addon-level data associated with this instance of the addon.
 //    AddonData* addon_data = new AddonData; //(AddonData*)malloc(sizeof(*addon_data));
-    std::unique_ptr<AddonData> aodata(new AddonData); //(AddonData*)malloc(sizeof(*addon_data));
+    std::unique_ptr<AddonData> aodata(new AddonData(env)); //(AddonData*)malloc(sizeof(*addon_data));
+    if (!aodata.get()->isvalid()) NAPI_exc("aodata invalid");
     // Arguments 2 and 3 are function name and length respectively
     // We will leave them as empty for this example
-    const char* NO_NAME = NULL;
-    size_t NO_NAMELEN = 0;
+
+//expose methods for caller to use:
     napi_value fn;
+    size_t NO_NAMELEN = 0;
+    const char* NO_NAME = NULL;
 //    void* NO_DATA = NULL;
+//    if (!env) return; //Node in clean up state
     !NAPI_OK(napi_create_function(env, NO_NAME, NO_NAMELEN, Limit_NAPI, aodata.get(), &fn), "Wrap native limit() failed");
     !NAPI_OK(napi_set_named_property(env, exports, "limit", fn), "Export limit() failed");
 //    status = napi_create_function(env, NULL, 0, Hello_wrapped, NULL, &fn);
@@ -628,13 +757,53 @@ napi_value ModuleInit(napi_env env, napi_value exports)
 #endif
     !NAPI_OK(napi_create_function(env, NO_NAME, NO_NAMELEN, Listen_NAPI, aodata.get(), &fn), "Wrap native listen() failed");
     !NAPI_OK(napi_set_named_property(env, exports, "listen", fn), "Export listen() failed");
+
+//wrap internal data with module exports object:
   // Associate the addon data with the exports object, to make sure that when the addon gets unloaded our data gets freed.
     void* NO_HINT = NULL; //optional finalize_hint
-//    napi_ref* NO_REF = NULL; //optional ref to wrapped object
-    !NAPI_OK(napi_wrap(env, exports, aodata.get(), addon_destroy, /*aodata.get()*/NO_HINT, &aodata->aoref), "Wrap aodata failed");
+    napi_ref* NO_REF = NULL; //optional ref to wrapped object
+// Free the per-addon-instance data.
+    napi_finalize /*std::function<void(napi_env, void*, void*)>*/ addon_final = [](napi_env env, void* data, void* hint)
+    {
+        UNUSED(hint);
+        AddonData* aodata = static_cast<AddonData*>(data); //(AddonData*)data;
+//    if (!env) return; //Node in clean up state
+        debug(RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
+        if (!aodata->isvalid()) NAPI_exc("aodata invalid");
+        if (aodata->listener.busy) NAPI_exc("Listener still active at module unload");
+        delete aodata; //free(addon_data);
+    };
+    !NAPI_OK(napi_wrap(env, exports, aodata.get(), addon_final, /*aodata.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
   // Return the decorated exports object.
 //    napi_status status;
-    debug(GREEN_MSG "napi init: aodata %p" ENDCOLOR, aodata.get());
+    debug(GREEN_MSG "napi init: aodata %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+
+//return exports to caller:
+#if 0 //paranoid check
+    std::thread bkg([env]()
+    {
+        SDL_Delay(0.25 sec);
+        debug(YELLOW_MSG "bkg paranoid check" ENDCOLOR);
+        napi_valuetype valtype;
+        napi_value global, func;
+        !NAPI_OK(napi_get_global(env, &global), "Get global failed");
+        !NAPI_OK(napi_get_named_property(env, global, "listen", &func), "Get listen() failed");
+        !NAPI_OK(napi_typeof(env, func, &valtype), "Get typeof failed");
+        if (valtype != napi_function) NAPI_exc("listen() type mismatch");
+//!NAPI_OK(napi_call_function(env, global, func, SIZEOF(argv), argv, &retval), "Call func() failed");
+        !NAPI_OK(napi_get_named_property(env, global, "limit", &func), "Get limit() failed");
+        !NAPI_OK(napi_typeof(env, func, &valtype), "Get typeof failed");
+        if (valtype != napi_function) NAPI_exc("limit() type mismatch");
+        debug(YELLOW_MSG "bkg paranoid exit" ENDCOLOR);
+    });
+    bkg.detach();
+#endif
+    if (!aodata.get()->isvalid()) NAPI_exc("aodata invalid");
+#if 1
+    const int INIT_COUNT = 1; //preserve after garbage collection
+    aodata->listener.obj = napi_thingy(env, exports); //kludge; use for listen() "this"
+    !NAPI_OK(napi_create_reference(env, aodata.get()->listener.obj.value, INIT_COUNT, &aodata.get()->listener.ref), "Create ref");
+#endif
     aodata.release(); //NAPI owns it now
     return exports;
 }
@@ -756,8 +925,11 @@ std::string hello()
 #ifdef WANT_CALLBACK_EXAMPLE
 #ifdef SRC_NODE_API_H_ //USE_NAPI
 //async_work_thread_safe_function example from https://github.com/nodejs/node-addon-examples.git
+//minor hacking -dj
  #include <assert.h>
  #include <stdlib.h>
+ #include <thread> //-dj
+
 // Limit ourselves to this many primes, starting at 2
  #define PRIME_COUNT 100000
  #define REPORT_EVERY 1000
@@ -765,6 +937,9 @@ std::string hello()
 typedef struct {
   napi_async_work work;
   napi_threadsafe_function tsfn;
+//more data: -dj
+  int the_prime;
+  bool running;
 } AddonData;
 
 // This function is responsible for converting data coming in from the worker
@@ -775,7 +950,7 @@ static void CallJs(napi_env env, napi_value js_cb, void* context, void* data) {
   (void) context;
 
   // Retrieve the prime from the item created by the worker thread.
-  int the_prime = *(int*)data;
+  int the_prime = ((AddonData*)data)->the_prime; //*(int*)data; -dj
 
   // env and js_cb may both be NULL if Node.js is in its cleanup phase, and
   // items are left over from earlier thread-safe calls from the worker thread.
@@ -793,16 +968,23 @@ static void CallJs(napi_env env, napi_value js_cb, void* context, void* data) {
 
     // Call the JavaScript function and pass it the prime that the secondary
     // thread found.
+    bool boolval;
+    napi_value retval, bool_retval; //check ret val -dj
     assert(napi_call_function(env,
                               undefined,
                               js_cb,
                               1,
                               &js_the_prime,
-                              NULL) == napi_ok);
+                              &retval /*NULL*/) == napi_ok);
+//check ret val: -dj
+    assert(napi_coerce_to_bool(env, retval, &bool_retval) == napi_ok);
+    assert(napi_get_value_bool/*int32*/(env, bool_retval, &boolval) == napi_ok);
+    printf("js cb returned %d to napi, addon data %p\n", boolval, data);
+    ((AddonData*)data)->running = boolval;
   }
 
   // Free the item created by the worker thread.
-  free(data);
+//  free(data); -dj
 }
 
 // This function runs on a worker thread. It has no access to the JavaScript
@@ -834,15 +1016,17 @@ static void ExecuteWork(napi_env env, void* data) {
 
       // Save the prime number to the heap. The JavaScript marshaller (CallJs)
       // will free this item after having sent it to JavaScript.
-      int* the_prime = (int*)malloc(sizeof(*the_prime)); //cast (cpp) -dj
-      *the_prime = idx_outer;
+//      int* the_prime = (int*)malloc(sizeof(*the_prime)); //cast (cpp) -dj
+//      *the_prime = idx_outer;
+      addon_data->the_prime = idx_outer; //just store in addon struct -dj
 
       // Initiate the call into JavaScript. The call into JavaScript will not
       // have happened when this function returns, but it will be queued.
       assert(napi_call_threadsafe_function(addon_data->tsfn,
-                                           the_prime,
+                                           data, //the_prime, -pass whole struct -dj
                                            napi_tsfn_blocking) == napi_ok);
-    }
+      if (!addon_data->running) { prime_count = PRIME_COUNT; break; } //callee exit -dj
+     }
   }
 
   // Indicate that this thread will make no further use of the thread-safe function.
@@ -858,6 +1042,7 @@ static void WorkComplete(napi_env env, napi_status status, void* data) {
   // run.
   assert(napi_release_threadsafe_function(addon_data->tsfn,
                                           napi_tsfn_release) == napi_ok);
+  if (addon_data->work) //no longer used -dj
   assert(napi_delete_async_work(env, addon_data->work) == napi_ok);
 
   // Set both values to NULL so JavaScript can order a new run of the thread.
@@ -906,6 +1091,7 @@ static napi_value StartThread(napi_env env, napi_callback_info info) {
                                          CallJs,
                                          &(addon_data->tsfn)) == napi_ok);
 
+#if 0 //original code
   // Create an async work item, passing in the addon data, which will give the
   // worker thread access to the above-created thread-safe function.
   assert(napi_create_async_work(env,
@@ -918,6 +1104,16 @@ static napi_value StartThread(napi_env env, napi_callback_info info) {
 
   // Queue the work item for execution.
   assert(napi_queue_async_work(env, addon_data->work) == napi_ok);
+#else //simpler to use std::thread and lamba -dj
+    addon_data->running = true;
+    std::thread bkg([addon_data, env]()
+    {
+        napi_status status;
+        ExecuteWork(env, addon_data);
+        WorkComplete(env, status, addon_data);
+    });
+    bkg.detach();
+#endif
 
   // This causes `undefined` to be returned to JavaScript.
   return NULL;
@@ -942,6 +1138,7 @@ static void addon_getting_unloaded(napi_env env, void* data, void* hint) {
   AddonData* addon_data = (AddonData*)malloc(sizeof(*addon_data));
   addon_data->work = NULL;
 
+#if 0 //alternate way -dj
   // Define the properties that will be set on exports.
   napi_property_descriptor start_work = {
     "startThread",
@@ -956,6 +1153,11 @@ static void addon_getting_unloaded(napi_env env, void* data, void* hint) {
 
   // Decorate exports with the above-defined properties.
   assert(napi_define_properties(env, exports, 1, &start_work) == napi_ok);
+#else
+    napi_value fn;
+    assert(napi_create_function(env, NULL, 0, StartThread, addon_data, &fn) == napi_ok);
+    assert(napi_set_named_property(env, exports, "startThread", fn) == napi_ok);
+#endif
 
   // Associate the addon data with the exports object, to make sure that when
   // the addon gets unloaded our data gets freed.

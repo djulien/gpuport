@@ -66,7 +66,7 @@ private:
 
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     int x;
     std::cout << BLUE_MSG << FMT("hex 0x%x") << 42 << ENDCOLOR_NEWLINE;

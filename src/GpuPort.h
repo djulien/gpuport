@@ -2074,7 +2074,7 @@ protected:
 #undef WANT_UNIT_TEST //prevent recursion
 
 //#include <iostream> //std::cout
-#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
+//#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 #include <sstream> //std::ostringstream
 
 #include "debugexc.h"

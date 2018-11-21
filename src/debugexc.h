@@ -14,10 +14,10 @@
 #include <stdarg.h> //varargs
 #include <string>
 
-//#include "msgcolors.h" //MSG_*, ENDCOLOR_*
-//#include "str-helpers.h" //NVL()
-//#include "thr-helpers.h" //thrid(), thrinx()
-//#include "elapsed.h" //elapsed_msec()
+#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+#include "str-helpers.h" //NVL()
+//cyclic; moved below; #include "thr-helpers.h" //thrid(), thrinx()
+#include "elapsed.h" //elapsed_msec()
 
 
 //set default if caller didn't specify:
@@ -103,45 +103,7 @@ public: //operators
 #define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
 
 
-//CAUTION: cyclic #includes; put these after #def debug
-#include "msgcolors.h" //MSG_*, ENDCOLOR_*
-#include "str-helpers.h" //NVL()
-#include "thr-helpers.h" //thrid(), thrinx()
-#include "elapsed.h" //elapsed_msec()
-
-
-//display a message:
-//popup + console for dev/debug only
-//NOTE: must come before perfect fwding overloads (or else use fwd ref)
-//void* errprintf(FILE* dest, const char* reason /*= 0*/, const char* fmt, ...)
-void myprintf(int level, const char* fmt, ...)
-{
-    if (level > MAX_DEBUG_LEVEL) return; //0;
-    char fmtbuf[800];
-    va_list args;
-    va_start(args, fmt);
-    size_t needlen = vsnprintf(fmtbuf, sizeof(fmtbuf), fmt, args);
-    va_end(args);
-//show warning if fmtbuf too short:
-    std::ostringstream tooshort;
-    if (needlen >= sizeof(fmtbuf)) tooshort << " (fmt buf too short: needed " << needlen << " bytes) ";
-//    /*if (stm == stderr)*/ printf("%.*s%s%.*s%s!%d%s\n", (int)srcline_ofs, fmtbuf, details.c_str(), (int)(lastcolor_ofs - srcline_ofs), fmtbuf + srcline_ofs, tooshort.str().c_str(), /*shortname*/ Thread::isBkgThread(), fmtbuf + lastcolor_ofs);
-//    const char* tsbuf = timestamp(), endts = strchr(tsbuf, ' ');
-//    if (*tsbuf == '[') ++tsbuf;
-//    if (!endts) endts = tsbuf + strlen(tsbuf);
-//TODO: combine with env/command line options, write to file, etc 
-    static std::mutex mtx;
-    using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
-    LOCKTYPE lock(mtx); //avoid interleaved output
-    if (level < 0) //error
-    {
-        fprintf(stderr, RED_MSG "[%s $%d] %s%s\n" ENDCOLOR_NOLINE, timestamp(true).c_str(), thrinx(), fmtbuf, tooshort.str().c_str()); fflush(stderr);
-        if (level == -1) throw std::runtime_error(fmtbuf);
-    }
-    else //debug
-        printf("[%s $%d] %s%s\n", timestamp(true).c_str(), thrinx(), fmtbuf, tooshort.str().c_str());
-}
-
+void myprintf(int level, const char* fmt, ...); //fwd ref
 
 //kludge: overload with perfect forwarding until implicit cast ostringstream -> const char* works
 template <typename ... ARGS>
@@ -181,6 +143,48 @@ protected: //data members
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
 
+
+//display a message:
+//popup + console for dev/debug only
+//NOTE: must come before perfect fwding overloads (or else use fwd ref)
+//void* errprintf(FILE* dest, const char* reason /*= 0*/, const char* fmt, ...)
+#include "thr-helpers.h" //thrid(), thrinx(); //CAUTION: cyclic #include; must be after #def debug
+void myprintf(int level, const char* fmt, ...)
+{
+    if (level > MAX_DEBUG_LEVEL) return; //0;
+    char fmtbuf[800];
+    va_list args;
+    va_start(args, fmt);
+    size_t needlen = vsnprintf(fmtbuf, sizeof(fmtbuf), fmt, args);
+    va_end(args);
+//show warning if fmtbuf too short:
+//    std::ostringstream tooshort;
+    if (needlen >= sizeof(fmtbuf)) snprintf(&fmtbuf[sizeof(fmtbuf) - 30], 30, " (too long: need %d)", needlen);
+//    /*if (stm == stderr)*/ printf("%.*s%s%.*s%s!%d%s\n", (int)srcline_ofs, fmtbuf, details.c_str(), (int)(lastcolor_ofs - srcline_ofs), fmtbuf + srcline_ofs, tooshort.str().c_str(), /*shortname*/ Thread::isBkgThread(), fmtbuf + lastcolor_ofs);
+//    const char* tsbuf = timestamp(), endts = strchr(tsbuf, ' ');
+//    if (*tsbuf == '[') ++tsbuf;
+//    if (!endts) endts = tsbuf + strlen(tsbuf);
+//TODO: combine with env/command line options, write to file, etc 
+//    char msghdr[20];
+//    snprintf(msghdr, sizeof(msghdr), "[%s $%d]", timestamp(true).c_str(), thrinx());
+    static std::mutex mtx;
+    using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
+    LOCKTYPE lock(mtx); //avoid interleaved output
+//    static int count = 0;
+//    if (!count++) printf(CYAN_MSG "[elapsed-msec $thread] ===============================\n" ENDCOLOR_NOLINE);
+    thread_local static int numerr = 0, nummsg = 0;
+    if (level < 0) //error
+    {
+        if (!numerr++) fprintf(stderr, RED_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========\n" ENDCOLOR_NOLINE, thrinx(), thrid(), getpid());
+        fprintf(stderr, RED_MSG "[%s $%d] %s\n" ENDCOLOR_NOLINE, timestamp(true).c_str(), thrinx(), fmtbuf); fflush(stderr);
+        if (level == -1) throw std::runtime_error(fmtbuf);
+    }
+    else //debug
+    {
+        if (!nummsg++) printf(PINK_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========\n" ENDCOLOR_NOLINE, thrinx(), thrid(), getpid());
+        printf(BLUE_MSG "[%s $%d] %s\n" ENDCOLOR_NOLINE, timestamp(true).c_str(), thrinx(), fmtbuf);
+    }
+}
 
 #endif //ndef _DEBUGEXC_H
 

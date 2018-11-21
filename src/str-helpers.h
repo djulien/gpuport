@@ -12,12 +12,32 @@
 //go ahead and use std::atomic<> anyway, for safety:
 #include <atomic> //std::atomic. std::memory_order
 #include <algorithm> //std::min<>(), std::max<>()
-#include "string.h" //snprintf()
-#include "memory.h" //memmove()
+#include <string.h> //snprintf()
+#include <memory.h> //memmove()
+#include <map> //std::map<>
 
 #ifndef SIZE
  #define SIZE(thing)  int(sizeof(thing) / sizeof((thing)[0]))
 #endif
+
+
+//lookup table (typically int -> string):
+//use this function instead of operator[] on const maps (operator[] is not const - will add an entry)
+template <typename MAP, typename KEY> //... ARGS>
+inline const char* unmap(MAP&& map, KEY&& key) //Uint32 value) //ARGS&& ... args)
+//template <typename KEY, typename VAL> //... ARGS>
+//inline const char* unmap(const std::map<KEY, VAL>&& map, KEY&& key) //Uint32 value) //ARGS&& ... args)
+{
+    return map.count(key)? map.find(key)->second: NULL;
+}
+//template <typename KEY, typename VAL> //... ARGS>
+//VAL unmap(const std::map<KEY, VAL>& map, VAL&& value)
+//{
+//    return map.count(value)? map.find(value)->second: "";
+//}
+//const std::map<Uint32, const char*> SDL_SubSystems =
+//    SDL_AutoSurface SDL_CreateRGBSurfaceWithFormat(ARGS&& ... args, SrcLine srcline = 0) //UNUSED, TXR_WIDTH, univ_len, SDL_BITSPERPIXEL(fmt), fmt);
+//        return SDL_AutoSurface(::SDL_CreateRGBSurfaceWithFormat(std::forward<ARGS>(args) ...), srcline); //perfect fwd
 
 
 //return default string instead of null:
@@ -84,7 +104,7 @@ const char* commas(int64_t val)
 
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     debug(BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
     debug(BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));

@@ -275,7 +275,7 @@ public:
 
 
 //int main(int argc, const char* argv[])
-void unit_test()
+void unit_test(ARGS& args)
 {
     std::cout << BLUE_MSG "start" ENDCOLOR "\n";
     func(1);
