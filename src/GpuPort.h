@@ -777,6 +777,7 @@ public: //methods
         for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
 //printf("here6\n"); fflush(stdout);
 //        }
+//??        m_frinfo.refill(); //++aodata->gpdata.numfr; //move to next frame
     }
 public: //static methods
     static inline GpuPort_wker*& wker() //WKER* ptr = 0) //kludge: use wrapper to avoid trailing static decl at global scope (DRY template params)
@@ -1433,7 +1434,8 @@ public: //operators
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
         ostrm << "GpuPort"; //<< my_templargs();
 //        ostrm << "\n{cfg " << *that.m_cfg;
-        ostrm << "{" << commas(sizeof(that)) << ": @" << &that;
+        ostrm << "{" << commas(sizeof(that)) << ":@" << &that;
+        if (!&that) { ostrm << " NO DATA}"; return ostrm; }
 //        ostrm << ", wh " << that.m_wh << " (view " << that.m_view << ")";
 //        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
 //        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;

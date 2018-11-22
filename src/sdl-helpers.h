@@ -147,7 +147,7 @@ inline static UNPACKED& unpack(UNPACKED&& params, CALLBACK&& named_params)
 //        new (&params) struct CtorParams; //placement new: reinit each time; comment out for sticky defaults
 //        MSG("ctor params: var1 " << params.var1 << ", src line " << params.srcline);
 //    printf("here31\n"); fflush(stdout);
-    auto thunk = [](auto get_params, UNPACKED& params){ get_params(params); }; //NOTE: must be captureless, so wrap it
+    auto thunk = [](auto get_params, UNPACKED& params){ get_params(params); }; //NOTE: must be captureless (for use as template arg), so wrap it
 //        MSG(BLUE_MSG << "get params ..." << ENDCOLOR);
 //    printf("here32\n"); fflush(stdout);
     thunk(named_params, params);
@@ -847,11 +847,15 @@ public: //ctor/dtor
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoLib& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
-//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
 //        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
 //        SDL_version ver;
 //        SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
 //        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+        ostrm << "mySDL_AutoLib"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+
         SDL_SubSystemFlags flags = that.m_flags;
         std::ostringstream flag_desc;
         for (const auto& pair: SDL_SubSystemNames())
@@ -859,8 +863,6 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "mySDL_AutoLib"; //<< my_templargs();
-        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         ostrm << FMT(", flags 0x%x (") << that.m_flags << flag_desc.str().substr(1) << ")"; //FMT(", flags %s") << flag_desc.str().c_str() + 1;
         ostrm << "}";
         return ostrm;
@@ -1167,16 +1169,18 @@ public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoWindow& that) //CONST SDL_Window* wnd) //causes recursion via inspect: const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
-        CONST SDL_Window* wnd = that.get();
         ostrm << "SDL_Window" << my_templargs();
-        if (!wnd) return ostrm << "{wnd 0}";
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        CONST SDL_Window* wnd = that.get();
+        if (!wnd) return ostrm << " NO WND}";
 //        if (wnd == (SDL_Window*)0) return ostrm << "{WND 0}";
 //        int wndx, wndy, wndw, wndh;
 //        mySDL_Rect wrect;
 //        VOID SDL_GetWindowPosition(wnd, &wrect.x, &wrect.y);
 //        VOID SDL_GetWindowSize(wnd, &wrect.w, &wrect.h);
         /*Uint32*/ mySDL_Format fmt = SDL_GetWindowPixelFormat(wnd);
-        if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", false, srcline);
+        if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Get window format", false, srcline);
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
         SDL_Renderer* rndr = renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd);
         std::ostringstream flag_desc;
@@ -1186,7 +1190,6 @@ public: //operators
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
 //        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
-        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         ostrm << FMT(", wnd@ %p, ") << wnd;
         ostrm << that.m_rect; //wndw << " x " << wndh;
         ostrm << ", fmt " << fmt; //SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
@@ -1199,7 +1202,7 @@ public: //operators
             float hscale, vscale;
             SDL_RendererInfo info; //= {0};
             VOID SDL_RenderGetScale(rndr, &hscale, &vscale);
-            if (!SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("can't get renderer info", srcline);
+            if (!SDL_OK(SDL_GetRendererInfo(/*renderer(wnd)*/ rndr, &info))) SDL_exc("Get renderer info", srcline);
             if ((hscale != 1) || (vscale != 1)) ostrm << ", scale " << hscale << " x " << vscale;
             ostrm << " " << info;
         }
@@ -1370,7 +1373,7 @@ public: //static utility methods
     static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Point* want_xy = NO_POINT, const SDL_Size* want_wh = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
     {
         /*Uint32*/ SDL_Format fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
-        if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Can't get window format", srcline);
+        if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Get window format", srcline);
 //        if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
         if (want_fmt && (fmt != want_fmt)) exc(RED_MSG "unexpected window format: got " << fmt << ", expected " << want_fmt << ENDCOLOR_ATLINE(srcline)); //, fmt, want_fmt);
         SDL_Rect rect; //int wndw, wndh;
@@ -1414,7 +1417,7 @@ public: //static utility methods
     static CONST SDL_Renderer* renderer(CONST SDL_Window* wnd, /*bool want_throw = true,*/ SrcLine srcline = 0)
     {
         CONST SDL_Renderer* rndr = SDL_GetRenderer(wnd);
-        if (!SDL_OK(rndr)) SDL_exc("can't get renderer for window", /*want_throw,*/ srcline);
+        if (!SDL_OK(rndr)) SDL_exc("Get renderer for window", /*want_throw,*/ srcline);
         return rndr;
     }
 //protected: //static helpers
@@ -1814,9 +1817,11 @@ public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoTexture& that) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
-        CONST SDL_Texture* txtr = that.get();
         ostrm << "SDL_AutoTexture" << my_templargs();
-        if (!txtr) return ostrm << "{txtr 0}";
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        CONST SDL_Texture* txtr = that.get();
+//        if (!txtr) return ostrm << " NO TXTR}";
 /*
         int w, h; //texture width, height (in pixels)
         int access; //texture access mode (one of the SDL_TextureAccess values)
@@ -1827,7 +1832,6 @@ public: //operators
 //        SDL_Format& cached_fmt = *(SDL_Format*)&that.cached.format; //kludge: reuse ptr as actual value
 //    if (fmt == SDL_PIXELFORMAT_UNKNOWN) return_void(err(RED_MSG "Can't get window format" ENDCOLOR));
 //        ostrm << "SDL_Texture" << /*TEMPL_ARGS <<*/ 
-        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         ostrm << FMT(", txtr@ %p, ") << txtr;
         ostrm << that.m_cached;
 //        ostrm << that.m_cached.wh; //me.cached.w << " x " << me.cached.h;
@@ -1919,7 +1923,7 @@ public: //methods
 //printf("here14\n"); fflush(stdout);
             VOID SDL_UnlockTexture(txtr);
 #endif
-            if (refill) refill(this); //tell caller buf is available to refill
+            if (refill) refill(this); //tell caller buf is available to refill with next frame
         }
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
         perf[1] = perftime(); //1000); //CPU-side data xfr time (msec)

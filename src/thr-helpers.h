@@ -125,7 +125,7 @@ public: //methods
     }
     void notify(SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DEBUG("notify all", srcline);
+        if (WANT_DEBUG) DEBUG("notify all, val " << load(), srcline);
 ////        all? m_cv.notify_all(): m_cv.notify_one();
 //        m_cv.notify_all();
         VOID m_cv.notify_all();

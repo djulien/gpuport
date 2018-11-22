@@ -3,6 +3,8 @@
 "use strict";
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
+const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
+//TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
 const /*GpuPort*/ {limit, listen} = require('./build/Release/gpuport'); //.node');
 //console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
@@ -14,27 +16,6 @@ extensions(); //hoist so inline code below can use
 //const napi = require('node-addon-api');
 //console.log("\nnapi.incl", JSON.stringify(napi.include));
 //console.log("\nnapi.gyp", JSON.stringify(napi.gyp));
-
-
-///////////////////////////////////////////////////////////////////////////////
-////
-/// NAPI test:
-//
-
-// Use the "bindings" package to locate the native bindings.
-const binding = require('./build/Release/gpuport'); //.node');
-
-// Call the function "startThread" which the native bindings library exposes.
-// The function accepts a callback which it will call from the worker thread and
-// into which it will pass prime numbers. This callback simply prints them out.
-binding.startThread((thePrime) =>
-{
-  console.log("cb", `(${typeof this})`, this);
-  ++this.prime_count || (this.prime_count = 1);
-  console.log(`Received prime# ${this.prime_count} from secondary thread: ` + thePrime);
-  return (this.prime_count < 10);
-});
-//process.exit();
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -62,7 +43,7 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
-if (false)
+//if (false)
 debug(`
     limit blue ${hex(BLUE)} => ${hex(limit(BLUE))}, 
     cyan ${hex(CYAN)} => ${hex(limit(CYAN))},
@@ -84,41 +65,79 @@ const opts =
     vgroup: 30,
     color: -1, //0xffff00ff,
 };
-var count = 0;
-const gp = false && listen(opts, (frnum) =>
+//var count = 0;
+//TODO: try{
+const SEQLEN = 5;
+const gp = listen(opts, (frnum, nodes, info) =>
 {
-    console.log(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments[1]}`);
-    /*if (this.count == 1)*/ console.log("this", `(${typeof this})`, this);
-    return ++count * 100;
-    return (++count < 10);
-    return (frnum < seqlen); //tell GpuPort when to stop
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments[1]}`);
+    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this);
+    return (this.count < SEQLEN)? 0xffffff: 0;
+    return (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
 });
-console.log("gpu listen:", `(${typeof gp})`, gp);
+//}catch(exc){}
+debug("gpu listen:", `(${typeof gp})`, gp);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());
 
 //doing something else while listening on gpu port:
-//step.debug = true;
 function* main()
 {
     var seq = 0;
     for (var i = 0; i < 100/20; ++i)
     {
-        console.log({value: seq++});
-        yield wait(2000);
+        debug({main_loop: seq++});
+        yield wait(2000 + i); //use unique value for easier debug
     }
-    return -2;
+//    wait.cancel("done"); //cancel latest
+//    yield; //kludge: wait for last timer to occur
+    process.stdout.end();
+    return -2; //for debug
 }
+step.debug = debug;
 //done(step(main)); //sync
 step(main, done); //async
-function done(retval) { console.log("retval: " + retval); }
-console.log("after main");
+function done(retval)
+{
+    debug("main retval: " + retval);
+//show anything preventing process exit:
+//    process.ste
+    debug("remaining handles", process._getActiveHandles()); //.map((obj) => (obj.constructor || {}).name || obj));
+//    process._getActiveHandles().forEach((obj) => ((obj.constructor || {}).name == "Timer")? debug(obj): null);
+    debug("remaining requests", process._getActiveRequests());
+}
+debug("after main");
 
 (function idle()
 {
     if ((++idle.count || (idle.count = 1)) < 5) setTimeout(idle, 250);
-    console.log("idle", idle.count);
+    debug("idle", idle.count); //, arguments.back); //how much overdue?
 })();
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// NAPI test:
+//
+
+// Use the "bindings" package to locate the native bindings.
+if (false)
+{
+//    const binding = require('./build/Release/gpuport'); //.node');
+    const binding = require('./build/Release/gpuport'); //.node');
+
+// Call the function "startThread" which the native bindings library exposes.
+// The function accepts a callback which it will call from the worker thread and
+// into which it will pass prime numbers. This callback simply prints them out.
+    binding.startThread((thePrime) =>
+    {
+        debug("cb", `(${typeof this})`, this);
+        ++this.prime_count || (this.prime_count = 1);
+        debug(`Received prime# ${this.prime_count} from secondary thread: ` + thePrime);
+        return (this.prime_count < 10);
+    });
+//    process.exit();
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -136,16 +155,21 @@ function step(gen, async_cb)
     step.async_cb || (step.async_cb = async_cb);
 //    for (;;)
 //    {
-    var {done, value} = step.gen.next(step.value);
-    if (step.debug) console.log("done? " + done + ", value " + typeof(value) + ": " + value + ", async? " + !!step.async_cb);
-//    if (typeof value == "function") value = value(); //execute wakeup events
-    step.value = value;
-    if (done)
+    try
     {
-        step.gen = null; //prevent further execution
-        if (step.async_cb) step.async_cb(value);
-        return value;
+        const {done, value} = step.gen.next(step.value);
+        if (step.debug) step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
+//    if (typeof value == "function") value = value(); //execute wakeup events
+//    step.value = value;
+        if (done)
+        {
+            step.gen = null; //prevent further execution; step() will cause "undef" error
+            if (step.async_cb) step.async_cb(value);
+//        return value;
+        }
+        return step.value = value;
     }
+    catch (exc) { console.error(`EXC: ${exc}`.red_lt); }
 }
 
 
@@ -154,20 +178,52 @@ function wait(msec)
 {
 //    if (!step.async_cb)
 //    return setTimeout.bind(null, step, msec); //defer to step loop
-    setTimeout(step, msec);
+//    wait.pending || (wait.pending = {});
+//    wait.pending[setTimeout(step, msec)] =
+    debug("wait: set timeout ", msec);
+//NOTE: Node timer api is richer than browser; see https://nodejs.org/api/timers.html
+    /*wait.latest =*/ setTimeout(step, msec); //function(){ wait.cancel("fired"); step(); }, msec); //CAUTION: assumes only 1 timer active
+//    wait.latest.unref();
 //    return msec; //dummy retval for testing
-    return +4; //dummy value for debug
+    return msec; //dummy value for debug
+}
+//wait.cancel = function wait_cancel(reason)
+//{
+//    reason && (reason += ": ");
+//    debug(`${reason || ""}wait cancel? ${JSON.stringify(this.latest)}, has ref? ${((this.latest || {}).hasRef || noop)()}`.yellow_lt);
+//    if (typeof this.latest != "undefined") clearTimeout(this.latest);
+//    this.latest = undefined;
+//}
+
+//return "file:line#":
+//mainly for debug or warning/error messages
+function srcline(depth)
+{
+    const want_path = (depth < 0);
+//    if (isNaN(++depth)) depth = 1; //skip this function level
+    const frame = __stack[Math.abs(depth || 0) + 1]; //skip this stack frame
+//console.error(`filename ${frame.getFileName()}`);
+    return `@${(want_path? nop_fluent: pathlib.basename)(frame.getFileName()/*.unquoted || frame.getFileName()*/, ".js")}:${frame.getLineNumber()}`; //.gray_dk; //.underline;
+//    return `@${pathlib.basename(__stack[depth].getFileName(), ".js")}:${__stack[depth].getLineNumber()}`;
 }
 
 
-function debug(args) { console.log.apply(null, arguments); }
+function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); }
 
 function hex(thing) { return `0x${(thing >>> 0).toString(16)}`; }
 
+function noop() {} //dummy placeholder function
+
 function extensions()
 {
+    Object.defineProperties(global,
+    {
+        __srcline: { get: function() { return srcline(1); }, },
+        __parent_srcline: { get: function() { return srcline(2); }, },
+    });
     if (!Array.prototype.back) //polyfill
         Object.defineProperty(Array.prototype, "back", { get() { return this[this.length - 1]; }});
+    Array.prototype.push_fluent = function push_fluent(args) { this.push.apply(this, arguments); return this; };
     String.prototype.splitr = function splitr(sep, repl) { return this.replace(sep, repl).split(sep); } //split+replace
     String.prototype.unindent = function unindent(prefix) { unindent.svprefx = ""; return this.replace(prefix, (match) => match.substr((unindent.svprefix || (unindent.svprefix = match)).length)); } //remove indents
     String.prototype.quote = function quote(quotype) { quotype || (quotype = '"'); return `${quotype}${this/*.replaceAll(quotype, `\\${quotype}`)*/}${quotype}`; }
