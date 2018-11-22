@@ -392,8 +392,8 @@ public: //methods
             napi_value arybuf;
             void* NO_HINT = NULL; //optional finalize_hint
             !NAPI_OK(napi_create_external_arraybuffer(env, &gpu_wker->m_nodes[0][0], sizeof(gpu_wker->m_nodes), wker_check, NO_HINT, &arybuf), "Cre arraybuf failed");
-            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(gpu_wker->m_nodes), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
-            debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &gpu_wker->m_nodes[0][0] << ", " << commas(SIZEOF(gpu_wker->m_nodes)) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, napi thingy " << nodes << ENDCOLOR);
+            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(gpu_wker->m_nodes) * SIZEOF(gpu_wker->m_nodes[0]), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
+            debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &gpu_wker->m_nodes[0][0] << ", " << commas(SIZEOF(gpu_wker->m_nodes) * SIZEOF(gpu_wker->m_nodes[0])) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, napi thingy " << nodes << ENDCOLOR);
         }
         if (nodes.env != env) NAPI_exc("nodes env mismatch");
         *valp = nodes.value;
@@ -407,7 +407,7 @@ public: //methods
             void* NO_HINT = NULL; //optional finalize_hint
             !NAPI_OK(napi_create_external_arraybuffer(env, &gpu_wker->m_frinfo, sizeof(gpu_wker->m_frinfo), wker_check, NO_HINT, &arybuf), "Cre arraybuf failed");
             !NAPI_OK(napi_create_dataview(env, sizeof(gpu_wker->m_frinfo), arybuf, 0, &frinfo.value), "Cre frinfo data view failed");
-            debug(YELLOW_MSG "frinfo data view created: &data " << &gpu_wker->m_frinfo << ", size " << sizeof(gpu_wker->m_frinfo) << ", napi thingy " << frinfo << ENDCOLOR);
+            debug(YELLOW_MSG "frinfo data view created: &data " << &gpu_wker->m_frinfo << ", size " << commas(sizeof(gpu_wker->m_frinfo)) << ", napi thingy " << frinfo << ENDCOLOR);
 //TODO:
 //Protocol protocol; //= WS281X;
 //const double frame_time; //msec
@@ -780,7 +780,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //    std::function<void(napi_env, AddonData*, GPUPORT::TXTR*)> my_refill = [](napi_env env, AddonData* aodata, GPUPORT::TXTR* ignored)
     GPUPORT::REFILL refill = [env, aodata](GPUPORT::TXTR* unused) //std::bind(my_refill, env, aodata, std::placeholders::_1);
     {
-        InOutDebug inout("refill napi lamba", SRCLINE);
+        InOutDebug inout("refill napi lamba (blocking)", SRCLINE);
 //    debug(CYAN_MSG "refill: get ctx" ENDCOLOR);
 //    !NAPI_OK(napi_get_threadsafe_function_context(aodata->fats, (void**)&env), "Get fats env failed"); //what to do?
         if (!aodata->isvalid()) NAPI_exc(env, "aodata invalid");
@@ -844,7 +844,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
             refill(NULL); //send request for first frame; CAUTION: async call to js func
             for (;;) //int i = 0; i < 5; ++i)
             {
-                InOutDebug inout("bkg loop, fr# " << aodata->gpu_wker->m_frinfo.numfr.load(), SRCLINE);
+                InOutDebug inout("bkg loop", SRCLINE); //, fr# " << aodata->gpu_wker->m_frinfo.numfr.load(), SRCLINE);
                 debug(YELLOW_MSG "bkg send refill fr# %d" ENDCOLOR, aodata->gpu_wker->m_frinfo.numfr.load());
                 if (!aodata->islistening()) break; //allow cb to break out of playback loop
 //            if (aodata->excptr) break;

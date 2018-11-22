@@ -132,7 +132,7 @@ public: //methods
     }
     bool wait(VALTYPE want_value = 0, bool blocking = true, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "bgsync wait for " << want_value << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
+        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "bgsync wait for 0x" << std::hex << want_value << std::dec << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
         if (load() == want_value) return true; //no need to wait, already has desired value
         if (blocking) { LOCKTYPE lock(m_mtx); m_cv.wait(lock, [this, want_value]{ return load() == want_value; }); } //filter out spurious wakeups
         return blocking;
