@@ -14,7 +14,8 @@
 //-wnd !blank/painted at start
 //-cache pad NODEBUF
 //-ipc BkgSync
-
+//-logging use log4j? https://github.com/log4js-node/log4js-node
+//-perf logging https://apimirror.com/node/perf_hooks
 
 //useful refs:
 // https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
@@ -352,19 +353,20 @@ public: //methods
 //            init();
 //        }
 //reset state + stats:
-    void reset(SrcLine srcline = 0)
+//    void reset(SrcLine srcline = 0) { reset(0, srcline); }
+    void reset(int frnum = 0, SrcLine srcline = 0)
     {
 //no; interferes with sync        dirty.store(0, NVL(srcline, SRCLINE));
-        numfr.store(0);
+        numfr.store(frnum);
 //            nexttime.store(0);
         for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
 //            sentinel = FRINFO_MAGIC;
     }
-    void refill()
+    void refill(SrcLine srcline = 0)
     {
         ++numfr;
 //NOTE: do this here so subscribers can work while RenderPresent waits for VSYNC
-        dirty.store(0, SRCLINE); //clear dirty bits; NOTE: this will wake client rendering threads
+        dirty.store(0, NVL(srcline, SRCLINE)); //clear dirty bits; NOTE: this will wake client rendering threads
 //        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
     }
 //    static void refill(GpuPort_shdata* ptr) { ptr->refill(); }
@@ -500,7 +502,7 @@ template<
     bool BKG_THREAD = true> //STRICT_OWNER
 class GpuPort_wker
 {
-    InOutDebug m_debug1;
+//    InOutDebug m_debug1;
 protected:
 //    using NODEVAL = Uint32; //data type for node colors
 //    using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
@@ -540,7 +542,7 @@ public:
 protected:
 //    SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL> m_nodebuf;
 //    SHARED_INFO m_nodebuf;
-    InOutDebug m_debug2;
+//    InOutDebug m_debug2;
     std::unique_ptr<shdata, std::function<int(shdata*)>> m_shmptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
 //        Protocol m_protocol;
 //    typedef double PERF_STATS[SIZEOF(txtr_bb::perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
@@ -548,19 +550,19 @@ protected:
     elapsed_t perf_stats[SIZEOF(m_txtr.perf_stats) + 2]; //2 extra counters for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
     shdata& m_shdata; //m_nodebuf;
     const /*std::function<void()>*/ REFILL m_refill; //NOTE: must come after m_shdata
-    static void my_refill(TXTR* ignored, shdata* ptr) { ptr->refill(); }
+    static void my_refill(TXTR* ignored, shdata* ptr) { ptr->refill(SRCLINE); }
 public:
     NODEBUF& /*NODEROW* const*/ /*NODEROW[]&*/ m_nodes;
 //    const double& frame_time;
     FRAMEINFO& m_frinfo;
-    InOutDebug m_debug3;
+//    InOutDebug m_debug3;
 public: //ctors/dtors:
 //    explicit inline GpuPort_wker(SrcLine srcline = 0): GpuPort_wker(0, 0, 1, srcline) {} //default ctor
 //#define SHARE
 //#ifndef SHARE
 // #pragma message("!SHARE")
     GpuPort_wker(int screen /*= FIRST_SCREEN*/, key_t shmkey = 0, /*NODEBUF& nodes, FRAMEINFO& frinfo,*/ int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, REFILL refill = 0, SrcLine srcline = 0):
-        m_debug1("here1"),
+//        m_debug1("here1"),
 //#else
 // #pragma message("SHARE")
 //    GpuPort_wker(int screen /*= FIRST_SCREEN*/, /*key_t shmkey = 0,*/ NODEBUF& nodes, FRAMEINFO& frinfo, int vgroup = 1, /*Protocol protocol = Protocol::WS281X,*/ NODEVAL init_color = 0, SrcLine srcline = 0):
@@ -577,13 +579,13 @@ public: //ctors/dtors:
 //#ifndef SHARE
 //        m_nodebuf(shmkey, srcline),
 //        m_shmptr/*SharedInfo*/(shmalloc_typed<shdata /*SharedInfo NODEBUF_FrameInfo*/>(shmkey, /*SIZEOF(nodes) + 1*/ 1, NVL(srcline, SRCLINE)), std::bind(shmfree, std::placeholders::_1, NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
-        m_debug2("here2"),
+//        m_debug2("here2"),
         m_shmptr(shmalloc_typed<shdata>(shmkey/*, 1, NVL(srcline, SRCLINE)*/), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
         m_shdata(*m_shmptr.get()),
         m_refill(refill? refill: std::bind(my_refill, std::placeholders::_1, &m_shdata)),
         m_nodes(m_shdata.nodes),
         m_frinfo(m_shdata), //.frinfo),
-        m_debug3("here3"),
+//        m_debug3("here3"),
 //#else
 //        m_nodes(nodes),
 //        m_frinfo(frinfo),
@@ -593,7 +595,7 @@ public: //ctors/dtors:
     {
 //        new (&m_nodebuf.frinfo) FRAMEINFO(); //placement new to init shm in place
 //debug(YELLOW_MSG "wker: nodes@ " << &m_nodes << ", frinfo@ " << &m_frinfo << ENDCOLOR);
-        const ScreenConfig* const m_cfg = getScreenConfig(screen, NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
+        const ScreenConfig* const m_cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
 //        if (sizeof(frinfo) > sizeof(nodes[0] /*NODEROW*/)) exc_hard(RED_MSG << "FrameInfo " << sizeof(frinfo) << " too large for node buf row " << sizeof(nodes[0] /*NODEROW*/) << ENDCOLOR_ATLINE(srcline));
         if (!m_cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline));
 //        frame_time = cfg->frame_time();
@@ -614,7 +616,7 @@ public: //ctors/dtors:
 //initialize non-const info to initial state:
 //        m_frinfo.protocol = protocol;
 //        clear_stats();
-        m_frinfo.reset(NVL(srcline, SRCLINE)); //marks node buf empty
+        m_frinfo.reset(0, NVL(srcline, SRCLINE)); //marks node buf empty
         m_txtr.perftime(); //kludge: flush perf timer
 //debug(YELLOW_MSG "here4" ENDCOLOR);
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);

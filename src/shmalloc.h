@@ -44,6 +44,7 @@
 #include <errno.h>
 #include <vector>
 #include <mutex>
+//#include <type_traits> //std::remove_const<>
 
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
 #include "debugexc.h" //debug(), TEMPL_ARGS
@@ -83,7 +84,7 @@
 //keep a little extra info in shm:
 //uses 24 bytes on Intel, 16 bytes on ARM (Rpi)
 #define SHM_MAGIC  0xfeedbeef //marker to detect valid shmem block
-
+#define SHM_LOCAL  -33 //kludge: use local alloc instead of shm
 struct ShmHdr //16 or 24 bytes (depending on processor architecture)
 {
 //    int id; key_t key;
@@ -141,25 +142,39 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
 //    bool dummy;
 //    if (!existed) existed = &dummy;
     if (!key) key = (rand() << 16) | 0xbeef; //generate new (pseudo-random) key
-    int shmid = shmget(key, size, 0666); // | IPC_CREAT); //create if !exist; clears to 0 upon creation
-    bool existed = (shmid != -1);
-    if (shmid == -1) shmid = shmget(key, size, 0666 | IPC_CREAT); //create if !exist; clears to 0 upon creation
+    ShmHdr* ptr;
+    if (key == SHM_LOCAL) //kludge: just use local heap
+    {
+        /*ShmHdr* */ ptr = static_cast<ShmHdr*>(malloc(size));
+        if (!ptr) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
+        debug(CYAN_MSG << timestamp() << "shmalloc: get LOCAL size " << commas(size - sizeof(ShmHdr)) << " (hdr " << sizeof(ShmHdr) << ") => " << FMT(" addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+        ptr->id = 0;
+        ptr->key = key;
+        ptr->size = size - sizeof(ShmHdr);
+        ptr->marker = SHM_MAGIC;
+    }
+    else
+    {
+        int shmid = shmget(key, size, 0666); // | IPC_CREAT); //create if !exist; clears to 0 upon creation
+        bool existed = (shmid != -1);
+        if (shmid == -1) shmid = shmget(key, size, 0666 | IPC_CREAT); //create if !exist; clears to 0 upon creation
 //printf("here2 %d\n", shmid); fflush(stdout);
 //    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << size << ", existed? " << existed << " => " << FMT("id 0x%lx") << shmid << ENDCOLOR_ATLINE(srcline));
-    if (shmid == -1) err_ret(0); //errno already set by shmget(); //throw std::runtime_error(std::string(strerror(errno))); //failed to create or attach
-    struct shmid_ds shminfo;
-    if (shmctl(shmid, IPC_STAT, &shminfo) == -1) err_ret(0); //errno already set by shmctl(); //throw std::runtime_error(strerror(errno));
+        if (shmid == -1) err_ret(0); //errno already set by shmget(); //throw std::runtime_error(std::string(strerror(errno))); //failed to create or attach
+        struct shmid_ds shminfo;
+        if (shmctl(shmid, IPC_STAT, &shminfo) == -1) err_ret(0); //errno already set by shmctl(); //throw std::runtime_error(strerror(errno));
 //printf("here3 %zu vs. %zu - %zu\n", size, shminfo.shm_segsz, sizeof(ShmHdr)); fflush(stdout);
 //    size = shminfo.shm_segsz; //NOTE: size will be rounded up to a multiple of PAGE_SIZE, so give caller actual size
-    if (size > shminfo.shm_segsz) err_ret(0, EOVERFLOW); //throw "pre-existing shm smaller than requested"; //TODO: enlarge?
-    ShmHdr* ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
+        if (size > shminfo.shm_segsz) err_ret(0, EOVERFLOW); //throw "pre-existing shm smaller than requested"; //TODO: enlarge?
+        /*ShmHdr* */ ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
 //printf("here4 %p\n", ptr); fflush(stdout);
-    if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
-    debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
-    ptr->id = shmid;
-    ptr->key = key;
-    ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
-    ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
+        if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
+        debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+        ptr->id = shmid;
+        ptr->key = key;
+        ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
+        ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
+    }
     err_ret(ptr + 1, 0);
 }
 template <typename TYPE> //= uint8_t>
@@ -195,9 +210,12 @@ key_t shmexisted(const void* addr, SrcLine srcline = 0)
 int shmnattch(const void* addr, SrcLine srcline = 0)
 {
     struct shmid_ds shminfo;
+    if (get_shmhdr(addr, srcline)->key == SHM_LOCAL) return 1;
     return (shmctl(get_shmhdr(addr, srcline)->id, IPC_STAT, &shminfo) != -1)? shminfo.shm_nattch: 0;
 }
 
+
+//void free(const void* ptr) { free((void*)ptr); }
 
 //release shm:
 int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not valid after
@@ -210,14 +228,22 @@ int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not v
 //printf("here7\n"); fflush(stdout);
     struct shmid_ds shminfo;
     const ShmHdr* ptr = get_shmhdr(addr, srcline), svhdr = *ptr; //copy before destroying memory
-    if (shmdt(ptr) == -1) throw std::runtime_error(strerror(errno));
-    if (shmctl(svhdr.id, IPC_STAT, &shminfo) == -1) throw std::runtime_error(strerror(errno));
+    if (svhdr.key == SHM_LOCAL)
+    {
+        free((void*)ptr);
+        shminfo.shm_nattch = 0;
+    }
+    else
+    {
+        if (shmdt(ptr) == -1) throw std::runtime_error(strerror(errno));
+        if (shmctl(svhdr.id, IPC_STAT, &shminfo) == -1) throw std::runtime_error(strerror(errno));
 //printf("here8\n"); fflush(stdout);
-    if (!shminfo.shm_nattch) //no more procs attached, delete memory
+        if (!shminfo.shm_nattch) //no more procs attached, delete memory
 //    {
-        if (shmctl(svhdr.id, IPC_RMID, NULL /*ignored*/)) throw std::runtime_error(strerror(errno));
+            if (shmctl(svhdr.id, IPC_RMID, NULL /*ignored*/)) throw std::runtime_error(strerror(errno));
 //        debug(CYAN_MSG << timestamp() << "shmfree: freed " << svhdr.id << FMT("0x%lx") << svhdr.key << ", size " << shminfo.shm_segsz << ENDCOLOR_ATLINE(srcline));
 //    }
+    }
     debug(CYAN_MSG << timestamp() << "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ENDCOLOR_ATLINE(srcline));
     err_ret(shminfo.shm_nattch, 0); //return #procs still using memory
 }
@@ -298,8 +324,8 @@ class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Win
 public:
 //    const key_t KEY_NONE = -2;
 //TODO: use "new shmalloc()" to call ctor on shm directly
-    explicit AutoShmary(SrcLine srcline = 0): AutoShmary(1, 0, srcline) {}
-    AutoShmary(size_t ents = 1, key_t key = 0, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
+    explicit AutoShmary(SrcLine srcline = 0): AutoShmary(0, 1, srcline) {}
+    AutoShmary(key_t key = 0, size_t ents = 1, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
     {
         if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;
@@ -380,29 +406,30 @@ void unit_test(ARGS& args)
     shmfree(ptr3, SRCLINE);
 #endif
 
-    uint32_t* ptr = shmalloc_typed<uint32_t>(4, 0, SRCLINE);
+    const key_t KEY = 0; //SHM_LOCAL;
+    uint32_t* ptr = shmalloc_typed<uint32_t>(KEY, 4, SRCLINE);
     ptr[0] = 0x12345678;
     debug(BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
     shmfree(ptr);
 
-    AutoShmary<> ary1(5, 0, SRCLINE);
+    AutoShmary<> ary1(KEY, 5, SRCLINE);
     debug(BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
 
     { //create nested scope to force dtor
-        AutoShmary<> ary2(0, ary1.key(), SRCLINE);
+        AutoShmary<> ary2(ary1.key(), 0, SRCLINE);
         debug(BLUE_MSG << ary2 << ENDCOLOR);
     }
 
     key_t key;
     { //create nested scope to force dtor
-        AutoShmary<uint32_t> ary3(12, 0, SRCLINE);
+        AutoShmary<uint32_t> ary3(KEY, 12, SRCLINE);
         debug(BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[12]);
         key = ary3.key();
     }
-    AutoShmary<uint32_t> ary4(4, key, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
+    AutoShmary<uint32_t> ary4(key, 4, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
     debug(BLUE_MSG << ary4 << ENDCOLOR);
 
-    AutoShmary<uint32_t> ary5(40, key, SRCLINE); //NOTE: this one should fail because original memory is smaller than requested
+    AutoShmary<uint32_t> ary5(key, 40, SRCLINE); //NOTE: this one should fail because original memory is smaller than requested
     debug(BLUE_MSG << ary5 << ENDCOLOR);
 }
 

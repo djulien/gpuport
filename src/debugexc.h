@@ -95,6 +95,14 @@ public: //operators
 //    myprintf(0, std::forward<ARGS>(args) ...); //perfect fwding
 //}
 
+#define HERE(n)  { printf("here" TOSTR(n) " @" TOSTR(__LINE__) "\n"); fflush(stdout); }
+
+#define SNAT_1ARG(var)  snapshot("(no name)", var)
+#define SNAT_2ARGS(desc, var)  SNAT_4ARGS(desc, &(var), sizeof(var), 0)
+#define SNAT_3ARGS(desc, addr, len)  SNAT_4ARGS(desc, addr, len, 0)
+#define SNAT_4ARGS(desc, addr, len, srcline)  snapshot(desc, addr, len, NVL(srcline, SRCLINE))
+#define SNAT(...)  UPTO_4ARGS(__VA_ARGS__, SNAT_4ARGS, SNAT_3ARGS, SNAT_2ARGS, SNAT_1ARG) (__VA_ARGS__)
+
 
 //put desc/dump of object to debug:
 #define inspect_1ARG(thing)  inspect_2ARGS(thing, 0)
@@ -143,6 +151,24 @@ protected: //data members
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
 
+
+void snapshot(const char* desc, const void* addr, size_t len, SrcLine srcline = 0)
+{
+    debug(BLUE_MSG "%s %p..+%u:" ENDCOLOR_ATLINE(srcline), desc, addr, len);
+    std::ostringstream ss;
+//    ss << std::hex;
+    for (int i = 0; i < len; i += 4)
+    {
+        if (!(i % 16))
+        {
+            if (i) ss << "\n";
+//            ss << " '0x" << i << " " << addr + i << ":";
+            ss << FMT(" '0x%x") << i << FMT(" %p:") << addr + i;
+        }
+        ss << FMT(" 0x%.8x") << *(uint32_t*)(addr + i);
+    }
+    debug(BLUE_MSG << ss.str() << ENDCOLOR);
+}
 
 //display a message:
 //popup + console for dev/debug only

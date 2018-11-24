@@ -109,7 +109,7 @@ public: //methods
     inline /*VALTYPE*/ auto load() const { return m_val.load(); }
     inline void store(VALTYPE newval, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DEBUG("= " << newval, srcline);
+        if (WANT_DEBUG) DEBUG("BkgSync = " << newval, srcline);
         LOCKTYPE lock(m_mtx); //NOTE: mutex must be held while var is changed even if atomic, according to https://en.cppreference.com/w/cpp/thread/condition_variable
 //        want_or? m_val |= newval: m_val = newval;
         VOID m_val.store(newval);
@@ -117,7 +117,7 @@ public: //methods
     }
     inline auto fetch_or(VALTYPE bits, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DEBUG("|= " << bits, srcline);
+        if (WANT_DEBUG) DEBUG("BkgSync |= " << bits, srcline);
         LOCKTYPE lock(m_mtx); //NOTE: mutex must be held while var is changed even if atomic, according to https://en.cppreference.com/w/cpp/thread/condition_variable
         VALTYPE oldval = m_val.fetch_or(bits);
         VOID notify(srcline);
@@ -125,14 +125,14 @@ public: //methods
     }
     void notify(SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DEBUG("notify all, val " << load(), srcline);
+        if (WANT_DEBUG) DEBUG("BkgSync notify all, val " << load(), srcline);
 ////        all? m_cv.notify_all(): m_cv.notify_one();
 //        m_cv.notify_all();
         VOID m_cv.notify_all();
     }
     bool wait(VALTYPE want_value = 0, bool blocking = true, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "bgsync wait for 0x" << std::hex << want_value << std::dec << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
+        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
         if (load() == want_value) return true; //no need to wait, already has desired value
         if (blocking) { LOCKTYPE lock(m_mtx); m_cv.wait(lock, [this, want_value]{ return load() == want_value; }); } //filter out spurious wakeups
         return blocking;

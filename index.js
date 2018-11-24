@@ -5,7 +5,8 @@ require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
 const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
 //TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
-const /*GpuPort*/ {limit, listen} = require('./build/Release/gpuport'); //.node');
+const GpuPort = require('./build/Release/gpuport'); //.node');
+const /*GpuPort*/ {limit, listen} = GpuPort; //require('./build/Release/gpuport'); //.node');
 //console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
 
@@ -43,7 +44,8 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
-//if (false)
+if (typeof limit == "function")
+{
 debug(`
     limit blue ${hex(BLUE)} => ${hex(limit(BLUE))}, 
     cyan ${hex(CYAN)} => ${hex(limit(CYAN))},
@@ -55,24 +57,23 @@ debug(`
 //    ${limit("16777215")} //WHITE as string
 //    ${limit()} //missing value
 //    ${limit({})} //bad value
+}
 
-//const value = 8;    
-//console.log(`${value} times 2 equals`, GpuPort.my_function(value));
-//console.log(GpuPort.hello());
 const seqlen = 10;
 const opts =
 {
     vgroup: 30,
     color: -1, //0xffff00ff,
 };
-//var count = 0;
+var THIS = {count: 0, };
 //TODO: try{
 const SEQLEN = 5;
-const gp = listen(opts, (frnum, nodes, info) =>
+//const WANT_GP = false; //true; //false;
+const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments[1]}`);
-    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this);
-    return (this.count < SEQLEN)? 0xffffff: 0;
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${JSON.stringify(nodes).trunc()}, frinfo ${JSON.stringify(frinfo)}`);
+    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this, `(${typeof THIS})`, THIS, 'retval', (THIS.count < SEQLEN)? 0xffffff: 0);
+    return (++THIS.count < SEQLEN)? 0xffffff: 0;
     return (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
 });
 //}catch(exc){}
@@ -108,10 +109,11 @@ function done(retval)
 }
 debug("after main");
 
+//if (false)
 (function idle()
 {
     if ((++idle.count || (idle.count = 1)) < 5) setTimeout(idle, 250);
-    debug("idle", idle.count); //, arguments.back); //how much overdue?
+    debug(`idle ${idle.count}`.blue_lt); //, arguments.back); //how much overdue?
 })();
 
 
@@ -120,20 +122,30 @@ debug("after main");
 /// NAPI test:
 //
 
-// Use the "bindings" package to locate the native bindings.
-if (false)
-{
-//    const binding = require('./build/Release/gpuport'); //.node');
-    const binding = require('./build/Release/gpuport'); //.node');
+const binding = GpuPort; //require('./build/Release/gpuport'); //.node');
 
+if (binding.hello)
+{
+    const value = 8;    
+    console.log(`${value} times 2 equals`, binding.my_function(value));
+    console.log(binding.hello());
+}
+
+
+// Use the "bindings" package to locate the native bindings.
+if (binding.startThread)
+{
 // Call the function "startThread" which the native bindings library exposes.
 // The function accepts a callback which it will call from the worker thread and
 // into which it will pass prime numbers. This callback simply prints them out.
-    binding.startThread((thePrime) =>
+    binding.startThread((thePrime, other) =>
     {
-        debug("cb", `(${typeof this})`, this);
+        debug(`cb this (${typeof this}) ${JSON.stringify(this)}, other (${typeof other}) ${JSON.stringify(other).trunc(200)}`.blue_lt);
         ++this.prime_count || (this.prime_count = 1);
-        debug(`Received prime# ${this.prime_count} from secondary thread: ` + thePrime);
+        other[4] = 4444;
+        other[7] = 7777777;
+        ++other[0];
+        debug(`Received prime# ${this.prime_count} from secondary thread: ${thePrime}`.cyan_lt);
         return (this.prime_count < 10);
     });
 //    process.exit();
@@ -230,6 +242,7 @@ function extensions()
 //below are mainly for debug:
 //    if (!String.prototype.echo)
     String.prototype.echo = function echo(args) { args = Array.from(arguments); args.push(this.escnl); console.error.apply(null, args); return this; } //fluent to allow in-line usage
+    String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${this.length - maxlen})`: this; }
     String.prototype.replaceAll = function replaceAll(from, to) { return this.replace(new RegExp(from, "g"), to); } //NOTE: caller must esc "from" string if contains special chars
 //    if (!String.prototype.splitr)
     Object.defineProperties(String.prototype,

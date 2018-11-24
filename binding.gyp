@@ -27,6 +27,7 @@
             [
                 "-g", #include debug symbols
                 "-O3", #optimization
+#                "-O0", #no optimization
                 "-std=c++14",
                 "-fPIC", "-pthread", "-fno-omit-frame-pointer", "-fno-rtti", 
                 "-Wall", "-Wextra", "-Wno-unused-parameter", "-w", "-Wall", "-pedantic", "-Wvariadic-macros",
