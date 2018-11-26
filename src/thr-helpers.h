@@ -130,11 +130,20 @@ public: //methods
 //        m_cv.notify_all();
         VOID m_cv.notify_all();
     }
-    bool wait(VALTYPE want_value = 0, bool blocking = true, SrcLine srcline = 0)
+    typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+    bool wait(VALTYPE want_value = 0, CANCEL cancel = NULL, bool blocking = true, SrcLine srcline = 0)
     {
         if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << ": thr# " << thrinx() << ", cur val " << m_val, srcline);
         if (load() == want_value) return true; //no need to wait, already has desired value
-        if (blocking) { LOCKTYPE lock(m_mtx); m_cv.wait(lock, [this, want_value]{ return load() == want_value; }); } //filter out spurious wakeups
+        if (blocking)
+        {
+            LOCKTYPE lock(m_mtx);
+            m_cv.wait(lock, [this, want_value, cancel]
+            {
+                if (cancel && cancel()) return true;
+                return load() == want_value; //filter out spurious wakeups
+            });
+        }
         return blocking;
     }
 #undef DEBUG

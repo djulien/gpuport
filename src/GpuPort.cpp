@@ -50,12 +50,12 @@
 
 
 #if defined(USE_NAPI)
- #define NAPI_EXPERIMENTAL //NOTE: need this to avoid compile errors; need v10.6.0 or later
+ #define NAPI_EXPERIMENTAL //NOTE: need this to avoid compile errors; needs Node v10.6.0 or later
  #include <node_api.h> //C style api; https://nodejs.org/api/n-api.html
- #define NAPI_EXPORTS  NAPI_MODULE //kludge: make macro name consistent to reduce #if
+ #define NAPI_EXPORTS  NAPI_MODULE //kludge: make macro name consistent to reduce #ifs
 #elif defined(USE_NODE_ADDON_API)
  #include "napi.h" //C++ style api; #includes node_api.h
- #define NAPI_EXPORTS  NODE_API_MODULE //kludge: make macro name consistent to reduce #if
+ #define NAPI_EXPORTS  NODE_API_MODULE //kludge: make macro name consistent to reduce #ifs
 #elif defined(USE_NAN)
  #include <nan.h> //older V8 api
 #else
@@ -77,9 +77,9 @@
 #endif
 
 
-#define UNUSED(thing)  //(void)thing
+#define UNUSED(thing)  //(void)thing //avoid compiler warnings
 
-//accept variable # up to 1 - 2 macro args:
+//accept variable # 2-4 macro args:
 #ifndef UPTO_2ARGS
  #define UPTO_2ARGS(skip1, skip2, use3, ...)  use3
 #endif
@@ -101,13 +101,11 @@
 #define NO_HINT  NULL //const void* NO_HINT = NULL; //optional finalize_hint
 
 //define top of module init chain:
-#define module_exports(napi_env_env, napi_value_exports)  napi_value_exports
+#define module_exports(env, exports)  exports
 
 
 //remember last error (mainly for debug msgs):
 //CAUTION: shared between threads
-#define DEF_ENV  env //assume env is named "env"
-#define NO_ERRCODE  NULL
 napi_status NAPI_LastStatus = napi_ok;
 //?? napi_get_and_clear_last_exception(napi_env env, napi_value* result);
 
@@ -122,6 +120,8 @@ std::string NAPI_ErrorMessage(napi_env env)
 }
 
 //TODO: add SRCLINE
+#define DEF_ENV  env //assume env is named "env"
+#define NO_ERRCODE  NULL
 #define NAPI_exc_1ARG(msg)  NAPI_exc_2ARGS(DEF_ENV, msg)
 #define NAPI_exc_2ARGS(env, msg)  NAPI_exc_3ARGS(env, NO_ERRCODE, msg)
 #define NAPI_exc_3ARGS(env, errcode, msg)  NAPI_exc_4ARGS(env, errcode, msg, SRCLINE) //(napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
@@ -152,55 +152,29 @@ inline napi_status napi_throw_error(napi_env env, const char* errcode, std::/*os
 //    return false; //dummy "okay" result to satisfy compiler (throw() won't fall thru)
 //}
 
-//reduce verbosity by using a unique small int instead of env id:
-int envinx(const napi_env myenv)
+//reduce verbosity by using a unique small int instead of ugly env id:
+int envinx(const napi_env env)
 {
 //TODO: move to shm?
-    static std::vector</*std::decay<decltype(thrid())>*/napi_env> envs;
+    static std::vector</*std::decay<decltype(thrid())>*/napi_env> envlist;
     static std::mutex mtx;
     std::unique_lock<decltype(mtx)> lock(mtx);
 
-    for (auto it = envs.begin(); it != envs.end(); ++it)
-        if (*it == myenv) return it - envs.begin();
-    int newinx = envs.size();
-    envs.push_back(myenv);
+    for (auto it = envlist.begin(); it != envlist.end(); ++it) //small list; hash/map overhead not justified so just use linear scan
+        if (*it == env) return it - envlist.begin();
+    int newinx = envlist.size();
+    envlist.push_back(env);
     return newinx;
 }
 
 
+//napi value type convenience/helper functions:
 napi_valuetype valtype(napi_env env, napi_value value)
 {
     napi_valuetype valtype;
-    !NAPI_OK(napi_typeof(env, value, &valtype), "Get val type failed");
+    !NAPI_OK(napi_typeof(env, value, &valtype), "Get value type failed");
     return valtype;
 }
-
-
-//template <typename napi_status (*getval)
-napi_status get_prop(napi_env env, napi_value obj, const char* name, bool* has_prop, napi_value* valp)
-{
-//    bool has_prop;
-//    napi_value prop_val;
-    if (!NAPI_OK(napi_has_named_property(env, obj, name, has_prop)) || !*has_prop) return NAPI_LastStatus;
-    return napi_get_named_property(env, obj, name, valp);
-}
-//type-specific overloads:
-napi_status get_prop(napi_env env, napi_value obj, const char* name, int32_t* valp)
-{
-    bool has_prop;
-    napi_value prop_val;
-    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
-    return napi_get_value_int32(env, prop_val, valp);
-}
-napi_status get_prop(napi_env env, napi_value obj, const char* name, uint32_t* valp)
-{
-    bool has_prop;
-    napi_value prop_val;
-    if (!NAPI_OK(get_prop(env, obj, name, &has_prop, &prop_val)) || !has_prop) return NAPI_LastStatus;
-    return napi_get_value_uint32(env, prop_val, valp);
-}
-
-
 static inline const char* TypeName(napi_valuetype key)
 {
     static const std::map<napi_valuetype, const char*> names =
@@ -210,7 +184,6 @@ static inline const char* TypeName(napi_valuetype key)
         {napi_boolean, "bool"},
         {napi_number, "number"},
         {napi_string, "string"},
-//not needed, but include for competeness:
         {napi_symbol, "symb"},
         {napi_object, "obj"},
         {napi_function, "func"},
@@ -229,7 +202,7 @@ static inline const char* TypeName(napi_typedarray_type key)
         {napi_int16_array, "int16"},
         {napi_uint16_array, "uint16"},
         {napi_int32_array, "int32"},
-        {napi_uint32_array, "uint32"}, //only one used here; others inclkuded for completeness
+        {napi_uint32_array, "uint32"}, //only one used below; others included for completeness
         {napi_float32_array, "float32"},
         {napi_float64_array, "float64"},
         {napi_bigint64_array, "bigint64"},
@@ -239,7 +212,69 @@ static inline const char* TypeName(napi_typedarray_type key)
 }
 
 
+//create thread-safe wrapper for caller's js callback function:
+//    napi_ref aoref; //ref to wrapped version of this object
+void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+{
+    napi_value wker_name;
+    const napi_value NO_RESOURCE = NULL; //optional, for init hooks
+    const int QUE_NOMAX = 0; //no limit; TODO: should this be 1 to prevent running ahead? else requires multi-frame pixel bufs
+    const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
+    void* NO_FINAL_DATA = NULL;
+    napi_finalize NO_FINALIZE = NULL;
+    void* NO_CONTEXT = NULL;
+//    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
+    napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
+    if (valtype(env, jsfunc) != napi_function) NAPI_exc("expected js function arg");
+    !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &wker_name), "Cre wkitem desc str failed");
+    !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, NO_CONTEXT, napi_cb, fats), "Cre JS fats failed");
+}
+
+struct my_napi_property_descriptor: public napi_property_descriptor
+{
+    static SrcLine srcline; //kludge: create a place for _.srcline; CAUTION: don't change size of prop descr (used in arrays)
+};
+SrcLine /*GpuAddonData::*/my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline in above code
+
+//napi property convenience/helper functions:
+bool hasprop(napi_env env, napi_value obj, const char* name)
+{
+    bool has_prop;
+    !NAPI_OK(napi_has_named_property(env, obj, name, &has_prop), "Check for named prop failed");
+    return has_prop;
+}
+
+//template <typename napi_status (*getval)
+bool /*napi_status*/ getprop(napi_env env, napi_value obj, const char* name, napi_value* valp)
+{
+//    bool has_prop;
+//    napi_value prop_val;
+//    if (!NAPI_OK(napi_has_named_property(env, obj, name, has_prop)) || !*has_prop) return NAPI_LastStatus;
+//    return napi_get_named_property(env, obj, name, valp);
+    if (!hasprop(env, obj, name)) return false;
+    !NAPI_OK(napi_get_named_property(env, obj, name, valp), "Get named prop failed");
+    return true;
+}
+
+//type-specific overloads:
+bool /*napi_status*/ getprop(napi_env env, napi_value obj, const char* name, int32_t* valp)
+{
+    napi_value prop_val;
+    if (!getprop(env, obj, name, &prop_val)) return false;
+//    if (valtype(env, obj) != )
+    return NAPI_OK(napi_get_value_int32(env, prop_val, valp), "Get int32 prop failed");
+}
+bool /*napi_status*/ getprop(napi_env env, napi_value obj, const char* name, uint32_t* valp)
+{
+//    bool has_prop;
+    napi_value prop_val;
+    if (!getprop(env, obj, name, &prop_val)) return false;
+    return NAPI_OK(napi_get_value_uint32(env, prop_val, valp), "Get uint32 prop failed");
+}
+
+
 //kludge: composite object for operator<< specialization:
+//CAUTION; do not store napi_values across high-level napi calls / on  heap
 struct napi_thingy
 {
     napi_env env;
@@ -248,7 +283,7 @@ public: //ctors/dtors
 //    explicit napi_thingy() {}
     napi_thingy() = delete; //default ctor is useless without env
     explicit inline napi_thingy(napi_env new_env): env(new_env) { undef(); }
-    inline napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {}
+    inline napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {} //TODO: inc ref count?
     inline ~napi_thingy() { undef(); } //reset in case caller added refs to other objects; probably not needed
 public: //operators
     inline operator napi_env() const { return env; }
@@ -265,6 +300,10 @@ public: //operators
         !NAPI_OK(napi_is_typedarray(env, value, &is_typary), "Check if typed array failed");
         return is_typary;
     }
+//    inline napi_valuetype type(napi_valuetype type)
+//    {
+//        if (type() != type) NAPI_exc(opts.env, "Expected object as first arg"); //TODO: allow other types?
+//    }
     inline napi_valuetype type() const { return valtype(env, value); }
     napi_typedarray_type arytype() const
     {
@@ -275,12 +314,7 @@ public: //operators
         !NAPI_OK(napi_get_typedarray_info(env, value, &arytype, &arylen, &data, &arybuf, &bofs), "Get typed array info failed");
         return arytype;
     }
-//    napi_status napi_get_dataview_info(napi_env env,
-//                                   napi_value dataview,
-//                                   size_t* byte_length,
-//                                   void** data,
-//                                   napi_value* arraybuffer,
-//                                   size_t* byte_offset)
+//    napi_status napi_get_dataview_info(napi_env env, napi_value dataview, size_t* byte_length, void** data, napi_value* arraybuffer, size_t* byte_offset)
 //for debug or error msgs:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const napi_thingy& napval) CONST
     {
@@ -341,13 +375,13 @@ public: //operators
                 {
                     void* data;
                     napi_value arybuf;
-                    size_t arylen, bofs;
+                    size_t count, bytofs;
                     napi_typedarray_type arytype;
 //            ostrm << NVL(TypeName(napval.arytype()), "??ARYTYPE??");
 //            ostrm << "(" << napval.type() << ":" << napval.arytype() << ")";
-                    !NAPI_OK(napi_get_typedarray_info(napval.env, napval.value, &arytype, &arylen, &data, &arybuf, &bofs), napval.env, "Get typed array info failed");
-                    ostrm << " TYPARY " << TypeName(arytype) << "[" << commas(arylen) << "] on " << napi_thingy(napval.env, arybuf); //CAUTION: 1 level of recursion
-                    if (bofs) ostrm << "+0x" << std::hex << bofs << "=" << data << std::dec; 
+                    !NAPI_OK(napi_get_typedarray_info(napval.env, napval.value, &arytype, &count, &data, &arybuf, &bytofs), napval.env, "Get typed array info failed");
+                    ostrm << " TYPARY " << TypeName(arytype) << "[" << commas(count) << "] on " << napi_thingy(napval.env, arybuf); //CAUTION: 1 level of recursion
+                    if (bytofs) ostrm << "+0x" << std::hex << bytofs << "=" << data << std::dec; 
                     break;
                 }
 //napi_external,
@@ -356,10 +390,28 @@ public: //operators
         return ostrm;
     }
 public: //methods
-    inline void null() { !NAPI_OK(napi_get_null(env, &value), "Get null failed"); }
-    inline void undef() { !NAPI_OK(napi_get_undefined(env, &value), "Get undef failed"); }
-    inline void int32(int32_t new_val) { !NAPI_OK(napi_create_int32(env, new_val, &value), "Get int32 failed"); }
-    inline void uint32(int32_t new_val) { !NAPI_OK(napi_create_uint32(env, new_val, &value), "Get uint32 failed"); }
+//get value:
+    inline bool hasprop(const char* name) { return hasprop(env, value, name); }
+    inline bool getprop(const char* name, napi_value* valp) { return getprop(env, value, name, valp); }
+    inline bool getprop(const char* name, uint32_t* valp) { return getprop(env, value, name, valp); }
+    inline bool getprop(const char* name, int32_t* valp) { return getprop(env, value, name, valp); }
+//set new value:
+    inline void null(napi_env new_env) { env = new_env; null(); }
+    inline void undef(napi_env new_env) { env = new_env; undef(); }
+    inline void object(napi_env new_env) { env = new_env; object(); }
+    inline void ext_arybuf(napi_env new_env, void* buf, size_t len) { env = new_env; ext_arybuf(buf, len); }
+    inline void typed_ary(napi_env new_env, napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { env = new_env; typed_ary(type, count, arybuf, bofs); }
+    inline void int32(napi_env new_env, int32_t new_val) { env = new_env; int32(new_val); }
+    inline void uint32(napi_env new_env, uint32_t new_val) { env = new_env; uint32(new_val); }
+    inline void null() { !NAPI_OK(napi_get_null(env, &value), "Cre null failed"); }
+    inline void undef() { !NAPI_OK(napi_get_undefined(env, &value), "Cre undef failed"); }
+    inline void object() { !NAPI_OK(napi_create_object(env, &value), "Cre obj failed"); }
+    inline void ext_arybuf(void* buf, size_t len) { !NAPI_OK(napi_create_external_arraybuffer(env, buf, len, NO_FINAL, NO_HINT, &value), "Cre arraybuf failed"); }
+    inline void typed_ary(napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs) { !NAPI_OK(napi_create_typedarray(env, type, count, arybuf, bofs, &value), "Cre typed array failed"); }
+    inline void int32(int32_t new_val) { !NAPI_OK(napi_create_int32(env, new_val, &value), "Cre int32 failed"); }
+    inline void uint32(uint32_t new_val) { !NAPI_OK(napi_create_uint32(env, new_val, &value), "Cre uint32 failed"); }
+    int32_t operator=(const int32_t& new_val) { int32(new_val); return new_val; }
+    uint32_t operator=(const uint32_t& new_val) { uint32(new_val); return new_val; }
 };
 //napi_thingy;
 #endif //def SRC_NODE_API_H_ //USE_NAPI
@@ -374,28 +426,595 @@ public: //methods
  #ifdef SRC_NODE_API_H_ //USE_NAPI
 
 #include "sdl-helpers.h" //AutoTexture, Uint32, now()
+#include "shmalloc.h" //AutoShmary<>, cache_pad(), WithShmHdr<>
+
+//timing constraints:
+//hres / clock (MHz) = node time (usec):
+//calculate 3th timing param using other 2 as constraints
+//#define CLOCK_HRES2NODE(clock, hres)  ((hres) / (clock))
+//#define CLOCK_NODE2HRES(clock, node)  ((clock) * (node))
+//#define HRES_NODE2CLOCK(hres, node)  ((hres) / (node))
+
+//clock (MHz) / hres / vres = fps:
+//calculate 4th timing param using other 3 as constraints
+//#define CLOCK_HRES_VRES2FPS(clock, hres, vres)  ((clock) / (hres) / (vres))
+//#define CLOCK_HRES_FPS2VRES(clock, hres, fps)  ((clock) / (hres) / (fps))
+//#define CLOCK_VRES_FPS2HRES(clock, vres, fps)  ((clock) / (vres) / (fps))
+//#define HRES_VRES_FPS2CLOCK(hres, vres, fps)  ((hres) * (vres) * (fps))
+//#define VRES_LIMIT(clock, hres, fps)  ((clock) / (hres) / (fps))
+//#define HRES_LIMIT(clock, vres, fps)  ((clock) / (vres) / (fps))
+//#define FPS_LIMIT(clock, hres, vres)  ((clock) / (hres) / (vres))
+//#define CLOCK_LIMIT(hres, vres, fps)  ((hres) * (vres) * (fps))
+#define MHz  *1000000 //must be int for template param; //*1e6
+
+#define CLOCK_CONSTRAINT_2ARGS(hres, nodetime)  ((hres) / (nodetime))
+#define CLOCK_CONSTRAINT_3ARGS(hres, vres, fps)  ((hres) * (vres) * (fps))
+#define CLOCK_CONSTRAINT(...)  UPTO_3ARGS(__VA_ARGS__, CLOCK_CONSTRAINT_3ARGS, CLOCK_CONSTRAINT_2ARGS, CLOCK_CONSTRAINT_1ARG) (__VA_ARGS__)
+
+#define HRES_CONSTRAINT_2ARGS(clock, nodetime)  ((clock) * (nodetime))
+#define HRES_CONSTRAINT_3ARGS(clock, vres, fps)  ((clock) / (vres) / (fps))
+#define HRES_CONSTRAINT(...)  UPTO_3ARGS(__VA_ARGS__, HRES_CONSTRAINT_3ARGS, HRES_CONSTRAINT_2ARGS, HRES_CONSTRAINT_1ARG) (__VA_ARGS__)
+
+#define NODETIME_CONSTRAINT(clock, hres)  ((hres) / (clock))
+#define VRES_CONSTRAINT(clock, hres, fps)  ((clock) / (hres) / (fps))
+#define FPS_CONSTRAINT(clock, hres, vres)  ((clock) / (hres) / (vres))
+
+
+class GpuAddonData; //fwd ref
+
+struct Nodebuf
+{
+//settings that must match h/w:
+//TODO: move some of this to run-time or extern #include
+    static const int IOPINS = 24; //total #I/O pins available (h/w dependent); also determined by device overlay
+    static const int HWMUX = 0; //#I/O pins (0..23) to use for external h/w mux
+//derived settings:
+    static const int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX); //max #univ with/out external h/w mux
+//settings that must match (cannot exceed) video config:
+//put 3 most important constraints first, 4th will be dependent on other 3
+//default values are for my layout
+    static const int CLOCK = 52 MHz; //pixel clock speed (constrained by GPU)
+    static const int HTOTAL = 1536; //total x res including blank/sync (might be contrained by GPU); 
+    static const int FPS = 30; //target #frames/sec
+//derived settings:
+    static const int UNIV_MAXLEN_raw = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ; above values give ~1128
+    static const int UNIV_MAXLEN_pad = cache_pad<NODEVAL>(UNIV_MAXLEN_raw); //1132 for above values
+//    static const SDL_Size max_wh(NUM_UNIV, UNIV_MAXLEN_pad);
+    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
+//    using MASK_TYPE = uint32_t; //using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
+//settings determined by s/w:
+    static const int NODEBITS = 24; //# bits to send for each WS281X node (protocol dependent)
+    static const int BIT_SLICES = NODEBITS * 3; //divide each node data bit into 1/3s (last 1/3 of last node bit will overlap hsync)
+    static const unsigned int NODEVAL_MSB = 1 << (NODEBITS - 1);
+    static const int BRIGHTEST = pct(50/60);
+//    static const unsigned int NODEVAL_MASK = 1 << NODEBITS - 1;
+    static const MASK_TYPE UNIV_MASK = 1 << NUM_UNIV - 1;
+    static const MASK_TYPE ALL_UNIV = UNIV_MASK; //NODEVAL_MASK;
+//probably a little too much compile-time init, but here goes ...
+    using NODEVAL = Uint32; //data type for node colors (ARGB)
+    static const napi_typedarray_type GPU_NODE_type = napi_uint32_array; //NOTE: must match NODEVAL type
+    using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
+    using TXTR = SDL_AutoTexture<XFRTYPE>;
+//    std::unique_ptr<NODEVAL> m_nodes; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+protected: //data members
+    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
+//    typedef std::function<void(void* dest, const void* src, size_t len)> XFR; //void* (*XFR)(void* dest, const void* src, size_t len); //NOTE: must match memcpy sig; //decltype(memcpy);
+    const /*std::function<void(void*, const void*, size_t)>*/TXTR::XFR m_xfr; //protocol formatter; bit-bangs caller-defined node colors into protocol format; memcpy signature; TODO: try to use AutoTexture<>::XFR; TODO: find out why const& no worky
+//    using SHARED_INFO = SharedInfo<NUM_UNIV, UNIV_MAX, SIZEOF(m_txtr.perf_stats), NODEVAL>;
+//    using REFILL = std::function<void(void)>; //mySDL_AutoTexture* txtr)>;
+//    NODEVAL& nodes;
+public: //data members
+    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X};
+    static inline const char* ProtocolName(Protocol key)
+    {
+        static const std::map<Protocol, const char*> names =
+        {
+            {Protocol::NONE, "NONE"},
+            {Protocol::DEV_MODE, "DEV MODE"},
+            {Protocol::WS281X, "WS281X"},
+        };
+        return unmap(names, key); //names;
+    }
+    Protocol protocol; //= WS281X;
+//    static const int NUM_STATS = SIZEOF(TXTR::perf_stats);
+//    typedef std::function<void(mySDL_AutoTexture* txtr)> REFILL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+    using SYNCTYPE = BkgSync<MASK_TYPE, true>;
+    SYNCTYPE dirty; //one Ready bit for each universe
+    CONST SDL_Size wh, view; //#univ, univ len for node values, display viewport
+//TODO: use alignof here instead of cache_pad
+    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+public: //ctors/dtors
+    explicit Nodebuf(napi_env env):
+        m_cached(env), //allow napi values to be inited
+        m_xfr(std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE)) //protocol bit-banger shim
+        {}
+public: //operators
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Nodebuf& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    { 
+//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+//        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
+//        SDL_version ver;
+//        SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
+//        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+//    %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+        ostrm << "Nodebuf"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+//        ostrm << ", protocol " << NVL(ProtocolName(that.protocol), "??PROTOCOL??");
+//        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
+//        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
+//        ostrm << ", exc " << that.excptr.what(); //that.excptr << " (" <<  << ")"; //= nullptr; //TODO: check for thread-safe access
+//        ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
+        ostrm << ", dirty " << that.dirty; //sizeof(that.dirty) << ": 0x" << std::hex << that.dirty.load() << std::dec;
+//        ostrm << ", #fr " << that.numfr.load();
+        ostrm << ", wh " << that.wh << ", view " << that.view;
+//        SDL_Size wh(SIZEOF(that./*shdata.*/nodes), SIZEOF(that./*shdata.*/nodes[0]));
+        ostrm << ", protocol " << NVL(ProtocolName(that.protocol), "??PROTOCOL??");
+        ostrm << ", nodes@ " << &that.nodes[0][0] << ".." << &that.nodes[NUM_UNIV][0]; //+" << commas(sizeof(that.nodes)) << " (" << wh << ")";
+//                ostrm << ", time " << that.nexttime.load();
+        ostrm << ", cached node wrapper " << that.m_cached;
+        ostrm << ", txtr " << that.m_txtr;
+//        ostrm << ", age " << /*elapsed(that.started)*/ that.elapsed() << " sec";
+    }
+public: //methods
+//    static size_t cache_pad32(size_t count) return { cache_pad(count * sizeof(NODEVAL)) / sizeof(NODEVAL); }
+    double frame_time; //kludge: set value here to match txtr; used in FrameInfo
+    void reset()
+    {
+        m_txtr = 0; //delete wnd/txtr
+        wh = view = SDL_Size(0, 0);
+        dirty.store(0);
+        m_cached.undef();
+    }
+    void reset(int screen = FIRST_SCREEN, int vgroup = 0, NODEVAL init_color = BLACK) //SDL_Size& new_wh) //, SrcLine srcline = 0)
+    {
+        wh.w = NUM_UNIV;
+        view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
+        view.h = wh.h = std::min(divup(static_cast<int>(ScreenInfo(screen, SRCLINE)->bounds.h), vgroup? vgroup: 1), SIZEOF(nodes[0])); //univ len == display height
+//        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
+//        m_debug3(m_view.h),
+//TODO: don't recreate if already exists with correct size
+        m_txtr = TXTR::create(NAMED{ _.wh = &wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
+        dirty.store(0);
+        const ScreenConfig* const m_cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
+        if (!m_cfg) exc_hard(RED_MSG "can't get screen config" ENDCOLOR);
+        frame_time = m_cfg->frame_time();
+//        if (UNIV_LEN > UNIV_MAX) exc_soft(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgroup << " require univ len " << UNIV_LEN << " exceeding max " << UNIV_MAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
+//        size_t len = new_wh.w * new_wh.h;
+//        m_nodes.reset(new NODEVAL[len]);
+    }
+//create typed array wrapper for nodes:
+    napi_thingy m_cached; //wrapped nodebuf for napi
+    void wrap(napi_env env, napi_value* valp = 0)
+    {
+//can't cache :(        if (nodes.arytype() != napi_uint32_array) //napi_typedarray_type)
+//        {
+        if (!env) return; //Node cleanup mode?
+//can't cache :(        if (frinfo.type() != napi_object)
+//CAUTION:
+        if (valp && (m_cached.env == env) && (m_cached.arytype() == GPU_NODE_type /*m_cached.type() != napi_undefined*/)) { *valp = m_cached.value; return; }
+//        napi_thingy frinfo(env);
+//        napi_thingy arybuf(env), nodes(env);
+//napi_get_null(env, &arybuf.value);
+//napi_get_null(env, &nodes.value);
+//            void* NO_HINT = NULL; //optional finalize_hint
+//debug("env " << env << ", size " << commas(sizeof(gpu_wker->m_nodes)) << ENDCOLOR);
+    //        debug("arybuf1 " << arybuf << ENDCOLOR);
+    //        !NAPI_OK(napi_create_int32(env, 1234, &arybuf.value), "cre int32 failed");
+    //        debug("arybuf2 " << arybuf << ENDCOLOR);
+    //        !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &arybuf.value), "cre str failed");
+    //        debug("arybuf3 " << arybuf << ENDCOLOR);
+    //        !NAPI_OK(napi_create_external_arraybuffer(env, &junk[0][0], sizeof(junk), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
+    //        debug("arybuf4 " << arybuf << ENDCOLOR);
+        napi_thingy arybuf(env);
+        arybuf.ext_arybuf(&nodes[0][0], sizeof(nodes));
+//        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
+        debug("arybuf5 " << arybuf << ENDCOLOR);
+//            debug("nodes1 " << nodes << ENDCOLOR);
+//            !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "cre int32 failed");
+//            debug("nodes2 " << nodes << ENDCOLOR);
+//            !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
+//            debug("nodes3 " << nodes << ENDCOLOR);
+//            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
+//            debug("nodes4 " << nodes << ENDCOLOR);
+//        m_cached.object(env);
+        m_cached.typed_ary(env, GPU_NODE_type, wh.w * wh.h, arybuf);
+        debug("nodes5 " << nodes << ENDCOLOR);
+//        debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(napi_uint32_array)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
+//        }
+//        if (nodes.env != env) NAPI_exc("nodes env mismatch");
+        *valp = m_cached.value;
+    }
+private: //helpers
+    static void xfr_bb(Nodebuf& nodebuf, void* txtrbuf, const void* nodebuf, size_t xfrlen, SrcLine srcline) // = 0) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
+    {
+        XFRTYPE bbdata/*[UNIV_MAX]*/[BIT_SLICES]; //3 * NODEBITS]; //bit-bang buf; enough for *1 row* only; dcl in heap so it doesn't need to be fully re-initialized every time
+//        SrcLine srcline2 = 0; //TODO: bind from caller?
+//printf("here7\n"); fflush(stdout);
+//            VOID memcpy(pxbuf, pixels, xfrlen);
+//            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
+//            int wh = xfrlen; //TODO
+//        SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
+        if ((nodebuf.wh.w != SIZEOF(bbdata)) || (xfrlen != nodebuf.wh.h * sizeof(bbdata) /*gp.m_wh./-*datalen<XFRTYPE>()*-/ w * sizeof(XFRTYPE)*/)) exc_hard(RED_MSG "xfr_raw size mismatch: got " << (xfrlen / sizeof(XFRTYPE)) << ", expected " << nodebuf.wh << ENDCOLOR);
+//        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW/*_PADDED*/, xfrlen / XFRW/*_PADDED*/ / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
+//        if (!(count++ % 100))
+//        static int count = 0;
+//        if (!count++)
+//            debug(BLUE_MSG "bit bang xfr: " << nodes_wh << " node buf => " << gp.m_wh << ENDCOLOR_ATLINE(srcline));
+//NOTE: txtrbuf = in-memory texture, nodebuf = just a ptr of my *unformatted* nodes
+//this won't work: different sizes        VOID memcpy(txtrbuf, nodebuf, xfrlen);
+//        using TXTRBUF = XFRTYPE[gp.m_wh.h][XFRW];
+//        TXTRBUF& txtrptr = txtrbuf;
+        XFRTYPE* ptr = static_cast<XFRTYPE*>(txtrbuf);
+//allow caller to turn formatting on/off at run-time (only useful for dev/debug, since h/w doesn't change):
+//adds no extra run-time overhead if protocol is checked outside the loops
+//3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
+        static const bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
+        auto /*UNIV_MASK*/ dirty = nodebuf.dirty.load() | (255 * Ashift); //use dirty/ready bits as start bits
+        switch (nodebuf.protocol)
+        {
+            default: //NONE (raw)
+                for (int y = 0; y < nodebuf.wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, xmask >>= 1) //inner loop = universe#
+                        *ptr++ = *ptr++ = *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(nodebuf.nodes[x][y]): nodebuf.nodes[x][y]: BLACK; //copy as-is (3x width)
+                break;
+            case Protocol::DEV_MODE: //partially formatted
+                for (int y = 0; y < nodebuf.wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, xmask >>= 1) //inner loop = universe#
+                    {
+//show start + stop bits around unpivoted data:
+                        *ptr++ = dirty; //WHITE;
+                        *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(nodebuf.nodes[x][y]): nodebuf.nodes[x][y]: BLACK; //unpivoted node values
+                        *ptr++ = BLACK;
+                    }
+                break;
+            case Protocol::WS281X: //fully formatted (24-bit pivot)
+                for (int y = 0, yofs = 0; y < nodebuf.wh.h; ++y, yofs += BIT_SLICES) //TXR_WIDTH) //outer loop = node# within each universe
+                {
+//initialize 3x signal for this row of 24 WS281X pixels:
+//            for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+//            {
+//                pxbuf32[yofs + x3 + 0] = leading_edges; //WHITE;
+//                pxbuf32[yofs + x3 + 1] = BLACK; //data bit body (will be overwritten with pivoted color bits)
+////                if (x3) pxbuf32[yofs + x3 - 1] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//                pxbuf32[yofs + x3 + 2] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//            }
+                    memset(&ptr[yofs], 0, sizeof(bbdata));
+                    for (int bit3x = 0; bit3x < BIT_SLICES; bit3x += 3) ptr[yofs + bit3x] = dirty; //WHITE; //leading edge = high; turn on for all universes
+//pivot pixel data onto 24 parallel GPIO pins:
+//  WS281X = 1, PLAIN_SSR = 2, CHPLEX_SSR = 3,TYPEBITS = 0xF,
+// RGSWAP = 0x20, CHECKSUM = 0x40, POLARITY = 0x80};
+//NOTE: xmask loop assumes ARGB or ABGR fmt (A in upper byte)
+                    for (uint32_t x = 0, xofs = 0, xmask = NODEVAL_MSB /*1 << (NUM_UNIV - 1)*/; x < NUM_UNIV; ++x, xofs += nodebuf.wh.h, xmask >>= 1) //inner loop = universe#
+                    {
+                        XFRTYPE color_out = limit<BRIGHTEST>(nodebuf.nodes[x][y]); //[0][xofs + y]; //pixels? pixels[xofs + y]: fill;
+//                            if (!A(color) || (!R(color) && !G(color) && !B(color))) continue; //no data to pivot
+//                        if (rbswap) color_out = ARGB2ABGR(color_out); //user-requested explicit R <-> G swap
+//no                            color = ARGB2ABGR(color); //R <-> G swap doesn't need to be automatic for RPi; user can swap GPIO pins
+//                        if (MAXBRIGHT && (MAXBRIGHT < 100)) color_out = limit(color_out); //limit brightness/power
+//WS281X encoding: 1/3 white, 1/3 data, 1/3 black
+//3x as many x accesses as y accesses, so favor pixels over nodes in memory cache
+//                        /*bbdata[y][xofs + 0]*/ *ptr++ = WHITE;
+//                        /*bbdata[y][xofs + 1]*/ *ptr++ = gp.nodes[x][y];
+//                        /*if (u) bbdata[y][xofs - 1]*/ *ptr++ = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
+//24 WS281X data bits spread across 72 screen pixels = 3 pixels per WS281X data bit:
+#if 1
+//TODO: try 8x loop with r_yofs/r_msb, g_yofs/g_msb, b_yofs/b_msb
+                        for (int bit3x = 0+1; bit3x < BIT_SLICES; bit3x += 3, color_out <<= 1)
+//                        {
+//                            ptr[yofs + bit3 + 0] |= xmask; //leading edge = high
+                            if (color_out & NODEVAL_MSB) ptr[yofs + bit3x] |= xmask; //set this data bit for current node
+//                                pxbuf32[yofs + bit3 + 2] &= ~xmask; //trailing edge = low
+//                        }
+#else
+//set data bits for current node:
+                    if (color_out & 0x800000) ptr[yofs + 3*0 + 1] |= xmask;
+                    if (color_out & 0x400000) ptr[yofs + 3*1 + 1] |= xmask;
+                    if (color_out & 0x200000) ptr[yofs + 3*2 + 1] |= xmask;
+                    if (color_out & 0x100000) ptr[yofs + 3*3 + 1] |= xmask;
+                    if (color_out & 0x080000) ptr[yofs + 3*4 + 1] |= xmask;
+                    if (color_out & 0x040000) ptr[yofs + 3*5 + 1] |= xmask;
+                    if (color_out & 0x020000) ptr[yofs + 3*6 + 1] |= xmask;
+                    if (color_out & 0x010000) ptr[yofs + 3*7 + 1] |= xmask;
+                    if (color_out & 0x008000) ptr[yofs + 3*8 + 1] |= xmask;
+                    if (color_out & 0x004000) ptr[yofs + 3*9 + 1] |= xmask;
+                    if (color_out & 0x002000) ptr[yofs + 3*10 + 1] |= xmask;
+                    if (color_out & 0x001000) ptr[yofs + 3*11 + 1] |= xmask;
+                    if (color_out & 0x000800) ptr[yofs + 3*12 + 1] |= xmask;
+                    if (color_out & 0x000400) ptr[yofs + 3*13 + 1] |= xmask;
+                    if (color_out & 0x000200) ptr[yofs + 3*14 + 1] |= xmask;
+                    if (color_out & 0x000100) ptr[yofs + 3*15 + 1] |= xmask;
+                    if (color_out & 0x000080) ptr[yofs + 3*16 + 1] |= xmask;
+                    if (color_out & 0x000040) ptr[yofs + 3*17 + 1] |= xmask;
+                    if (color_out & 0x000020) ptr[yofs + 3*18 + 1] |= xmask;
+                    if (color_out & 0x000010) ptr[yofs + 3*19 + 1] |= xmask;
+                    if (color_out & 0x000008) ptr[yofs + 3*20 + 1] |= xmask;
+                    if (color_out & 0x000004) ptr[yofs + 3*21 + 1] |= xmask;
+                    if (color_out & 0x000002) ptr[yofs + 3*22 + 1] |= xmask;
+                    if (color_out & 0x000001) ptr[yofs + 3*23 + 1] |= xmask;
+#endif
+                    }
+                }
+                break;
+        }
+    }
+//protected: //helpers
+    template<typename TYPE>
+    static size_t cache_pad(size_t count) { return cache_pad(count * sizeof(TYPE)) / sizeof(TYPE); }
+};
+
+
+struct FrameInfo
+{
+    static const int NUM_STATS = SIZEOF(Nodebuf::TXTR::perf_stats);
+    using Protocol = Nodebuf::Protocol;
+public: //data members
+    Nodebuf::Protocol& protocol; //kludge: linked from nodebuf for easier include in wrap()
+    CONST double& frame_time; //msec; linked from nodebuf for easier include in wrap()
+    CONST SDL_Size& wh; //linked from nodebuf for easier include in wrap(); //int NumUniv, UnivLen;
+    CONST /*elapsed_t*/ /*std::result_of<now_msec()>::type*/ decltype(now_msec()) started;
+    std::atomic</*uint32_t*/ int32_t> numfr; //= 0; //#frames rendered / next frame#
+    uint32_t times[NUM_STATS + 1]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
+public: //ctors/dtors
+    FrameInfo(napi_env env, Nodebuf& nodebuf): protocol(nodebuf.protocol), frame_time(nodebuf.frame_time), wh(nodebuf.wh), m_cached(env) { reset(); } //: m_started(now()) {}
+public: //operators
+//    bool ismine() const { if (owner != thrid()) debug(YELLOW_MSG "not mine: owner " << owner << " vs. me " << thrid() << ENDCOLOR); return (owner == thrid()); } //std::thread::get_id(); }
+//    bool isvalid() const { return (sentinel == FRINFO_VALID); }
+    /*double*/ int elapsed() const { return (now_msec() - started) / 1000; } //.0; }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameInfo& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    { 
+//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+//        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
+//        SDL_version ver;
+//        SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
+//        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+//    %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+        ostrm << "FrameInfo"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+        ostrm << ", fr time " << that.frame_time << " (" << (1 / that.frame_time) << " fps)";
+//        ostrm << ", mine? " << that.ismine(); //<< " (owner 0x" << std::hex << that.frinfo.owner << ")" << std::dec;
+//        ostrm << ", exc " << that.excptr.what(); //that.excptr << " (" <<  << ")"; //= nullptr; //TODO: check for thread-safe access
+//        ostrm << ", owner 0x" << std::hex << that.owner << std::dec; //<< " " << sizeof(that.owner);
+//        ostrm << ", dirty " << that.dirty; //sizeof(that.dirty) << ": 0x" << std::hex << that.dirty.load() << std::dec;
+        ostrm << ", #fr " << that.numfr.load();
+//        ostrm << ", wh " << that.wh;
+//        SDL_Size wh(SIZEOF(that./*shdata.*/nodes), SIZEOF(that./*shdata.*/nodes[0]));
+//        ostrm << ", nodes@ " << &that.nodes[0][0] << "..+" << commas(sizeof(that.nodes)) << " (" << wh << ")";
+//                ostrm << ", time " << that.nexttime.load();
+        ostrm << ", cached napi wrapper " << that.m_cached;
+        ostrm << ", age " << /*elapsed(that.started)*/ that.elapsed() << " sec";
+    }
+public: //methods
+    void reset(int start_frnum = 0) //, SrcLine srcline = 0)
+    {
+        protocol = Protocol::WS281X;
+//            nexttime.store(0);
+        frame_time = 0; //msec
+//        frinfo.wh = SDL_Size(0, 0); //int NumUniv, UnivLen;
+        started = now(); //msec
+//no; interferes with sync        dirty.store(0, NVL(srcline, SRCLINE));
+        numfr = start_frnum; //.store(frnum);
+//        frinfo.dirty = 0; //.store(0);
+//        for (int i = 0; i < SIZEOF(times); ++i) times[i] = 0;
+        memset(&times[0], 0, sizeof(times));
+//            sentinel = FRINFO_MAGIC;
+        m_cached.undef();
+    }
+    void next() //SrcLine srcline = 0)
+    {
+        ++numfr;
+//NOTE: do this here so subscribers can work while RenderPresent waits for VSYNC
+//        dirty.store(0); //, NVL(srcline, SRCLINE)); //clear dirty bits; NOTE: this will wake client rendering threads
+//        gp.wake(); //wake other threads/processes that are waiting to update more nodes as soon as copy to txtr is done to maxmimum parallelism
+    }
+//    static void refill(GpuPort_shdata* ptr) { ptr->refill(); }
+//    void owner_init()
+//    {
+//        owner = std::thread::get_id();
+//    }
+//    SrcLine my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline
+    napi_thingy m_cached; //wrapped frinfo for napi
+    void wrap(napi_env env, napi_value* valp = 0)
+    {
+        if (!env) return; //Node cleanup mode?
+//can't cache :(        if (frinfo.type() != napi_object)
+        if (valp && (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
+//        napi_thingy frinfo(env);
+        m_cached.object(env);
+//        !NAPI_OK(napi_create_object(env, &frinfo.value), "Cre frinfo obj failed");
+//        {
+//Protocol protocol; //= WS281X;
+//const double frame_time; //msec
+//const SDL_Size wh; //int NumUniv, UnivLen;
+//const /*elapsed_t*/ /*std::result_of<now_msec()>::type*/ decltype(now_msec()) started;
+//std::atomic</*uint32_t*/ int> numfr; //= 0; //#frames rendered / next frame#
+//BkgSync<MASK_TYPE, true> dirty; //one Ready bit for each universe
+//uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
+        my_napi_property_descriptor props[7], *pptr = props;
+        memset(&props[0], 0, sizeof(props)); //clear first so NULL members don't need to be explicitly set
+//kludge: use lambas in lieu of C++ named member init:
+//(named args easier to maintain than long param lists)
+        [env, this](auto& _)
+        {
+            _.utf8name = "protocol"; //_.name = NULL;
+//                _.method = NULL;
+//                _.getter = GetProtocol_NAPI; _.setter = SetProtocol_NAPI; //read/write; allow live update
+            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //void* data) //GetProtocol_NAPI; //live update
+            {
+//TODO: refactor with other getters, setter
+                if (!env) return NULL; //Node cleanup mode?
+                GpuAddonData* aodata;
+                napi_value argv[1], This;
+                size_t argc = SIZEOF(argv);
+                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
+//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+//                !NAPI_OK(napi_create_int32(env, static_cast<int32_t>(aodata->wker_ok(env, SRCLINE)->m_frinfo.protocol), &argv[0]), "Get uint32 getval failed");
+                aodata->isvalid(env);
+                napi_thingy retval(env);
+                retval = aodata->m_frinfo.protocol;
+                return retval.value;
+            };
+            _.setter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //SetProtocol_NAPI; //live update
+            {
+                if (!env) return NULL; //Node cleanup mode?
+                GpuAddonData* aodata;
+                napi_value argv[1+1], This;
+                size_t argc = SIZEOF(argv);
+                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Setter info extract failed");
+                if (argc != 1) NAPI_exc("got " << argc << " args, expected 1");
+                aodata->isvalid(env);
+                int /*int32_t*/ prtemp;
+                !NAPI_OK(napi_get_value_int32(env, argv[0], &prtemp), "Get uint32 setval failed");
+                aodata->/*wker_ok(env, SRCLINE)->*/m_frinfo.protocol = static_cast<Nodebuf::Protocol>(prtemp);
+//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
+//                    aodata->wker_ok(env)->m_frinfo.protocol = 0; //TODO
+            };
+//                !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.protocol, &_.value), "Cre protocol int failed");
+            _.attributes = napi_enumerable; //napi_default; //napi_writable | napi_enumerable; //read-write; //napi_default;
+            _.data = this;
+        }(*pptr++);
+//            NAMED{ _.itf8name = "protocol"; _.getter = GetProtocol_NAPI; _.setter = SetProtocol_NAPI; _.attributes = napi_default; }(*props++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "frame_time";
+//                _.getter = GetFrameTime_NAPI; //read-only
+            !NAPI_OK(napi_create_double(env, /*gpu_wker->m_frinfo.*/frame_time, &_.value), "Cre frame_time float failed");
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "NUM_UNIV";
+//                _.getter = GetNumUniv_NAPI; //read-only
+            !NAPI_OK(napi_create_int32(env, /*gpu_wker->m_frinfo.*/wh.w, &_.value), "Cre w int failed");
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "UNIV_LEN";
+            !NAPI_OK(napi_create_int32(env, /*gpu_wker->m_frinfo.*/wh.h, &_.value), "Cre h int failed");
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "started";
+            !NAPI_OK(napi_create_int32(env, /*gpu_wker->m_frinfo.*/started, &_.value), "Cre started int failed");
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "numfr";
+//                !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.numfr.load(), &_.value), "Cre #fr int failed");
+            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //GetNumfr_NAPI; //live update
+            {
+                if (!env) return NULL; //Node cleanup mode?
+                GpuAddonData* aodata;
+                napi_value argv[1], This;
+                size_t argc = SIZEOF(argv);
+                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
+//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+//                !NAPI_OK(napi_create_int32(env, static_cast<int32_t>(aodata->wker_ok(env, SRCLINE)->m_frinfo.protocol), &argv[0]), "Get uint32 getval failed");
+                aodata->isvalid(env);
+                napi_thingy retval(env);
+                retval = aodata->m_frinfo.numfr.load();
+                return retval.value;
+            };
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+            _.data = this;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "dirty";
+//                !NAPI_OK(napi_create_uint32(env, gpu_wker->m_frinfo.dirty.load(), &_.value), "Cre dirty uint failed");
+            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //GetDirty_NAPI; //live update
+            {
+                if (!env) return NULL; //Node cleanup mode?
+                GpuAddonData* aodata;
+                napi_value argv[1], This;
+                size_t argc = SIZEOF(argv);
+                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
+//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.dirty.load();
+                aodata->isvalid(env);
+                napi_thingy retval(env);
+                retval = aodata->/*m_frinfo.*/dirty.load();
+                return retval.value;
+            };
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+            _.data = this;
+        }(*pptr++);
+        [env, this](auto& _) //napi_property_descriptor& _)
+        {
+            _.utf8name = "times"; //NOTE: times[] will update automatically due to underlying array buf
+            napi_thingy arybuf(env);
+            arybuf.ext_arybuf(&times[0], sizeof(times));
+//        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
+            debug("arybuf5 " << arybuf << ENDCOLOR);
+            napi_thingy typary(env);
+            typary.typed_ary(napi_biguint64_array, SIZEOF(times), arybuf);
+            _.value = typary.value;
+//            !NAPI_OK(napi_create_typedarray(env, napi_biguint64_array, SIZEOF(gpu_wker->m_frinfo.times), arybuf, 0, &_.value), "Cre times typed array failed");
+            _.attributes = napi_enumerable; //read-only; //napi_default;
+        }(*pptr++);
+//add above props to frame info object:
+        if (pptr - props > SIZEOF(props)) NAPI_exc("prop overflow");
+        !NAPI_OK(napi_define_properties(env, m_cached.value, pptr - props, props), "set frinfo props failed");
+//        if (frinfo.env != env) NAPI_exc("frinfo env mismatch");
+        *valp = m_cached.value;
+    }
+};
+
 
 //addon state/context data:
-//using struct to allow inline member init
+//using structs to allow inline member init
 struct GpuAddonData
 {
+private: //data members
+//    using SHDATA = GPUPORT::WKER::shdata;
     static const int VALID = 0x1234beef;
-    const int valid1 = VALID;
+    const int valid1 = VALID; //put one at start and one at end
+//    std::unique_ptr<SHDATA, std::function<int(SHDATA*)>> m_shmptr; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+//    m_shmptr = decltype(m_shmptr)(shmalloc_typed<SHDATA>(0), std::bind(shmfree, std::placeholders::_1, SRCLINE)); //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
+//    SHDATA& m_shdata; //= *m_shmptr.get();
 //    const napi_env m_env;
 public: //public data members
-    std::atomic<int> numfr; //= 0;
-    uint32_t dirty = 0; //must be locked for cond var notify any; don't need atomic<> here
+//    SHDATA m_shdata;
+//    std::atomic<int> numfr; //= 0;
+//    uint32_t dirty = 0; //must be locked for cond var notify any; don't need atomic<> here
+//    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
+    FrameInfo m_frinfo;
+    Nodebuf m_nodebuf;
+    auto& numfr = m_frinfo.numfr; //delegated
+    auto& dirty = m_nodebuf.dirty; //delegated
+    elapsed_t perf_stats[SIZEOF(m_txtr.perf_stats) + 1]; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+//        Uint32 nodes[3][5];
+//    std::unique_ptr<NODEVAL> m_nodes; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+//    } m_shdata;
+//    int svfrnum;s
     napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+private: //data members
+    const elapsed_t m_started;
+    const SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 public: //ctors/dtors
-    GpuAddonData() = delete; //must have env so delete default
-    explicit GpuAddonData(napi_env env, SrcLine srcline = 0): /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
+//    GpuAddonData() = delete; //must have env so delete default
+//    explicit GpuAddonData(napi_env env, SrcLine srcline = 0): /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
+    explicit GpuAddonData(napi_env env, SrcLine srcline = 0): m_frinfo(env, m_nodebuf), m_nodebuf(env), /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
 //        nodes(env), frinfo(env), listener(env), //NOTE: need these because default ctor deleted
 //        m_shmptr(shmalloc_typed<SHDATA>(SHM_LOCAL), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
 //        m_shdata(*m_shmptr.get())
 //        nodes_setup(env, &dummy); //kludge: pre-alloc to avoid memory problems
 //        frinfo_setup(env, &dummy); //kludge: pre-alloc to avoid memory problems
     {
-        numfr.store(0);
+        m_frinfo.reset();
+//        numfr.store(0);
 //        dirty.store(0);
 //        islistening(false); //listener.busy = false;
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
@@ -419,12 +1038,15 @@ public: //operators
 //        ostrm << ", env#" << envinx(that.cbthis);
 //        ostrm << ", listener: " << that.listener << ", listening? " << that.islistening();
         ostrm << ", listening? " << that.islistening(); //<< ", cb this: " << that.cbthis;
-//        ostrm << ", nodes: " << that.nodes << ", frinfo: " << that.frinfo;
+        ostrm << ", frinfo: " << that.m_frinfo;
+        ostrm << ", nodes: " << commas(that.m_nodebuf.wh) << ", cached napi wrapper " << that.m_nodebuf.m_cached;
 //        if (that.wker_ok()) ostrm << ", gpdata {#fr " << that.gpu_wker->m_frinfo.numfr << "}";
         ostrm << "}";
         return ostrm;
     }
-public: //methods
+private:
+    bool m_listening = false;
+public: //playback methods
     inline bool islistening() const { return m_listening; } //(listener.type() != napi_null); }
     inline bool islistening(bool yesno) { return m_listening = yesno; } //islistening(yesno, listener.env); }
 //    bool islistening(napi_env env, bool yesno)
@@ -435,214 +1057,6 @@ public: //methods
 //        listener = yesno;
 //        return yesno; //islistening();
 //    }
-//thread-safe wrapper for caller's callback function:
-//    napi_ref aoref; //ref to wrapped version of this object
-    void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb)
-    {
-        napi_value wker_name;
-        const napi_value NO_RESOURCE = NULL; //optional, for init hooks
-        const int QUE_NOMAX = 0; //no limit; TODO: should this be 1 to prevent running ahead? else requires multi-frame pixel bufs
-        const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
-        void* NO_FINAL_DATA = NULL;
-        napi_finalize NO_FINALIZE = NULL;
-        void* NO_CONTEXT = NULL;
-//    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
-        napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
-        !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &wker_name), "Cre wkitem desc str failed");
-        !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, NO_CONTEXT, napi_cb, &fats), "Cre JS fats failed");
-    }
-//BROKEN    napi_thingy cbthis, nodes, frinfo; //info for fats
-//CAUTION: napi values appear to need to be re-created each time; can't store in heap and span napi calls :(
-    void make_thread(napi_env env)
-    {
-//no        !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "Create arg failed");
-//no        !NAPI_OK(napi_create_int32(env, 5678, &frinfo.value), "Create arg failed");
-        islistening(true);
-    }
-    struct
-    {
-        struct
-        {
-            Protocol protocol; //= WS281X;
-            const double frame_time; //msec
-            const SDL_Size wh; //int NumUniv, UnivLen;
-            const /*elapsed_t*/ /*std::result_of<now_msec()>::type*/ decltype(now_msec()) started;
-            std::atomic</*uint32_t*/ int> numfr; //= 0; //#frames rendered / next frame#
-            BkgSync<MASK_TYPE, true> dirty; //one Ready bit for each universe
-            uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
-        } frinfo;
-        Uint32 nodes[3][5];
-    } m_shdata;
-//create typed array wrapper for nodes:
-    void wrap_nodes(napi_env env, napi_value* valp)
-    {
-//can't cache :(        if (nodes.arytype() != napi_uint32_array) //napi_typedarray_type)
-//        {
-        napi_thingy arybuf(env), nodes(env);
-//napi_get_null(env, &arybuf.value);
-//napi_get_null(env, &nodes.value);
-//            void* NO_HINT = NULL; //optional finalize_hint
-//debug("env " << env << ", size " << commas(sizeof(gpu_wker->m_nodes)) << ENDCOLOR);
-    //        debug("arybuf1 " << arybuf << ENDCOLOR);
-    //        !NAPI_OK(napi_create_int32(env, 1234, &arybuf.value), "cre int32 failed");
-    //        debug("arybuf2 " << arybuf << ENDCOLOR);
-    //        !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &arybuf.value), "cre str failed");
-    //        debug("arybuf3 " << arybuf << ENDCOLOR);
-    //        !NAPI_OK(napi_create_external_arraybuffer(env, &junk[0][0], sizeof(junk), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-    //        debug("arybuf4 " << arybuf << ENDCOLOR);
-        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-        debug("arybuf5 " << arybuf << ENDCOLOR);
-//            debug("nodes1 " << nodes << ENDCOLOR);
-//            !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "cre int32 failed");
-//            debug("nodes2 " << nodes << ENDCOLOR);
-//            !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
-//            debug("nodes3 " << nodes << ENDCOLOR);
-//            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
-//            debug("nodes4 " << nodes << ENDCOLOR);
-        !NAPI_OK(napi_create_typedarray(env, napi_uint32_array, SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
-        debug("nodes5 " << nodes << ENDCOLOR);
-        debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(napi_uint32_array)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
-//        }
-//        if (nodes.env != env) NAPI_exc("nodes env mismatch");
-        *valp = nodes.value;
-    }
-//    SrcLine my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline
-    struct my_napi_property_descriptor: public napi_property_descriptor { static SrcLine srcline; } //kludge: create a place for _.srcline
-    void wrap_frinfo(napi_env env, napi_value* valp)
-    {
-//can't cache :(        if (frinfo.type() != napi_object)
-        napi_thingy frinfo(env);
-        !NAPI_OK(napi_create_object(env, &frinfo.value), "Cre frinfo obj failed");
-//        {
-//Protocol protocol; //= WS281X;
-//const double frame_time; //msec
-//const SDL_Size wh; //int NumUniv, UnivLen;
-//const /*elapsed_t*/ /*std::result_of<now_msec()>::type*/ decltype(now_msec()) started;
-//std::atomic</*uint32_t*/ int> numfr; //= 0; //#frames rendered / next frame#
-//BkgSync<MASK_TYPE, true> dirty; //one Ready bit for each universe
-//uint64_t times[NUM_STATS]; //total init/sleep (sec), render (msec), upd txtr (msec), xfr txtr (msec), present/sync (msec)
-        my_napi_property_descriptor props[7], *pptr = props;
-        memset(&props[0], 0, sizeof(props)); //clear first so NULL members don't need to be explicitly set
-//kludge: use lambas in lieu of C++ named member init:
-//(named args easier to maintain than long param lists)
-        [env, this](auto& _)
-        {
-            _.utf8name = "protocol"; //_.name = NULL;
-//                _.method = NULL;
-//                _.getter = GetProtocol_NAPI; _.setter = SetProtocol_NAPI; //read/write; allow live update
-            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //void* data) //GetProtocol_NAPI; //live update
-            {
-                GpuAddonData* aodata;
-                napi_value argv[1], This;
-                size_t argc = SIZEOF(argv);
-                if (!env) return NULL; //Node cleanup mode?
-                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
-                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
-//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
-//                    return aodata->wker_ok(env)->m_frinfo.protocol;
-                !NAPI_OK(napi_create_int32(env, static_cast<int32_t>(aodata->wker_ok(env, SRCLINE)->m_frinfo.protocol), &argv[0]), "Get uint32 getval failed");
-                return argv[0];
-            };
-            _.setter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //SetProtocol_NAPI; //live update
-            {
-                GpuAddonData* aodata;
-                napi_value argv[1+1], This;
-                size_t argc = SIZEOF(argv);
-                if (!env) return NULL; //Node cleanup mode?
-                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
-                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Setter info extract failed");
-                if (argc != 1) NAPI_exc("got " << argc << " args, expected 1");
-                int /*int32_t*/ prtemp;
-                !NAPI_OK(napi_get_value_int32(env, argv[0], &prtemp), "Get uint32 setval failed");
-                aodata->wker_ok(env, SRCLINE)->m_frinfo.protocol = static_cast<GPUPORT::Protocol>(prtemp);
-//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
-//                    aodata->wker_ok(env)->m_frinfo.protocol = 0; //TODO
-            };
-//                !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.protocol, &_.value), "Cre protocol int failed");
-            _.attributes = napi_enumerable; //napi_default; //napi_writable | napi_enumerable; //read-write; //napi_default;
-            _.data = this;
-        }(*pptr++);
-//            NAMED{ _.itf8name = "protocol"; _.getter = GetProtocol_NAPI; _.setter = SetProtocol_NAPI; _.attributes = napi_default; }(*props++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "frame_time";
-//                _.getter = GetFrameTime_NAPI; //read-only
-            !NAPI_OK(napi_create_double(env, gpu_wker->m_frinfo.frame_time, &_.value), "Cre frame_time float failed");
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "NUM_UNIV";
-//                _.getter = GetNumUniv_NAPI; //read-only
-            !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.wh.w, &_.value), "Cre w int failed");
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "UNIV_LEN";
-            !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.wh.h, &_.value), "Cre h int failed");
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "started";
-            !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.started, &_.value), "Cre started int failed");
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "numfr";
-//                !NAPI_OK(napi_create_int32(env, gpu_wker->m_frinfo.numfr.load(), &_.value), "Cre #fr int failed");
-            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //GetNumfr_NAPI; //live update
-            {
-                GpuAddonData* aodata;
-                napi_value argv[1], This;
-                size_t argc = SIZEOF(argv);
-                if (!env) return NULL; //Node cleanup mode?
-                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
-                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
-//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
-//                    return aodata->wker_ok(env)->m_frinfo.numfr.load();
-                !NAPI_OK(napi_create_uint32(env, aodata->wker_ok(env, SRCLINE)->m_frinfo.numfr.load(), &argv[0]), "Get uint32 getval failed");
-                return argv[0];
-            };
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-            _.data = this;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "dirty";
-//                !NAPI_OK(napi_create_uint32(env, gpu_wker->m_frinfo.dirty.load(), &_.value), "Cre dirty uint failed");
-            _.getter = [](napi_env env, napi_callback_info info) -> napi_value //[](napi_env env, void* data) //GetDirty_NAPI; //live update
-            {
-                GpuAddonData* aodata;
-                napi_value argv[1], This;
-                size_t argc = SIZEOF(argv);
-                if (!env) return NULL; //Node cleanup mode?
-                struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
-                !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Getter info extract failed");
-//                    GpuAddonData* aodata = static_cast<GpuAddonData*>(data);
-//                    return aodata->wker_ok(env)->m_frinfo.dirty.load();
-                !NAPI_OK(napi_create_uint32(env, aodata->wker_ok(env, SRCLINE)->m_frinfo.dirty.load(), &argv[0]), "Get uint32 getval failed");
-                return argv[0];
-            };
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-            _.data = this;
-        }(*pptr++);
-        [env, this](auto& _) //napi_property_descriptor& _)
-        {
-            _.utf8name = "times"; //NOTE: times[] will update automatically due to underlying array buf
-            napi_value arybuf;
-            !NAPI_OK(napi_create_external_arraybuffer(env, &gpu_wker->m_frinfo.times[0], sizeof(gpu_wker->m_frinfo.times), wker_check, NO_HINT, &arybuf), "Cre arraybuf failed");
-            !NAPI_OK(napi_create_typedarray(env, napi_biguint64_array, SIZEOF(gpu_wker->m_frinfo.times), arybuf, 0, &_.value), "Cre times typed array failed");
-            _.attributes = napi_enumerable; //read-only; //napi_default;
-        }(*pptr++);
-//add above props to frame info object:
-        if (pptr - props > SIZEOF(props)) NAPI_exc("prop overflow");
-        !NAPI_OK(napi_define_properties(env, frinfo.value, pptr - props, props), "set frinfo props failed");
-//        if (frinfo.env != env) NAPI_exc("frinfo env mismatch");
-        *valp = frinfo.value;
-    }
     std::exception_ptr excptr = nullptr; //init redundant (default init)
     std::string exc_reason(const char* no_reason = 0) const
     {
@@ -656,11 +1070,87 @@ public: //methods
         catch (...) { reason = "??EXC??"; }
         return reason;
     }
+//BROKEN    napi_thingy cbthis, nodes, frinfo; //info for fats
+//CAUTION: napi values appear to need to be re-created each time; can't store in heap and span napi calls :(
+//    void reset()
+//set playback options:
+private:
+    struct
+    {
+        int screen; //= FIRST_SCREEN;
+//    key_t PREALLOC_shmkey = 0;
+        int vgroup; //= 1;
+        Uint32 init_color; //= 0;
+    } m_opts;
+public:
+    void set_opts()
+    {
+        m_opts.screen = FIRST_SCREEN;
+        m_opts.vgroup = 1;
+        m_opts.init_color = BLACK;
+    }
+    void set_opts(napi_env env, napi_value& optsval)
+    {
+//prep caller's port params:
+//    if (argc > 1) //unpack option values from first arg
+//        bool has_prop;
+//        napi_value propval;
+//        napi_valuetype valtype;
+//        !NAPI_OK(napi_typeof(env, argv[0], &valtype), "Get arg type failed");
+        set_opts(); //set defaults first
+        napi_thingy opts(env, optsval);
+        if (opts.type() == napi_undefined) return;
+        if (opts.type() != napi_object) NAPI_exc(opts.env, "Expected object as first arg"); //TODO: allow other types?
+        !NAPI_OK(opts.getprop("screen", &m_opts.screen), opts.env, "Invalid .screen prop");
+//        !NAPI_OK(get_prop(env, argv[0], "shmkey", &PREALLOC_shmkey), "Invalid .shmkey prop");
+        !NAPI_OK(opts.getprop("vgroup", &m_opts.vgroup), opts.env, "Invalid .vgroup prop");
+        !NAPI_OK(opts.getprop("color", &m_opts.init_color), opts.env, "Invalid .color prop");
+        debug(BLUE_MSG "listen opts: screen %d, vgroup %d, init_color 0x%x" ENDCOLOR, m_opts.screen, m_opts.vgroup, m_opts.init_color);
+//        if (islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
+    }
+    void wrap_frinfo(napi_env env, napi_value* valp = 0) { m_frinfo.wrap(env, valp); }
+    void wrap_nodebuf(napi_env env, napi_value* valp = 0) { m_nodebuf.wrap(env, valp); }
+//start playback (bkg thread):
+    void start()
+    {
+        islistening(true);
+        debug(PINK_MSG "start playback" ENDCOLOR);
+//        UNIV_LEN(divup(/*m_cfg? m_cfg->vdisplay: UNIV_MAX*/ ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds.h, vgroup)), //univ len == display height
+        m_nodebuf.reset(m_opts.screen, m_opts.vgroup, m_opts.init_color);
+        m_frinfo.reset(-1);
+        refill();
+    }
+//update screen (bkg thread):
+    void refill(napi_env env)
+    {
+        ++m_frinfo.numfr;
+        !NAPI_OK(napi_call_threadsafe_function(fats, this, napi_tsfn_blocking), "Can't call JS fats"); //get node values from js cb func
+    }
+    void update()
+    {
+        if (!islistening()) return;
+        debug(PINK_MSG "update playback" ENDCOLOR);
+//        m_frinfo.dirty.wait(ALL_UNIV, NVL(srcline, SRCLINE)); //wait for all universes to be rendered
+        perf_stats[0] += m_nodebuf.txtr.perftime(); //1000); //ipc wait time (msec)
+        VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &m_nodes.nodes[0][0]; _.perf = &perf_stats[1]; _.xfr = m_xfr; _.refill = m_refill; SRCLINE; });
+//TODO: fix ipc race condition here:
+//        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
+//        RenderPresent();
+    }
+//stop playback (bkg thread):
+    void stop()
+    {
+        islistening(false);
+        debug(PINK_MSG "stop playback" ENDCOLOR);
+    }
+//    void make_thread(napi_env env)
+//    {
+//no        !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "Create arg failed");
+//no        !NAPI_OK(napi_create_int32(env, 5678, &frinfo.value), "Create arg failed");
+//        islistening(true);
+//    }
 protected: //private data members
-    bool m_listening = false;
-    const elapsed_t m_started;
-    const SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
-    const int valid2 = VALID;
+    const int valid2 = VALID; //put one at start and one at end
 };
 
 
@@ -669,14 +1159,14 @@ protected: //private data members
 //it's probably better to just use a pure JS function for high-volume usage
 napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 {
+    if (!env) return NULL; //Node cleanup mode?
     GpuAddonData* aoptr;
     napi_value argv[1+1], This; //allow 1 extra arg to check for extras
     size_t argc = SIZEOF(argv);
-    if (!env) return NULL; //Node cleanup mode?
 //    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
     !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aoptr), "Get cb info failed");
-    if (argc > 1) NAPI_exc("expected color param, got " << argc << " params");
-    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
+    if (argc != 1) NAPI_exc("expected 1 color param, got " << argc << " params");
+//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
 //    if (argc < 1) 
 //    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
 //    char str[1024];
@@ -690,7 +1180,7 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
     !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
 //    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
 //actual work done here; surrounding code is overhead :(
-    color = limit<pct(50/60)>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+    color = limit<Nodebuf::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
     napi_value retval;
     !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
     return retval;
@@ -702,10 +1192,11 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data)
 {
     UNUSED(context);
+    if (!env) return; //Node cleanup mode
   // Retrieve the prime from the item created by the worker thread.
 //    int the_prime = *(int*)data;
     GpuAddonData* aoptr = static_cast<GpuAddonData*>(data);
-    debug(BLUE_MSG "call listen js func: aodata %p, valid? %d, context %p, clup mode? %d" ENDCOLOR, aoptr, aoptr->isvalid(), context, !env);
+    debug(BLUE_MSG "listen js cb func: aodata %p, valid? %d, context %p, clup mode? %d" ENDCOLOR, aoptr, aoptr->isvalid(), context, !env);
     aoptr->isvalid(env, SRCLINE);
 //    if (!aodata->listener.busy) NAPI_exc("not listening");
     if (!aoptr->islistening()) NAPI_exc("not listening");
@@ -714,7 +1205,6 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
   // When env is NULL, we simply skip over the call into Javascript and free the
   // items.
 //    debug(CYAN_MSG "cb %p" ENDCOLOR, aodata);
-    if (!env) return; //Node cleanup mode
 //    {
 //    napi_thingy retval; retval.env = env;
 
@@ -724,7 +1214,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 //    aodata->wker_ok(env); //) NAPI_exc(env, "Gpu wker problem: " << aodata->exc_reason());
     !NAPI_OK(napi_create_int32(env, aoptr->numfr.load(), &argv[0]), "Create arg failed");
 //    !NAPI_OK(napi_create_int32(env, 1234, &argv[1]), "Create arg failed");
-    aoptr->wrap_nodes(env, &argv[1]);
+    aoptr->wrap_nodebuf(env, &argv[1]); //CAUTION: must be called each time; napi doesn't like napi_values saved across calls
     aoptr->wrap_frinfo(env, &argv[2]);
 //    argv[1] = aoptr->nodes.value;
 //    SNAT("node val", aoptr->nodes.value);
@@ -733,7 +1223,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 //    napi_thingy temp(env, argv[1]);
 //    SNAT("thingy argv[1]", temp); //napi_thingy(env, argv[1]));
 
-    uint32_t ready_bits;
+    uint32_t ready_bits; //UNIV_MASK
     napi_thingy cbthis(env), retval(env), num_retval(env); //, This;
 //CAUTION: seems to be some undocumented magic here: need to pass Undefined as "this" (2nd) arg here or else memory errors occur
 //see "this" at https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this#As_an_object_method
@@ -745,10 +1235,10 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 //    INSPECT(GREEN_MSG << "js func call: arg[1] " << napi_thingy(env, argv[1])); //aoptr->nodes << ENDCOLOR);
 //    INSPECT(GREEN_MSG << "js func call: arg[2] " << napi_thingy(env, argv[2])); //aoptr->frinfo << ENDCOLOR);
 //    INSPECT(GREEN_MSG << "js func call: func " << napi_thingy(env, jsfunc) << ", this " << /*aoptr->*/cbthis << ", arg[0] " << napi_thingy(env, argv[0]) << ", arg[1] " << napi_thingy(env, argv[1]) << ", arg[2] " << napi_thingy(env, argv[2]));
-    {
-        DebugInOut("js func call for fr# " << aoptr->numfr.load());
-        !NAPI_OK(napi_call_function(env, /*aoptr->*/cbthis.value, jsfunc, SIZEOF(argv), argv, &retval.value), "Call JS fats failed");
-    }
+//    {
+//        DebugInOut("js func call for fr# " << aoptr->numfr.load());
+    !NAPI_OK(napi_call_function(env, /*aoptr->*/cbthis.value, jsfunc, SIZEOF(argv), argv, &retval.value), "Call JS fats failed");
+//    }
 //HERE(3);
 //    debug(BLUE_MSG "cb: check fats retval" ENDCOLOR);
 //        /*int32_t*/ bool want_continue;
@@ -756,10 +1246,10 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
     !NAPI_OK(napi_coerce_to_number(env, retval.value, &num_retval.value), "Get retval as num failed");
 //    debug(BLUE_MSG "cb: get bool %p" ENDCOLOR, aodata);
     !NAPI_OK(napi_get_value_uint32(env, num_retval.value, &ready_bits), "Get uint32 retval failed");
-    debug(BLUE_MSG "js fats: retval " << retval << " => " << num_retval << ", ready bits 0x%x, new dirty 0x%x, continue? %d" ENDCOLOR, ready_bits, aoptr->dirty | ready_bits, !!ready_bits);
+    debug(BLUE_MSG "js fats: retval " << retval << " = ready bits 0x%x, new dirty 0x%x, continue? %d" ENDCOLOR, ready_bits, aoptr->dirty | ready_bits, !!ready_bits);
     if (!ready_bits) aoptr->islistening(false); //caller eof
-    aoptr->dirty |= ready_bits; //.fetch_or(ALL_UNIV || more, SRCLINE); //mark rendered universes; wake up bkg wker (even wth no univ so it will see cancel)
-    ++aoptr->numfr;
+    aoptr->dirty |= ready_bits; //.fetch_or(ALL_UNIV || more, SRCLINE); //mark rendered universes; wake up bkg wker (even wth no new dirty univ so it will see cancel)
+//    ++aoptr->numfr;
 //    aodata->frinfo.refill(); //++aodata->gpdata.numfr; //move to next frame
 //NOTE: bkg thread will respond to busy resest
 //    }
@@ -773,47 +1263,33 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 
 napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 {
+    if (!env) return NULL; //Node cleanup mode?
     GpuAddonData* aoptr;
     napi_value argv[2+1], This; //allow 1 extra arg to check for extras
     size_t argc = SIZEOF(argv);
-    if (!env) return NULL; //Node cleanup mode
+//    if (!env) return NULL; //Node cleanup mode
     !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aoptr), "Get cb info failed");
-    debug(CYAN_MSG "listen: aoptr %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
+    debug(CYAN_MSG "async listen loop: aoptr %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
     if ((argc < 1) || (argc > 2)) NAPI_exc("expected 1-2 args: [{opts}], cb(); got " << argc << " args");
-    debug(BLUE_MSG "listen %d args: arg[0] " << napi_thingy(env, argv[0]) << ", arg[1] " << napi_thingy(env, argv[1]) << ENDCOLOR, argc);
+    debug(BLUE_MSG "async listen loop %d args: arg[0] " << napi_thingy(env, argv[0]) << ", arg[1] " << napi_thingy(env, argv[1]) << ENDCOLOR, argc);
     aoptr->isvalid(env, SRCLINE);
 //no; allow restart    if (aoptr->islistening()) NAPI_exc("Already listening (single threaded for now)"); //check if que empty
 
-    if (valtype(env, argv[argc - 1]) != napi_function) NAPI_exc("expected function for last arg");
-    aoptr->make_fats(env, argv[argc - 1], Listen_cb);
+//    napi_thingy opts(env);
+//    if (argc > 1) opts.value = argv[0]; //first arg = options
+    if (argc < 2) aoptr->set_opts();
+    else aoptr->set_opts(env, argv[0]);
+    make_fats(env, argv[argc - 1], Listen_cb, &aoptr->fats); //last arg = js cb func
+    aoptr->wrap_frinfo(env); //set up cb info
+//NO;BROKEN    aoptr->wrap_nodes(env, &argv[1]); //CAUTION: must be called each time; napi doesn't like napi_values saved across calls
 //    aoptr->mk_nodes(env);
 //    aoptr->mk_frinfo(env);
-
-//prep caller's port params:
-    int screen = FIRST_SCREEN;
-//    key_t PREALLOC_shmkey = 0;
-    int vgroup = 1;
-    Uint32 init_color = 0;
-    if (argc > 1) //unpack option values from first arg
-    {
-//        bool has_prop;
-//        napi_value propval;
-//        napi_valuetype valtype;
-//        !NAPI_OK(napi_typeof(env, argv[0], &valtype), "Get arg type failed");
-        if (valtype(env, argv[0]) != napi_object) NAPI_exc("Expected object as first arg"); //TODO: allow other types?
-        !NAPI_OK(get_prop(env, argv[0], "screen", &screen), "Invalid .screen prop");
-//        !NAPI_OK(get_prop(env, argv[0], "shmkey", &PREALLOC_shmkey), "Invalid .shmkey prop");
-        !NAPI_OK(get_prop(env, argv[0], "vgroup", &vgroup), "Invalid .vgroup prop");
-        !NAPI_OK(get_prop(env, argv[0], "color", &init_color), "Invalid .color prop");
-        debug(BLUE_MSG "listen opts: screen %d, vgroup %d, init_color 0x%x" ENDCOLOR, screen, vgroup, init_color);
-        if (aoptr->islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
-    }
 
 //run txtr updates on bkg thread so fg Node thread doesn't block:
 //    aoptr->islistening(true);
 #if 1
-    aoptr->make_thread(env);
-    std::thread bkg([aoptr, env, screen, vgroup, init_color]()
+//    aoptr->make_thread(env);
+    std::thread bkg([env, aoptr]() //env, screen, vgroup, init_color]()
     {
 //        napi_status status;
 //        ExecuteWork(env, addon_data);
@@ -823,29 +1299,33 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
         !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
 //        aoptr->islistening(true);
+        aoptr->start();
         try
         {
             for (;;) //int i = 0; i < 5; ++i)
             {
-                if (!aoptr->islistening()) break; //allow cb to break out of playback loop
-                {
-                    DebugInOut("call fats for fr# " << aoptr->numfr.load());
-                    !NAPI_OK(napi_call_threadsafe_function(aoptr->fats, aoptr, napi_tsfn_blocking), "Can't call JS fats");
-                }
-                SDL_Delay(1 sec);
+                DebugInOut("call fats for fr# " << aoptr->/*m_frinfo.*/numfr.load());
+//                !NAPI_OK(napi_call_threadsafe_function(aoptr->fats, aoptr, napi_tsfn_blocking), "Can't call JS fats");
+//            while (aoptr->islistening()) //break; //allow cb to break out of playback loop
+//    typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+                aoptr->dirty.wait(ALL_UNIV, [aoptr](){ return !aoptr->islistening(); }, true, SRCLINE); //CAUTION: blocks until al univ ready or caller cancelled
+                if (!aoptr->islistening()) break;
+                aoptr->update();
             }
+//            SDL_Delay(1 sec);
 //https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
         }
         catch (...)
         {
             aoptr->excptr = std::current_exception(); //allow main thread to rethrow
             debug(RED_MSG "bkg wker exc: " << aoptr->exc_reason() << ENDCOLOR);
-            aoptr->islistening(false); //listener.busy = true; //(void*)1;
+//            aoptr->islistening(false); //listener.busy = true; //(void*)1;
         }
+        aoptr->stop();
         !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
         aoptr->fats = NULL;
 //        aodata->listener.busy = false; //work = 0;
-        debug(YELLOW_MSG "bkg exit after %d frames" ENDCOLOR, aoptr->numfr.load());
+        debug(YELLOW_MSG "bkg exit after %d frames" ENDCOLOR, aoptr->/*m_frinfo.*/numfr.load());
     });
     bkg.detach();
 #endif
@@ -867,23 +1347,37 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     GpuAddonData* aoptr = aodata.get();
 //    aoptr->isvalid(env);
 //expose methods for caller to use:
-    napi_property_descriptor props[2], *pptr = props;
+    my_napi_property_descriptor props[2], *pptr = props;
     memset(&props[0], 0, sizeof(props)); //clear first so NULL members don't need to be explicitly set below
 //kludge: use lambas in lieu of C++ named member init:
 //(named args easier to maintain than long param lists)
-    [/*env,*/ aoptr](napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
+    [/*env,*/ aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
     {
         _.utf8name = "limit"; //TODO: add prop to show <pct>?
         _.method = Limit_NAPI;
         _.attributes = napi_default; //!writable, !enumerable
-        _.data = aoptr;
+//        _.data = aoptr;
     }(*pptr++);
-    [/*env,*/ aoptr](napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
+    [/*env,*/ aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
     {
         _.utf8name = "listen";
         _.method = Listen_NAPI;
         _.attributes = napi_default; //!writable, !enumerable
         _.data = aoptr;
+    }(*pptr++);
+    [env, aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
+    {
+        _.utf8name = "NUM_UNIV";
+        !NAPI_OK(napi_create_int32(env, aoptr->m_nodes.NUM_UNIV, &_.value), "Cre w int failed");
+        _.attributes = napi_default; //!writable, !enumerable
+//        _.data = aoptr;
+    }(*pptr++);
+    [env, aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
+    {
+        _.utf8name = "UNIV_MAXLEN";
+        !NAPI_OK(napi_create_int32(env, aoptr->m_nodes.UNIV_MAXLEN_pad, &_.value), "Cre w int failed");
+        _.attributes = napi_default; //!writable, !enumerable
+//        _.data = aoptr;
     }(*pptr++);
 //decorate exports with the above-defined properties:
     if (pptr - props > SIZEOF(props)) NAPI_exc("prop ary overflow");
@@ -944,11 +1438,10 @@ using GPUPORT = GpuPort
 //settings that must match h/w:
     /*int IOPINS =*/ 24, //total #I/O pins available (h/w dependent)
     /*int HWMUX =*/ 0, //#I/O pins to use for external h/w mux
-    /*bool BKG_THREAD =*/ false //true //taking explicit control of bkg wker below so not needed
+    /*bool BKG_THREAD =*/ false //true //taking explicit control of bkg wker below so bkg not needed
 //    int NODEBITS = 24> //# bits to send for each WS281X node (protocol dependent)
 >;
 static const napi_typedarray_type GPU_NODE_type = napi_uint32_array; //NOTE: must match GPUPORT NODEVAL type
-
 
 struct GpuAddonData
 {
@@ -1087,12 +1580,12 @@ public: //methods
 //        static SrcLine m_srcline; //kludge: create a place for _.srcline
 //        return m_srcline;
 //    }
-    struct my_napi_property_descriptor: public napi_property_descriptor
-    {
-//        static constexpr SrcLine& srcline = outer_srcline(); //kludge: create a place for _.srcline
-        static SrcLine srcline; //= outer_srcline(); //kludge: create a place for _.srcline
-//    my_napi_property_descriptor()
-    };
+//    struct my_napi_property_descriptor: public napi_property_descriptor
+//    {
+////        static constexpr SrcLine& srcline = outer_srcline(); //kludge: create a place for _.srcline
+//        static SrcLine srcline; //= outer_srcline(); //kludge: create a place for _.srcline
+////    my_napi_property_descriptor()
+//    };
 //    SrcLine my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline
     void frinfo_setup(napi_env env, napi_value* valp)
     {
@@ -1286,7 +1779,6 @@ public: //operators:
         return ostrm;
     }
 }; //GpuAddonData;
-SrcLine GpuAddonData::my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline in above code
 
 
 //put all bkg wker execution on a consistent thread (SDL is not thread-safe):

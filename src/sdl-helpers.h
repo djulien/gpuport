@@ -249,7 +249,7 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 //inline uint64_t now() { return SDL_Ticks(); }
 #define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
 #define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
-typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement
+typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement; 5 minutes only takes 20 bits to count msec
 inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second
 {
     elapsed_t delta = now() - started; //nsec
@@ -1877,6 +1877,7 @@ public: //methods
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
 //    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
 //    static const int NUM_STATS = 4;
+    static const int NUM_STATS = SIZEOF(perf_stats);
     /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
 //    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
     elapsed_t m_latest;
@@ -1894,7 +1895,7 @@ public: //methods
 //this is *the* main function; performance is important so measure it:
         if (!perf) perf = &perf_stats[0];
 //printf("here11\n"); fflush(stdout);
-        perf[0] = perftime(); //time caller spent rendering (sec); could be long (caller determines)
+        perf[0] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
 //        if (!pixels) pixels = m_shmbuf;
 //        if (!pitch) pitch = cached.bounds.w * sizeof(pixels[0]); //Uint32);
 //        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
@@ -1926,7 +1927,7 @@ public: //methods
             if (refill) refill(this); //tell caller buf is available to refill with next frame
         }
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
-        perf[1] = perftime(); //1000); //CPU-side data xfr time (msec)
+        perf[1] += perftime(); //1000); //CPU-side data xfr time (msec)
 #if 0 //DRY
         VOID SDL_AutoWindow<>::render(m_wnd, txtr, NO_RECT, NO_RECT, /*false,*/ NVL(srcline, SRCLINE)); //put new texture on screen
 #else //WET to allow more detailed perf tracking
@@ -1934,10 +1935,10 @@ public: //methods
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
 //printf("here16\n"); fflush(stdout);
-        perf[2] = perftime(); //1000); //CPU to GPU data xfr time (msec)
+        perf[2] += perftime(); //1000); //CPU to GPU data xfr time (msec)
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
 #endif
-        perf[3] = perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
+        perf[3] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
 //printf("here17\n"); fflush(stdout);
 //        debug(BLUE_MSG "update times: caller %f s, txtr lock/fill/unlock %f ms, rendr copy %f ms, rendr present+sync %f ms" ENDCOLOR_ATLINE(srcline), perf[0] / 1e6, perf[1] / 1e3, perf[2] / 1e3, perf[3] / 1e3);
 //        static int count = 0;
@@ -2392,7 +2393,7 @@ void fullscreen_test(ARGS& args)
     VOID SDL_Delay(1 sec); //kludge: even out timer with loop
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
-        perf_stats[0] = txtr.perftime();
+        perf_stats[0] += txtr.perftime();
         SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
         debug(BLUE_MSG << timestamp() << "all " << wh << " pixels => 0x%x" ENDCOLOR, myPixels[0][0]);
         VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
@@ -2414,7 +2415,7 @@ void fullscreen_test(ARGS& args)
     for (int y = 0 + std::max(wh.h-5, 0), c = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
         for (int x = 0 + std::max(wh.w-5, 0); x < wh.w; ++x, ++c)
         {
-            perf_stats[0] = txtr.perftime();
+            perf_stats[0] += txtr.perftime();
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
             debug(BLUE_MSG << timestamp() << "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
             VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
