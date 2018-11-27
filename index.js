@@ -64,6 +64,7 @@ const opts =
 {
     vgroup: 30,
     color: -1, //0xffff00ff,
+    protocol: GpuPort.NONE,
 };
 var THIS = {count: 0, };
 //TODO: try{
@@ -71,8 +72,8 @@ const SEQLEN = 5;
 //const WANT_GP = false; //true; //false;
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${JSON.stringify(nodes).trunc()}, frinfo ${JSON.stringify(frinfo)}`);
-    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this, `(${typeof THIS})`, THIS, 'retval', (THIS.count < SEQLEN)? 0xffffff: 0);
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${nodes.length}:${JSON.stringify(nodes).trunc()}, frinfo ${JSON.stringify(frinfo)}`);
+    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
     return (++THIS.count < SEQLEN)? 0xffffff: 0;
     return (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
 });

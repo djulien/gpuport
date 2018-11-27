@@ -249,7 +249,7 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 //inline uint64_t now() { return SDL_Ticks(); }
 #define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
 #define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
-typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement; 5 minutes only takes 20 bits to count msec
+typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement; 20 bits will hold 5 minutes of msec, or 29 bits will hold 5 minutes of usec
 inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second
 {
     elapsed_t delta = now() - started; //nsec
@@ -1158,13 +1158,14 @@ public: //factory methods:
 //    }
 public: //operators
     inline operator SDL_Window*() const { return get(); } //conv
-    inline mySDL_AutoWindow& operator=(CONST mySDL_AutoWindow& that) { return *this = /*operator=*/(that.release()); } //copy asst op; //, SrcLine srcline = 0)
+    inline mySDL_AutoWindow& operator=(CONST mySDL_AutoWindow& that) { DebugInOut("Awnd=Awnd", SRCLINE); return *this = /*operator=*/(that.release()); } //copy asst op; //, SrcLine srcline = 0)
     mySDL_AutoWindow& operator=(SDL_Window* ptr) //, SrcLine srcline = 0)
     {
 //        SDL_Window* ptr = that.release();
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoWindow: old window %p, new window %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        DebugInOut("Awnd=wnd*", SRCLINE);
         reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
@@ -1810,20 +1811,23 @@ public: //factory methods:
         VOID SDL_AutoWindow<>::virtsize(wnd, view_wh? *view_wh: wh, NVL(srcline, SRCLINE)); //set renderer scaling
 //no; don't need to pad actual texture (single writer); messes up stretch        if (!w_padded) w_padded = wh.w; //use actual for window width, pad pitch for txtr
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd);
-        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ /*w_padded? w_padded:*/ wh.w, wh.h), wnd, NVL(srcline, SRCLINE));
+        return mySDL_AutoTexture(SDL_CreateTexture(rndr, want_fmt? want_fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, /*w? w: DONT_CARE, h? h: DONT_CARE*/ /*w_padded? w_padded:*/ wh.w, wh.h), wnd, SRCLINE);
 //        auto retval = SDL_AutoTexture(SDL_CreateTexture(rndr, fmt? fmt: SDL_PIXELFORMAT_ARGB8888, access? access: SDL_TEXTUREACCESS_STREAMING, w? w: DONT_CARE, h? h: DONT_CARE), /*wnd,*/ NVL(srcline, SRCLINE));
 //        /*if (wnd_owner)*/ retval.m_wnd.reset(wnd); //take ownership; TODO: allow caller to keep ownership?
 //        return retval;
     }
 public: //operators
     inline operator SDL_Texture*() const { return get(); }
-    inline mySDL_AutoTexture& operator=(mySDL_AutoTexture& that) //copy asst op; //, SrcLine srcline = 0)
+    inline mySDL_AutoTexture& operator=(/*not const*/ mySDL_AutoTexture& that) //copy asst op; //, SrcLine srcline = 0)
     {
+        DebugInOut("Atxtr=Atxtr", SRCLINE);
         SDL_Window* svwnd = that.m_wnd.release();
-        *this /*operator*/=(that.release());
+//        *this /*operator*/=(that.release());
+        reset(that.release(), SRCLINE);
         m_wnd = svwnd; //preserve window (take ownership)
         return *this;
     }
+#if 0 //remove below; force compiler to use op= above (need to preserve wnd)
     mySDL_AutoTexture& operator=(SDL_Texture* txtr) //, SrcLine srcline = 0)
     {
 //        if (!srcline) srcline = m_srcline;
@@ -1832,10 +1836,12 @@ public: //operators
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoTexture: old texture %p, new texture %p" ENDCOLOR_ATLINE(srcline), get(), txtr);
 //debug("here42" ENDCOLOR);
+        DebugInOut("Atxtr=txtr*", SRCLINE);
         reset(txtr, NVL(srcline, SRCLINE));
 //debug("here43" ENDCOLOR);
         return *this; //fluent/chainable
     }
+#endif
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoTexture& that) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
@@ -1856,6 +1862,7 @@ public: //operators
 //        ostrm << "SDL_Texture" << /*TEMPL_ARGS <<*/ 
         ostrm << FMT(", txtr@ %p, ") << txtr;
         ostrm << that.m_cached;
+        ostrm << ", wnd " << that.m_wnd;
 //        ostrm << that.m_cached.wh; //me.cached.w << " x " << me.cached.h;
 //        ostrm << ", fmt " << that.m_cached.fmt; //FMT(", fmt %i") << SDL_BITSPERPIXEL(cached_fmt);
 //        ostrm << FMT(" bpp %s") << NVL(SDL_PixelFormatShortName(cached_fmt));
@@ -1983,7 +1990,7 @@ public: //methods
         m_cached = new_cached; //keep cached info in sync with ptr
 //        INSPECT(YELLOW_MSG "updated cached " << m_cached << ENDCOLOR);
 //debug("here3" ENDCOLOR);
-        VOID INSPECT(*this, srcline);
+        VOID INSPECT("reset " << *this, srcline);
 //debug("here4" ENDCOLOR);
     }
 public: //named arg variants
