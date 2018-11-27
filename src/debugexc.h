@@ -198,10 +198,10 @@ void myprintf(int level, const char* fmt, ...)
     LOCKTYPE lock(mtx); //avoid interleaved output
 //    static int count = 0;
 //    if (!count++) printf(CYAN_MSG "[elapsed-msec $thread] ===============================\n" ENDCOLOR_NOLINE);
-    thread_local static int numerr = 0, nummsg = 0;
+    thread_local static int /*numerr = 0,*/ nummsg = 0;
     if (level < 0) //error
     {
-        if (!numerr++) fprintf(stderr, RED_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========\n" ENDCOLOR_NOLINE, thrinx(), thrid(), getpid());
+        if (!nummsg++) fprintf(stderr, RED_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========\n" ENDCOLOR_NOLINE, thrinx(), thrid(), getpid());
         fprintf(stderr, RED_MSG "[%s $%d] %s\n" ENDCOLOR_NOLINE, timestamp(true).c_str(), thrinx(), fmtbuf); fflush(stderr);
         if (level == -1) throw std::runtime_error(fmtbuf);
     }

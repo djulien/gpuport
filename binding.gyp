@@ -35,7 +35,7 @@
             ],
 #CAUTION: check common.gypi for whether to use cflags or cflags_cc
 #path ~/.node-gyp/*/include/node/common.gypi/.node-gyp/*/include/node/common.gypi
-            "cflags_cc!": #turn off these options (in case common.gypi turns them on)
+            "cflags_cc!": #conflict with above; turn off these options (in case common.gypi turns them on)
             [
                 "-fno-exceptions",
                 "-std=gnu++1y",
@@ -58,13 +58,16 @@
             'libraries':
             [
                 " <!@(sdl2-config --libs)", #-lGL
+#                " -L'<!(pwd)'",
+#                "<(module_root_dir)/build/Release/",
             ],
             'dependencies':
             [
 #                "<!(node -p \"require('node-addon-api').gyp\")",
 #            'dependencies': [ 'deps/mpg123/mpg123.gyp:output' ],
 #            "dependencies": [ "<!(node -p \"require('node-addon-api').gyp\")" ],
-#TOD: add SDL2 here
+#TODO:                'deps/sdl2/sdl2.gyp:output',
+#                "<!(node -p \"console.log('add SDL2 compile');\")",
             ],
             'defines':
             [

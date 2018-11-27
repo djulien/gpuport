@@ -1045,9 +1045,11 @@ protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
     using super = mySDL_AutoWindow_super; //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>;
 public: //ctors/dtors
+    struct NullOkay {}; //ctor disambiguation tag
 //    explicit SDL_AutoWindow(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //InOutDebug inout("auto wnd def ctor", SRCLINE); } //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
+    explicit mySDL_AutoWindow(NullOkay): super(0, deleter), m_started(now()), m_srcline(0) {}
     explicit mySDL_AutoWindow(SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_started(now()), m_srcline(srcline) //SDL_AutoWindow(srcline) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
 //printf("here1\n"); fflush(stdout);
@@ -1238,14 +1240,18 @@ public: //methods; mostly just wrappers for static utility methods
 //printf("reset here1\n"); fflush(stdout);
         if (new_ptr == get()) return; //no change
 //printf("reset here2\n"); fflush(stdout);
+//debug("here30" ENDCOLOR);
         if (new_ptr) check(new_ptr, NO_POINT, NO_SIZE, NO_FORMAT, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
 //        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
         debug(BLUE_MSG << FMT("AutoWindow(%p)") << this << " taking ownership of " << FMT("%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
+//debug("here31" ENDCOLOR);
         super::reset(new_ptr);
         if (!new_ptr) m_rect.x = m_rect.y = m_rect.w = m_rect.h = 0;
         else VOID SDL_GetWindowRect(new_ptr, &m_rect);
+//debug("here32" ENDCOLOR);
 //printf("reset here3\n"); fflush(stdout);
         VOID INSPECT(*this, srcline);
+//debug("here33" ENDCOLOR);
 //printf("reset here4\n"); fflush(stdout);
     }
     inline SDL_Renderer* renderer(SrcLine srcline = 0) { return renderer(get(), srcline); }
@@ -1426,9 +1432,12 @@ public: //static utility methods
         if (!ptr) return;
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
+//debug("here22" ENDCOLOR);
         delete_renderer(ptr); //delete renderer first (get it from window)
         debug(RED_MSG "SDL_AutoWindow: destroy window %p" ENDCOLOR, ptr);
+//debug("here23" ENDCOLOR);
         VOID SDL_DestroyWindow(ptr);
+//debug("here24" ENDCOLOR);
     }
 #if 0 //overloaded SFINAE broken; use in-line logic instead (hopefully compiler will still optimize it)
 //paranoid; no worky    template <bool WantRenderer_copy = WantRenderer> //for function specialization
@@ -1447,9 +1456,11 @@ public: //static utility methods
     static void delete_renderer(SDL_Window* ptr)
     {
         if (!ptr || !WantRenderer) return;
+//debug("here20" ENDCOLOR);
         SDL_Renderer* rndr = SDL_GetRenderer(ptr); //renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
         if (!rndr) return;
         debug(RED_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
+//debug("here21" ENDCOLOR);
         VOID SDL_DestroyRenderer(rndr);
     }
 protected: //members
@@ -1734,6 +1745,8 @@ public: //ctors/dtors
 //    explicit SDL_AutoTexture(SrcLine srcline = 0): super(0, deleter), m_srcline(srcline) {} //no surface
 //    template <typename ... ARGS>
 //    SDL_AutoSurface(ARGS&& ... args, SrcLine = 0): super(0, deleter), sdllib(SDL_INIT_VIDEO, SRCLINE)
+    struct NullOkay {}; //ctor disambiguation tag
+    explicit mySDL_AutoTexture(NullOkay): super(0, deleter), m_wnd(/*decltype(m_wnd)*/SDL_AutoWindow<true>::NullOkay{}), m_started(now()), m_srcline(0) {}
     explicit mySDL_AutoTexture(SDL_Texture* txtr, SDL_Window* wnd, SrcLine srcline = 0): super(0, deleter), m_wnd(wnd, srcline), m_started(now()), m_latest(now()), /*m_shmbuf(??),*/ m_srcline(srcline) //CAUTION: AutoWindow ctor needs a window value; //SDL_AutoTexture(NVL(srcline, SRCLINE)) //, sdllib(SDL_INIT_VIDEO, SRCLINE)
     {
 //    (SDL_AutoWindow<true>::create(NAMED{ SRCLINE; }));
@@ -1804,14 +1817,23 @@ public: //factory methods:
     }
 public: //operators
     inline operator SDL_Texture*() const { return get(); }
-    inline mySDL_AutoTexture& operator=(mySDL_AutoTexture& that) { return *this /*operator*/=(that.release()); } //copy asst op; //, SrcLine srcline = 0)
+    inline mySDL_AutoTexture& operator=(mySDL_AutoTexture& that) //copy asst op; //, SrcLine srcline = 0)
+    {
+        SDL_Window* svwnd = that.m_wnd.release();
+        *this /*operator*/=(that.release());
+        m_wnd = svwnd; //preserve window (take ownership)
+        return *this;
+    }
     mySDL_AutoTexture& operator=(SDL_Texture* txtr) //, SrcLine srcline = 0)
     {
 //        if (!srcline) srcline = m_srcline;
 //        SDL_Texture* ptr = that.release();
+//debug("here41" ENDCOLOR);
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoTexture: old texture %p, new texture %p" ENDCOLOR_ATLINE(srcline), get(), txtr);
+//debug("here42" ENDCOLOR);
         reset(txtr, NVL(srcline, SRCLINE));
+//debug("here43" ENDCOLOR);
         return *this; //fluent/chainable
     }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoTexture& that) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
@@ -1877,10 +1899,10 @@ public: //methods
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
 //    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
 //    static const int NUM_STATS = 4;
-    static const int NUM_STATS = SIZEOF(perf_stats);
-    /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
-//    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
     elapsed_t m_latest;
+    /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
+    static const int NUM_STATS = SIZEOF(perf_stats);
+//    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
     inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; }
 //    template <typename XFR> //allow lamba function as param; see https://stackoverflow.com/questions/16111285/how-to-pass-and-execute-anonymous-function-as-parameter-in-c11
 //        VOID memcpy(pxbuf, pixels, xfrlen);
@@ -1952,13 +1974,17 @@ public: //methods
     {
         if (new_ptr == get()) return; //nothing changed
         /*SDL_Surface*/ SDL_TextureInfo<PXTYPE> new_cached;
+//debug("here1" ENDCOLOR);
         if (new_ptr) check(new_ptr, &new_cached, NO_SIZE, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
 //        INSPECT(YELLOW_MSG "new cached " << new_cached << ENDCOLOR);
 //        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
+//debug("here2" ENDCOLOR);
         super::reset(new_ptr);
         m_cached = new_cached; //keep cached info in sync with ptr
 //        INSPECT(YELLOW_MSG "updated cached " << m_cached << ENDCOLOR);
+//debug("here3" ENDCOLOR);
         VOID INSPECT(*this, srcline);
+//debug("here4" ENDCOLOR);
     }
 public: //named arg variants
     template <typename CALLBACK>
@@ -2067,10 +2093,12 @@ public: //static helper methods
     static void deleter(SDL_Texture* ptr)
     {
         if (!ptr) return;
+//debug("here10" ENDCOLOR);
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
         debug(BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
         VOID SDL_DestroyTexture(ptr);
+//debug("here11" ENDCOLOR);
     }
 //    static void xfr(void* pxbuf, const void* pixels, size_t xfrlen, SrcLine srcline = 0)
 //    {
@@ -2354,6 +2382,8 @@ void sdl_api_test()
 //using "fully rendered frames" style
 void fullscreen_test(ARGS& args)
 {
+    SDL_AutoTexture<> txtr(SDL_AutoTexture</*true*/>::NullOkay{});
+
     int screen = 0; //default
     const int W = 4, H = 5;
     const SDL_Size wh(W, H); //int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
@@ -2361,7 +2391,9 @@ void fullscreen_test(ARGS& args)
     for (auto arg : args) //int i = 0; i < args.size(); ++i)
         if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
     debug(PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start" << ENDCOLOR);
-    /*SDL_AutoTexture<>*/ auto txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
+//    SDL_Delay(2 sec);
+    /*SDL_AutoTexture<>*/ auto other_txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
+    txtr = other_txtr;
     VOID txtr.clear(mixARGB(0.75, BLACK, WHITE), SRCLINE); //gray; bypass txtr and go direct to window
     VOID SDL_Delay((4-1) sec);
 //    VOID txtr.fill(mixARGB(0.25, BLACK, WHITE), SRCLINE);
@@ -2383,11 +2415,13 @@ void fullscreen_test(ARGS& args)
     return;
 #endif
 
-    Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
 //primary color test:
     int numfr = 0;
-    elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1], total_stats[SIZEOF(perf_stats)] = {0};
+    elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1]; //, total_stats[SIZEOF(perf_stats)] = {0};
     debug(CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)" ENDCOLOR);
+    auto show_stats = [&perf_stats, &numfr](const char* msg_color = BLUE_MSG, SrcLine srcline = 0) { debug(msg_color << "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR_ATLINE(srcline), numfr? perf_stats[0] / numfr / 1e6: 0, numfr? perf_stats[1] / numfr / 1e3: 0, numfr? perf_stats[2] / numfr / 1e3: 0, numfr? perf_stats[3] / numfr / 1e3: 0, numfr? perf_stats[4] / numfr / 1e3: 0); };
+
+    Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
     txtr.perftime(); //kludge: flush perf timer
     VOID SDL_Delay(1 sec); //kludge: even out timer with loop
@@ -2397,17 +2431,19 @@ void fullscreen_test(ARGS& args)
         SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
         debug(BLUE_MSG << timestamp() << "all " << wh << " pixels => 0x%x" ENDCOLOR, myPixels[0][0]);
         VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
-        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
-        for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
+//        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
+        show_stats(BLUE_MSG, SRCLINE);
+    //    for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
         ++numfr;
         VOID SDL_Delay(1 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
-    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
+//    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
+    show_stats(CYAN_MSG, SRCLINE);
 
 //pixel test:
     numfr = 0;
-    for (int i = 0; i < SIZEOF(total_stats); ++i) total_stats[i] = 0;
+    for (int i = 0; i < SIZEOF(perf_stats); ++i) perf_stats[i] = 0;
     SDL_AutoTexture<>::fill(&myPixels[0][0], BLACK, wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = BLACK; //bypass compiler index limits
 //    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
     txtr.perftime(); //kludge: flush perf timer
@@ -2419,13 +2455,15 @@ void fullscreen_test(ARGS& args)
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
             debug(BLUE_MSG << timestamp() << "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
             VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
-            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
-            for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
+//            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
+            show_stats(BLUE_MSG, SRCLINE);
+//            for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
             ++numfr;
             VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
-    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
+//    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
+    show_stats(CYAN_MSG, SRCLINE);
 }
 
 
