@@ -68,6 +68,7 @@ const opts =
     vgroup: 30,
     color: -1, //0xffff00ff,
     protocol: GpuPort.NONE,
+    mynodes: new Uint32Array(GpuPort.NUM_UNIV * GpuPort.UNIV_MAXLEN + 1),
 };
 //var THIS = {count: 0, };
 //TODO: try{

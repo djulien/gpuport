@@ -1453,13 +1453,15 @@ public:
             {
                 size_t buflen;
                 char buf[20] = ",";
-                napi_value propname;
-                !NAPI_OK(napi_get_element(env, proplist, i, &propname), "Get array element failed");
+                napi_thingy propname(env), propval(env);
+                !NAPI_OK(napi_get_element(env, proplist, i, &propname.value), "Get array element failed");
                 !NAPI_OK(napi_get_value_string_utf8(env, propname, &buf[1], sizeof(buf) - 2, &buflen), "Get string failed");
-                strcat(buf, ",");
-                if (strstr(",screen,vgroup,color,protocol,debug,", buf)) continue;
+                strcpy(&buf[1 + buflen], ",");
+                if (strstr(",screen,vgroup,color,protocol,debug,nodes,", buf)) continue;
+                buf[1 + buflen] = '\0';
+                if (!get_prop(env, optsval, &buf[1], &propval.value)) propval.cre_undef();
 //                NAPI_exc("unecognized option name: '" << buf << "'");
-                exc_soft("unrecognized option name: '%.*s'", strlen(buf) - 2, &buf[1]);
+                exc_soft("unrecognized option: '%s' " << propval, &buf[1]); //strlen(buf) - 2, &buf[1]);
             }
 #endif
             opts.get_prop("debug", &m_opts.debug);
