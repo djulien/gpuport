@@ -324,12 +324,14 @@ public: //operators
     inline bool isarybuf() const
     {
         bool is_ary;
+        if (type() != napi_object) return false;
         !NAPI_OK(napi_is_arraybuffer(env, value, &is_ary), "Check if array buffer failed");
         return is_ary;
     }
     inline bool istypary() const
     {
         bool is_typary;
+        if (type() != napi_object) return false;
         !NAPI_OK(napi_is_typedarray(env, value, &is_typary), "Check if typed array failed");
         return is_typary;
     }
@@ -441,19 +443,25 @@ public: //methods
     inline void cre_int32(napi_env new_env, int32_t new_val) { env = new_env; cre_int32(new_val); }
     inline void cre_uint32(napi_env new_env, uint32_t new_val) { env = new_env; cre_uint32(new_val); }
     inline void cre_double(napi_env new_env, double new_val) { env = new_env; cre_double(new_val); }
-    inline void cre_null() { !NAPI_OK(napi_get_null(env, &value), "Cre null failed"); }
-    inline void cre_undef() { !NAPI_OK(napi_get_undefined(env, &value), "Cre undef failed"); }
-    inline void cre_object() { !NAPI_OK(napi_create_object(env, &value), "Cre obj failed"); }
-    inline void cre_string(std::string str) { !NAPI_OK(napi_create_string_utf8(env, str.c_str(), str.length(), &value), "Cre str failed"); }
-    inline void cre_string(const char* buf, size_t strlen) { !NAPI_OK(napi_create_string_utf8(env, buf, strlen, &value), "Cre str failed"); }
-    inline void cre_ext_arybuf(void* buf, size_t len) { !NAPI_OK(napi_create_external_arraybuffer(env, buf, len, NO_FINALIZE, NO_HINT, &value), "Cre arraybuf failed"); }
-    inline void cre_typed_ary(napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { !NAPI_OK(napi_create_typedarray(env, type, count, arybuf, bofs, &value), "Cre typed array failed"); }
-//n/a    inline void cre_bool(bool new_val) { !NAPI_OK(napi_create_bool(env, new_val, &value), "Cre bool failed"); }
-    inline void cre_int32(int32_t new_val) { !NAPI_OK(napi_create_int32(env, new_val, &value), "Cre int32 failed"); }
-    inline void cre_uint32(uint32_t new_val) { !NAPI_OK(napi_create_uint32(env, new_val, &value), "Cre uint32 failed"); }
-    inline void cre_double(double new_val) { !NAPI_OK(napi_create_double(env, new_val, &value), "Cre float failed"); }
+
+    inline void cre_null() { !NAPI_OK(napi_get_null(env, &value), "Cre null failed"); verify(napi_null); }
+    inline void cre_undef() { !NAPI_OK(napi_get_undefined(env, &value), "Cre undef failed"); verify(napi_undefined); }
+    inline void cre_object() { !NAPI_OK(napi_create_object(env, &value), "Cre obj failed"); verify(napi_object); }
+    inline void cre_string(std::string str) { !NAPI_OK(napi_create_string_utf8(env, str.c_str(), str.length(), &value), "Cre str failed"); verify(napi_string); }
+    inline void cre_string(const char* buf, size_t strlen) { !NAPI_OK(napi_create_string_utf8(env, buf, strlen, &value), "Cre str failed"); verify(napi_string); }
+    inline void cre_ext_arybuf(void* buf, size_t len) { !NAPI_OK(napi_create_external_arraybuffer(env, buf, len, NO_FINALIZE, NO_HINT, &value), "Cre arraybuf failed"); verify(napi_object, isarybuf()); }
+    inline void cre_typed_ary(napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { !NAPI_OK(napi_create_typedarray(env, type, count, arybuf, bofs, &value), "Cre typed array failed"); verify(napi_object, istypary()); }
+//n/a    inline void cre_bool(bool new_val) { !NAPI_OK(napi_create_bool(env, new_val, &value), "Cre bool failed"); show(); }
+    inline void cre_int32(int32_t new_val) { !NAPI_OK(napi_create_int32(env, new_val, &value), "Cre int32 failed"); verify(napi_number); }
+    inline void cre_uint32(uint32_t new_val) { !NAPI_OK(napi_create_uint32(env, new_val, &value), "Cre uint32 failed"); verify(napi_number); }
+    inline void cre_double(double new_val) { !NAPI_OK(napi_create_double(env, new_val, &value), "Cre float failed"); verify(napi_number); }
     int32_t operator=(const int32_t& new_val) { cre_int32(new_val); return new_val; }
     uint32_t operator=(const uint32_t& new_val) { cre_uint32(new_val); return new_val; }
+    void verify(napi_valuetype chk_type, bool subtypeok = true) //napi_typedarray_type arytype = 0)
+    {
+        if ((type() != chk_type) || !subtypeok) debug(RED_MSG << "failed to create " << TypeName(chk_type) << ENDCOLOR);
+//        else debug(BLUE_MSG << TypeName(chk_type) << " created ok" << ENDCOLOR);
+    }
 };
 //napi_thingy;
 #endif //def SRC_NODE_API_H_ //USE_NAPI
@@ -1583,7 +1591,16 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 //    aodata->wker_ok(env); //) NAPI_exc(env, "Gpu wker problem: " << aodata->exc_reason());
     !NAPI_OK(napi_create_int32(env, aoptr->numfr.load(), &argv[0]), "Create arg failed");
 //    !NAPI_OK(napi_create_int32(env, 1234, &argv[1]), "Create arg failed");
-    argv[1] = aoptr->wrap_nodebuf(env); //, &argv[1]); //CAUTION: must be called from Node fg thread; maybe also each time - napi doesn't like napi_values saved across calls?
+//    argv[1] = aoptr->wrap_nodebuf(env); //, &argv[1]); //CAUTION: must be called from Node fg thread; maybe also each time - napi doesn't like napi_values saved across calls?
+#if 0
+    Uint32 buf[10];
+    debug(YELLOW_MSG "&buf[0] %p vs. &nodes[0][0]) %p %p, size %zu" ENDCOLOR, &buf[0], aoptr, &aoptr->m_nodebuf.nodes[0][0], sizeof(aoptr->m_nodebuf.nodes));
+    napi_thingy arybuf(env, &aoptr->m_nodebuf.nodes[0][0], sizeof(aoptr->m_nodebuf.nodes));
+    debug("arybuf5 " << arybuf << ENDCOLOR);
+    napi_thingy wrapper(env, Nodebuf::GPU_NODE_type, 6, arybuf);
+    debug("nodes5 " << wrapper << ENDCOLOR);
+    argv[1] = wrapper;
+#endif
     argv[2] = aoptr->wrap_frinfo(env); //, &argv[2]);
 //    argv[1] = aoptr->nodes.value;
 //    SNAT("node val", aoptr->nodes.value);
@@ -1665,6 +1682,14 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //    aoptr->islistening(true);
 //#if 1
 //    aoptr->make_thread(env);
+#if 0
+    Uint32 buf[10];
+    napi_thingy arybuf(env, &buf[0], sizeof(buf));
+    debug("arybuf5 " << arybuf << ENDCOLOR);
+    napi_thingy wrapper(env, Nodebuf::GPU_NODE_type, 6, arybuf);
+    debug("nodes5 " << wrapper << ENDCOLOR);
+#endif
+//return NULL;
     std::thread bkg([/*env,*/ aoptr]() //env, screen, vgroup, init_color]()
     {
 //        napi_status status;
