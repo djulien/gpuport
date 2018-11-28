@@ -75,7 +75,7 @@ const SEQLEN = 5;
 //const WANT_GP = false; //true; //false;
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo).json_tidy}`);
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo).json_tidy}, want more? ${frnum < SEQLEN}`);
     /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this); //, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
 //    return (++THIS.count < SEQLEN)? 0xffffff: 0;
     for (var i = 0; i < 5; ++i) nodes[i] = palette[i % palette.length];
