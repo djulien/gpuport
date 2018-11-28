@@ -319,8 +319,11 @@ public: //ctors/dtors
     inline napi_thingy(napi_env new_env, std::string str) { cre_string(new_env, str); }
     inline napi_thingy(napi_env new_env, void* data, size_t len) { cre_ext_arybuf(new_env, data, len); }
     inline napi_thingy(napi_env new_env, napi_typedarray_type arytype, size_t count, napi_value arybuf, size_t bofs = 0) { cre_typed_ary(new_env, arytype, count, arybuf, bofs); }
+//    inline napi_thingy(const napi_thingy)
     inline ~napi_thingy() { cre_undef(); } //reset in case caller added refs to other objects; probably not needed
 public: //operators
+    inline napi_thingy& operator=(const napi_thingy& that) { env = that.env; value = that.value; return *this; }
+    inline napi_thingy& operator=(napi_value that) { value = that; return *this; }
     inline operator napi_env() const { return env; }
     inline operator napi_value() const { return value; }
     inline bool isarybuf() const
@@ -469,6 +472,44 @@ public: //methods
 #endif //def SRC_NODE_API_H_ //USE_NAPI
 
 
+class napi_autoref //: public napi_ref
+{
+    napi_env env;
+    napi_ref ref;
+//    using super = napi_ref;
+public: //ctors/dtors
+    inline autoref(): ref(nullptr) {}
+//    inline autoref(napi_env new_env, napi_value new_value): autoref(), obj(new_env, new_value)
+    ~autoref() { reset(); }
+public: //operators
+//    inline operator napi_ref() const { return ref; }
+//    operator napi_value() const { return value(); }
+    inline napi_value operator=(const napi_thingy& that) { reset(that); return that.value; }
+public: //methods
+//    napi_thingy value() { return napi_thingy(env, value()); }
+    napi_value value() const
+    {
+        napi_value val;
+        if (!ref) exc_hard("no object ref");
+        !NAPI_OK(napi_get_reference_value(env, ref, &val), "Get ref val failed");
+        return val;
+    }
+    void reset()
+    {
+        if (ref) debug(YELLOW_MSG "del ref to " << value() << ENDCOLOR);
+        if (ref) !NAPI_OK(napi_delete_reference(env, ref), "Del ref failed");
+        ref = nullptr;
+    }
+    void reset(const napi_thingy& that) { reset(that.env, that.value); }
+    void reset(napi_env new_env, napi_value new value)
+    {
+        reset();
+        env = new_env;
+        !NAPI_OK(napi_create_reference(env, value, 1, &ref), "Cre ref failed");
+    }
+};
+
+
 template <typename TYPE>
 class my_vector: public std::vector<TYPE>
 {
@@ -591,11 +632,11 @@ public: //data members
 //put nodes last in case caller overruns boundary:
     NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
 public: //ctors/dtors
-    explicit Nodebuf(): //(napi_env env):
+    explicit Nodebuf(/*napi_env env*/):
 //        m_cached(env), //allow napi values to be inited
         m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
         m_xfr(std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE)) //protocol bit-banger shim
-        {}
+        { reset(); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Nodebuf& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -648,7 +689,7 @@ public: //methods
 //        m_cached.cre_undef();
         memset(&perf_stats[0], 0, sizeof(perf_stats));
     }
-    void reset(int screen = FIRST_SCREEN, int vgroup = 0, NODEVAL init_color = BLACK) //SDL_Size& new_wh) //, SrcLine srcline = 0)
+    void reset(int screen /*= FIRST_SCREEN*/, int vgroup /*= 0*/, NODEVAL init_color /*= BLACK*/) //SDL_Size& new_wh) //, SrcLine srcline = 0)
     {
 //nodes: #univ x univ_len, txtr: 3 * 24 x univ len, view (clipped): 3 * 24 - 1 x univ len
 //debug("here50" ENDCOLOR);
@@ -742,6 +783,24 @@ public: //methods
 //        for (int i = 0; i < SIZEOF(perf_stats); ++i) m_frinfo.times[i] += perf_stats[i];
 //        RenderPresent();
     }
+#if 0
+public: //named arg variants
+    template <typename CALLBACK>
+    inline void reset(CALLBACK&& named_params)
+    {
+        struct //ResetParams
+        {
+            bool screen_only = false;
+            int screen = FIRST_SCREEN;
+            int vgroup = 0;
+            NODEVAL init_color = BLACK;
+            SrcLine srcline = 0;
+        } params;
+        unpack(params, named_params);
+        if (??) VOID reset(params.screen, params.vgroup, params.init_color);
+        else VOID reset(params.screen_only);
+    }
+#endif
 private: //helpers
 //xfr node (color) values to txtr, bit-bang into currently selected protocol format:
 //CAUTION: this needed to run fast because it blocks Node fg thread
@@ -887,7 +946,7 @@ public: //ctors/dtors
     FrameInfo(/*napi_env env,*/ Nodebuf& nodebuf, Validator aovalid):
         protocol(nodebuf.protocol), frame_time(nodebuf.frame_time), wh(nodebuf.wh), dirty(nodebuf.dirty), perf_stats(nodebuf.perf_stats), //started(nodebuf.started), //link nodebuf data members for easier access
         isvalid(aovalid),
-//        m_cached(env), 
+        m_cached(nullptr, unref), //env), 
         started(now_msec())
         { reset(); }
 public: //operators
@@ -935,6 +994,7 @@ public: //methods
 //        memset(&times[0], 0, sizeof(times));
 //            sentinel = FRINFO_MAGIC;
 //        m_cached.cre_undef();
+//        if (m_cached) !NAPI_OK(napi_delete_reference())
     }
 public: //playback methods
     bool m_listening = false;
@@ -992,21 +1052,28 @@ public: //playback methods
 //                return retval.value;
     }
 #endif
-//    napi_thingy m_cached; //wrapped frinfo for napi
+//    napi_thingy m_cached; //wrapped frinfo napi object for caller
+//    napi_ref m_cached;
+//    std::unique_ptr<napi_ref, std::function<void(napi_ref)>> m_cached;
+    napi_autoref m_cached;
     napi_value wrap(napi_env env) //, napi_value* valp = 0)
     {
         if (!env) return NULL; //Node cleanup mode?
 //can't cache :(        if (frinfo.type() != napi_object)
 //debug("here70" ENDCOLOR);
-#if 0
-        debug(BLUE_MSG "wrap frinfo, ret? %d, cached " << m_cached << ENDCOLOR, !!valp);
-#endif
-//        if (env != m_cached.env) debug(YELLOW_MSG "env changed: 0x" << std::hex << env << " vs. 0x" << m_cached.env << std::dec << ENDCOLOR);
-//        if (CachedWrapper && valp && (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
+ status = napi_create_reference(env, cons, 1, &constructor);
+  if (status != napi_ok) return status;
+
+        if (env != m_cached.env) debug(YELLOW_MSG "env changed: from 0x%x to 0x%x" ENDCOLOR, m_cached.env, env);
+        m_cached.env = env;
+        debug(BLUE_MSG "wrap frinfo, cached " << m_cached << ", ret? %d" ENDCOLOR, m_cached.type() == napi_object);
+//        if (/*CachedWrapper && valp &&*/ (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
+        if (m_cached.type() == napi_object) return m_cached;
 //        napi_thingy frinfo(env);
 //debug("here71" ENDCOLOR);
 //        m_cached.cre_object(env);
-        napi_thingy wrapper(env, napi_thingy::Object{});
+        m_cached.cre_object(); //= napi_thingy(env, napi_thingy::Object{});
+//        napi_thingy wrapper(env, napi_thingy::Object{});
 //        wrapper.cre_object();
 //        !NAPI_OK(napi_create_object(env, &frinfo.value), "Cre frinfo obj failed");
 //        {
@@ -1272,7 +1339,7 @@ public: //playback methods
             napi_thingy arybuf(env, &perf_stats[0], sizeof(perf_stats));
 //        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
 //            debug("arybuf5 " << arybuf << ENDCOLOR);
-            debug(YELLOW_MSG "cre typed array[%u] perf stats wrapper " << arybuf << ENDCOLOR, SIZEOF(perf_stats));
+//            debug(YELLOW_MSG "cre typed array[%u] perf stats wrapper " << arybuf << ENDCOLOR, SIZEOF(perf_stats));
             _.value = napi_thingy(env, Nodebuf::perf_stats_type, SIZEOF(perf_stats), arybuf);
 //            typary.typed_ary(napi_biguint64_array, SIZEOF(perf_stats), arybuf);
 //            _.value = typary.value;
@@ -1282,11 +1349,11 @@ public: //playback methods
 //add above props to frame info object:
 //debug("here77" ENDCOLOR);
 //        if (pptr - props > SIZEOF(props)) NAPI_exc("prop ary overflow: needed " << (pptr - props) << ", only had space for " << SIZEOF(props));
-        !NAPI_OK(napi_define_properties(env, /*m_cached.value*/ wrapper, props.size(), props.data()), "set frinfo props failed");
+        !NAPI_OK(napi_define_properties(env, m_cached, props.size(), props.data()), "set frinfo props failed");
 //debug("here78" ENDCOLOR);
 //        if (frinfo.env != env) NAPI_exc("frinfo env mismatch");
 //        if (valp) *valp = m_cached.value;
-        return wrapper;
+        return m_cached;
 //debug("here79" ENDCOLOR);
     }
 };
@@ -1326,8 +1393,8 @@ private: //data members
 public: //ctors/dtors
 //    GpuAddonData() = delete; //must have env so delete default
 //    explicit GpuAddonData(napi_env env, SrcLine srcline = 0): /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
-    explicit GpuAddonData(/*napi_env env,*/ SrcLine srcline = 0):
-        m_frinfo(/*env,*/ m_nodebuf, std::bind([](const GpuAddonData* aodata, napi_env env) -> bool { return aodata->isvalid(env, SRCLINE); }, this, std::placeholders::_1)), //m_nodebuf(env),
+    explicit GpuAddonData(napi_env env, SrcLine srcline = 0):
+        m_frinfo(env, m_nodebuf, std::bind([](const GpuAddonData* aodata, napi_env env) -> bool { return aodata->isvalid(env, SRCLINE); }, this, std::placeholders::_1)), m_nodebuf(env),
         /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
 //        nodes(env), frinfo(env), listener(env), //NOTE: need these because default ctor deleted
 //        m_shmptr(shmalloc_typed<SHDATA>(SHM_LOCAL), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
@@ -1335,7 +1402,7 @@ public: //ctors/dtors
 //        nodes_setup(env, &dummy); //kludge: pre-alloc to avoid memory problems
 //        frinfo_setup(env, &dummy); //kludge: pre-alloc to avoid memory problems
     {
-        m_frinfo.reset();
+//        m_frinfo.reset(); //already done
 //        numfr.store(0);
 //        dirty.store(0);
 //        islistening(false); //listener.busy = false;
@@ -1620,6 +1687,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
     argv[1] = wrapper;
 #endif
     argv[2] = aoptr->wrap_frinfo(env); //, &argv[2]);
+//    argv[2] = aoptr->m_frinfo.m_cached;
 //    argv[1] = aoptr->nodes.value;
 //    SNAT("node val", aoptr->nodes.value);
 //    SNAT("argv[1]", argv[1]);
@@ -1695,6 +1763,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //debug("here83" ENDCOLOR);
 //    aoptr->mk_nodes(env);
 //    aoptr->mk_frinfo(env);
+    napi_thingy retval(env, aoptr->wrap_frinfo(env)); //napi_thingy::Object{});
 
 //run txtr updates on bkg thread so fg Node thread doesn't block:
 //    aoptr->islistening(true);
@@ -1727,16 +1796,13 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //                !NAPI_OK(napi_call_threadsafe_function(aoptr->fats, aoptr, napi_tsfn_blocking), "Can't call JS fats");
 //            while (aoptr->islistening()) //break; //allow cb to break out of playback loop
 //    typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
-#if 0
                 aoptr->dirty.wait(Nodebuf::ALL_UNIV, [aoptr](){ return !aoptr->islistening(); }, true, SRCLINE); //CAUTION: blocks until al univ ready or caller cancelled
-#else
-                SDL_Delay(0.1 sec);
-                const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE};
-                for (int i = 0; i < SIZEOF(aoptr->m_nodebuf.nodes); ++i) aoptr->m_nodebuf.nodes[0][i] = palette[aoptr->numfr.load() % SIZEOF(palette)];
-                if (aoptr->numfr.load() >= 10) break;
-#endif
+//                const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE};
+//                for (int i = 0; i < SIZEOF(aoptr->m_nodebuf.nodes); ++i) aoptr->m_nodebuf.nodes[0][i] = palette[aoptr->numfr.load() % SIZEOF(palette)];
+//                if (aoptr->numfr.load() >= 10) break;
                 debug(BLUE_MSG "bkg woke from fr# %d with ready 0x%x, caller listening? %d" ENDCOLOR, aoptr->numfr.load(), aoptr->dirty.load(), aoptr->islistening());
                 if (!aoptr->islistening()) break;
+                SDL_Delay(1 sec);
                 aoptr->update(); //env);
             }
 //            SDL_Delay(1 sec);
@@ -1757,7 +1823,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
     bkg.detach();
 //#endif
 //debug("here84" ENDCOLOR);
-    return NULL; //aoptr->cbthis; //TODO: where to get this?
+    return retval; //NULL; //aoptr->cbthis; //TODO: where to get this?
 }
 
 
@@ -1771,7 +1837,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     debug(BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi v" << napi_ver << ENDCOLOR);
     exports = module_exports(env, exports); //include previous exports
 
-    std::unique_ptr<GpuAddonData> aodata(new GpuAddonData(SRCLINE)); //env)); //(GpuAddonData*)malloc(sizeof(*addon_data));
+    std::unique_ptr<GpuAddonData> aodata(new GpuAddonData(env, SRCLINE)); //(GpuAddonData*)malloc(sizeof(*addon_data));
     GpuAddonData* aoptr = aodata.get();
 //    aoptr->isvalid(env);
 //expose methods for caller to use:
