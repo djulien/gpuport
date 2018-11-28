@@ -41,6 +41,9 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 //other ARGB colors (debug):
 //const SALMON  0xFF8080
 //const LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+//ARGB primary colors:
+
+const PALETTE = [RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE];
 
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
@@ -66,15 +69,16 @@ const opts =
     color: -1, //0xffff00ff,
     protocol: GpuPort.NONE,
 };
-var THIS = {count: 0, };
+//var THIS = {count: 0, };
 //TODO: try{
 const SEQLEN = 5;
 //const WANT_GP = false; //true; //false;
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${nodes.length}:${JSON.stringify(nodes).trunc()}, frinfo ${JSON.stringify(frinfo)}`);
-    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
-    return (++THIS.count < SEQLEN)? 0xffffff: 0;
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo).json_tidy}`);
+    /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this); //, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
+//    return (++THIS.count < SEQLEN)? 0xffffff: 0;
+    for (var i = 0; i < 5; ++i) nodes[i] = palette[i % palette.length];
     return (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
 });
 //}catch(exc){}
@@ -223,6 +227,8 @@ function srcline(depth)
 
 function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); }
 
+function commas(num) { return num.toLocaleString(); } //grouping (1000s) default = true
+
 function hex(thing) { return `0x${(thing >>> 0).toString(16)}`; }
 
 function noop() {} //dummy placeholder function
@@ -243,7 +249,7 @@ function extensions()
 //below are mainly for debug:
 //    if (!String.prototype.echo)
     String.prototype.echo = function echo(args) { args = Array.from(arguments); args.push(this.escnl); console.error.apply(null, args); return this; } //fluent to allow in-line usage
-    String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${this.length - maxlen})`: this; }
+    String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${commas(this.length - maxlen)})`: this; }
     String.prototype.replaceAll = function replaceAll(from, to) { return this.replace(new RegExp(from, "g"), to); } //NOTE: caller must esc "from" string if contains special chars
 //    if (!String.prototype.splitr)
     Object.defineProperties(String.prototype,
@@ -252,6 +258,7 @@ function extensions()
         nocomment: { get() { return this.replace(/\/\*.*?\*\//gm, "").replace(/(#|\/\/).*?$/gm, ""); }}, //strip comments; multi-line has priority over single-line; CAUTION: no parsing or overlapping
         nonempty: { get() { return this.replace(/^\s*\r?\n/gm , ""); }}, //strip empty lines
         escre: { get() { return this.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }}, //escape all RE special chars
+        json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
     });
 }
 

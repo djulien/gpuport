@@ -34,6 +34,19 @@ extensions(); //hoist so inline code below can use
 //process.exit();
 
 
+//ARGB primary colors:
+const RED = 0xffff0000;
+const GREEN = 0xff00ff00;
+const BLUE = 0xff0000ff;
+const YELLOW = 0xffffff00;
+const CYAN = 0xff00ffff;
+const MAGENTA = 0xffff00ff;
+const WHITE = 0xffffffff;
+const BLACK = 0xff000000; //NOTE: alpha must be on to take effect
+
+const PALETTE = [RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE];
+
+
 ///////////////////////////////////////////////////////////////////////////////
 ////
 /// Main logic (CLI):
