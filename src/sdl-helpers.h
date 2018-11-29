@@ -1165,7 +1165,7 @@ public: //operators
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
         debug(BLUE_MSG "SDL_AutoWindow: old window %p, new window %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
-        DebugInOut("Awnd=wnd*", SRCLINE);
+//        DebugInOut("Awnd=wnd*", SRCLINE);
         reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
     }
@@ -1820,7 +1820,7 @@ public: //operators
     inline operator SDL_Texture*() const { return get(); }
     inline mySDL_AutoTexture& operator=(/*not const*/ mySDL_AutoTexture& that) //copy asst op; //, SrcLine srcline = 0)
     {
-        DebugInOut("Atxtr=Atxtr", SRCLINE);
+//        DebugInOut("Atxtr=Atxtr", SRCLINE);
         SDL_Window* svwnd = that.m_wnd.release();
 //        *this /*operator*/=(that.release());
         reset(that.release(), SRCLINE);

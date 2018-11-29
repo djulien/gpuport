@@ -15,6 +15,7 @@
 #include <string.h> //snprintf()
 #include <memory.h> //memmove()
 #include <map> //std::map<>
+#include <stdio.h> //fflush()
 
 #ifndef SIZE
  #define SIZE(thing)  int(sizeof(thing) / sizeof((thing)[0]))
@@ -38,6 +39,41 @@ inline const char* unmap(MAP&& map, KEY&& key) //Uint32 value) //ARGS&& ... args
 //const std::map<Uint32, const char*> SDL_SubSystems =
 //    SDL_AutoSurface SDL_CreateRGBSurfaceWithFormat(ARGS&& ... args, SrcLine srcline = 0) //UNUSED, TXR_WIDTH, univ_len, SDL_BITSPERPIXEL(fmt), fmt);
 //        return SDL_AutoSurface(::SDL_CreateRGBSurfaceWithFormat(std::forward<ARGS>(args) ...), srcline); //perfect fwd
+
+
+//custom lookup map:
+//std::map looks for exact key match so it won't work with string keys
+//define a map to use strcmp instead:
+//using KEYTYPE = const char*;
+template <typename KEYTYPE = const char*, typename VALTYPE = int>
+class str_map //: public std::vector<std::pair<KEYTYPE, VALTYPE>>
+{
+    using PAIRTYPE = std::pair<KEYTYPE, VALTYPE>;
+    std::vector<PAIRTYPE> m_vec;
+public: //ctors/dtors
+//    str_map(KEYTYPE key, VALTYPE val) {}
+//initializer list example: https://en.cppreference.com/w/cpp/utility/initializer_list
+    str_map(std::initializer_list<PAIRTYPE> il): m_vec(il) {}
+public: //methods
+    /*std::pair<KEYTYPE, VALTYPE>*/ const PAIRTYPE* find(KEYTYPE key, int def = -1) const
+    {
+//printf("here10\n"); fflush(stdout);
+//        static int count = 0;
+//        if (!count++)
+//            for (auto it = m_vec.begin(); it != m_vec.end(); ++it)
+//            { printf("here14 %s %d\n", it->first, it->second); fflush(stdout); }
+//        for (auto pair : m_vec) //*this)
+        for (auto it = m_vec.begin(); it != m_vec.end(); ++it)
+            if (!strcmp(key, it->first)) return &*it; //use strcmp rather than ==
+//        return (def < 0)? 0: &this[def];
+//printf("here11\n"); fflush(stdout);
+        if (def < 0) return 0;
+//printf("here12\n"); fflush(stdout);
+//        return this + def; //(*this)[def];
+//        return &(operator[](def));
+        return &m_vec[def]; //&(*this)[def]; //return ptr to default entry
+    };
+};
 
 
 //return default string instead of null:
@@ -101,6 +137,7 @@ const char* commas(int64_t val)
 
 #include "msgcolors.h"
 #include "debugexc.h"
+#include <map>
 
 
 //int main(int argc, const char* argv[])
@@ -119,6 +156,36 @@ void unit_test(ARGS& args)
     const char* null = 0;
     debug(BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
     debug(BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
+
+#if 0
+//    static const std::map<int, const char*> SDL_RendererFlagNames =
+    static const std::vector<std::pair<int, const char*>> SDL_RendererFlagNames =
+    {
+        {1, "SW"}, //0x01
+        {2, "ACCEL"}, //0x02
+        {3, "VSYNC"}, //0x04
+        {4, "TOTXR"}, //0x08
+//        {~(SDL_RENDERER_SOFTWARE | SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE), "????"},
+    };
+#endif
+//http://www.informit.com/articles/article.aspx?p=1852519
+
+    /*static const*/ str_map<const char*, int> opts //=
+//    static const std::vector<std::pair<const char*, int>> opts =
+//    XYZ opts //=
+    {
+//    opts::PAIRTYPE /*std::pair<const char*, int>*/ not_found = 
+        {"!found", -1},
+        {"first", 1},
+        {"second", 2},
+        {"third", 3},
+        {"fourth", 4},
+        {"fifth", 5},
+    };
+//printf("here2\n"); fflush(stdout);
+    debug(BLUE_MSG "find third: %p = %d" ENDCOLOR, opts.find("third"), opts.find("third", 0)->second);
+//printf("here3\n"); fflush(stdout);
+    debug(BLUE_MSG "find sixth: %p = %d" ENDCOLOR, opts.find("sixth"), opts.find("sixth", 0)->second);
 
 //    return 0;
 }
