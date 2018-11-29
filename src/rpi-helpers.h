@@ -123,7 +123,7 @@ bool isRPi()
 //    ostrm << "SDL_Rect";
         if (!&that) { ostrm << "{NULL}"; return ostrm; } //failed to load
         ostrm << "{screen# " << that.screen;
-        ostrm << ", " << (that.dot_clock / 1000) << " Mhz";
+        ostrm << ", " << (that.dot_clock / 1e3) << " Mhz";
         ostrm << ", hres " << that.hdisplay << " + " << that.hlead << "+" << that.hsync << "+" << that.htrail << " = " << that.htotal;
         ostrm << ", vres " << that.vdisplay << " + " << that.vlead << "+" << that.vsync << "+" << that.vtrail << " = " << that.vtotal;
         ostrm << ", aspect " << that.aspect_ratio << FMT(" (config) %4.3f (actual)") << that.aspect();

@@ -63,10 +63,13 @@ public: //methods
 //            for (auto it = m_vec.begin(); it != m_vec.end(); ++it)
 //            { printf("here14 %s %d\n", it->first, it->second); fflush(stdout); }
 //        for (auto pair : m_vec) //*this)
+//        for (auto it = m_vec.begin(); it != m_vec.end(); ++it)
+//            printf("str_map: cmp '%s' to '%s': %d\n", key, it->first, strcmp(key, it->first));
         for (auto it = m_vec.begin(); it != m_vec.end(); ++it)
             if (!strcmp(key, it->first)) return &*it; //use strcmp rather than ==
 //        return (def < 0)? 0: &this[def];
 //printf("here11\n"); fflush(stdout);
+//        printf("ret def %d\n", def);
         if (def < 0) return 0;
 //printf("here12\n"); fflush(stdout);
 //        return this + def; //(*this)[def];
@@ -79,10 +82,21 @@ public: //methods
 //return default string instead of null:
 //use function to avoid evaluating params > 1x
 //#define NVL(str, defval)  ((str)? (str): (defval)? (defval): "(null")
-inline const char* NVL(const char* str, const char* defval = 0) { return str? str: defval? defval: "(null)"; }
-//TODO:
-//template <typename VALTYPE, VALTYPE DEFVAL = 0>
+//inline const char* NVL(const char* str, const char* defval = 0) { return str? str: defval? defval: "(null)"; }
+//use template to allow different types
+template <typename TYPE>
+inline TYPE NVL(const TYPE val, const TYPE defval = 0)
+{
+    static const TYPE NONE = 0;
+    return val? val: defval? defval: NONE;
+}
+//template <> NONE<const char*> = "(none)";
 //_GLIBCXX14_CONSTEXPR inline const VALTYPE& NVL(const VALTYPE& val, const VALTYPE& defval = DEFVAL) { return val? val: defval? defval: DEFVAL; }
+//    template <typename ... ARGS>
+//    SDL_AutoSurface SDL_CreateRGBSurfaceWithFormat(ARGS&& ... args, SrcLine srcline = 0) //UNUSED, TXR_WIDTH, univ_len, SDL_BITSPERPIXEL(fmt), fmt);
+//        return SDL_AutoSurface(::SDL_CreateRGBSurfaceWithFormat(std::forward<ARGS>(args) ...), srcline); //perfect fwd
+
+
 
 
 //for grammatically correct msgs: :)
@@ -156,6 +170,8 @@ void unit_test(ARGS& args)
     const char* null = 0;
     debug(BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
     debug(BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
+    debug(BLUE_MSG << NVL(123, -1) << ENDCOLOR);
+    debug(BLUE_MSG << NVL(0, -1) << ENDCOLOR);
 
 #if 0
 //    static const std::map<int, const char*> SDL_RendererFlagNames =

@@ -250,11 +250,13 @@ int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not v
 #undef err_ret
 
 
+inline const char* const_strerror(int my_errno) { return strerror(my_errno); } //"const" shim
+
 #if 1
 void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
     void* retval = shmalloc(size, key, srcline);
-    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(strerror(errno), "??error??"): "no error");
+    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
     return retval;
 }
 #define shmalloc  shmalloc_debug
@@ -262,7 +264,7 @@ void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine 
 int shmfree_debug(const void* addr, SrcLine srcline = 0)
 {
     int retval = shmfree(addr, srcline);
-    debug(BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(strerror(errno), "??error??"): "no error");
+    debug(BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
     return retval;
 }
 #define shmfree  shmfree_debug

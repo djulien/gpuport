@@ -138,12 +138,13 @@ public:
     explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << " IN" ENDCOLOR_ATLINE(srcline)); }
     /*virtual*/ ~InOutDebug() { debug(BLUE_MSG << m_label << " OUT after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
 public: //methods
-    double restart() //my_elapsed_msec(bool restart = false)
+    double restart(bool update = true) //my_elapsed_msec(bool restart = false)
     {
         double retval = elapsed_msec() - m_started;
-        /*if (restart)*/ m_started = elapsed_msec();
+        if (update) m_started = elapsed_msec();
         return retval;
     }
+    void checkpt(const char* desc = 0, SrcLine srcline = 0) { debug(BLUE_MSG << m_label << " CHKPT(%s) after %f msec" ENDCOLOR_ATLINE(NVL(srcline, m_srcline)), NVL(desc, ""), restart(false)); }
 protected: //data members
     /*const*/ int m_started; //= -elapsed_msec();
 //    const char* m_label;

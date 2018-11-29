@@ -553,7 +553,7 @@ template <typename PXTYPE = Uint32>
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_TextureInfo& that) CONST
     {
-        SrcLine srcline = NVL(/*that.m_srcline*/ 0, SRCLINE);
+        SrcLine srcline = NVL(/*that.m_srcline*/ /*0*/ (const char*)NULL, SRCLINE);
         ostrm << "SDL_TextureInfo";
         ostrm << "{" << that.wh;
         ostrm << ", " << that.fmt;

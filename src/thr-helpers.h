@@ -107,6 +107,7 @@ public: //methods
 //make interchangeable with std::atomic<>:
 //TODO: perfect fwd or derive?
     inline /*VALTYPE*/ auto load() const { return m_val.load(); }
+//    inline bool hasval(VALTYPE want_val) const { return load() == want_val; }
     inline void store(VALTYPE newval, SrcLine srcline = 0)
     {
         if (WANT_DEBUG) DEBUG("BkgSync = 0x" << std::hex << newval << std::dec, srcline);
@@ -133,10 +134,11 @@ public: //methods
     typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
     bool wait(VALTYPE want_value = 0, CANCEL cancel = NULL, bool blocking = true, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << ": thr# " << thrinx() << ", cur val 0x" << std::hex << m_val << std::dec, srcline);
+        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << " (" << &"non-blocking"[blocking? 4: 0] << "): thr# " << thrinx() << ", cur val 0x" << std::hex << load() << " or 0x" << m_val << std::dec << ", match? " << (load() == want_value), srcline);
         if (load() == want_value) return true; //no need to wait, already has desired value
         if (blocking)
         {
+            if (WANT_DEBUG) DEBUG("BkgSync lock and wait", srcline);
             LOCKTYPE lock(m_mtx);
             m_cv.wait(lock, [this, want_value, cancel]
             {

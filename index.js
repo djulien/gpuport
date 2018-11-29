@@ -68,7 +68,7 @@ const opts =
     vgroup: 30,
     color: -1, //0xffff00ff,
     protocol: GpuPort.NONE,
-    mynodes: new Uint32Array(GpuPort.NUM_UNIV * GpuPort.UNIV_MAXLEN + 1),
+//    mynodes: new Uint32Array(GpuPort.NUM_UNIV * GpuPort.UNIV_MAXLEN + 1),
 };
 //var THIS = {count: 0, };
 //TODO: try{
@@ -79,11 +79,14 @@ const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
     debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo).json_tidy}, want more? ${frnum < SEQLEN}`);
     /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this); //, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
 //    return (++THIS.count < SEQLEN)? 0xffffff: 0;
-    for (var i = 0; i < 5; ++i) nodes[i] = palette[i % palette.length];
-    return (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
+    for (var i = 0; i < 5; ++i) nodes[i] = PALETTE[(frnum + i) % PALETTE.length];
+    const retval = (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
+    debug(`retval: ${frnum} < ${SEQLEN} => ${retval}`);
+    return retval;
 });
 //}catch(exc){}
-debug("gpu listen:", `(${typeof gp})`, gp);
+debug("gpu listen:", `(${typeof gp})`, JSON.stringify(gp).json_tidy);
+setTimeout(() => debug("gpu +1 sec:", `(${typeof gp})`, /*JSON.stringify(gp).json_tidy*/ gp), 1000);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());
 
