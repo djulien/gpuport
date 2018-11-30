@@ -16,6 +16,9 @@
 #include <memory.h> //memmove()
 #include <map> //std::map<>
 #include <stdio.h> //fflush()
+#include <vector>
+#include <utility> //std::pair<>
+
 
 #ifndef SIZE
  #define SIZE(thing)  int(sizeof(thing) / sizeof((thing)[0]))
