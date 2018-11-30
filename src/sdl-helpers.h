@@ -1,5 +1,7 @@
 //SDL2 wrappers and helpers
 
+//NOTE: code in here does not need to be thread-safe; it's only called by one (bkg) thread anyway, because SDL instead is not thread-safe
+
 #ifndef _SDL_HELPERS_H
 #define _SDL_HELPERS_H
 

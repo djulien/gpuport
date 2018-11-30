@@ -61,7 +61,7 @@ bool isRPi()
 {
 //NOTE: mutex not needed here
 //main thread will call first, so race conditions won't occur (benign anyway)
-    static std::atomic<tristate> cached(tristate::Maybe);
+    static std::atomic<tristate> cached(tristate::Maybe); //NOTE: doesn't need to be thread_local; only one (bkg) thread should be calling this
 //    static std::mutex protect;
 //    std::lock_guard<std::mutex> lock(protect); //not really needed (low freq api), but just in case
 
@@ -406,7 +406,7 @@ static void deleter(SDL_Window* ptr)
 
 const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //ScreenConfig* scfg) //XF86VidModeGetModeLine* mode_line)
 {
-    static ScreenConfig cached;
+    static ScreenConfig cached; //NOTE: doesn't need to be thread_local; only one (bkg) thread should be calling this
     if (cached.screen == which) return &cached; //return cached data; screen info won't change
     if (!read_config(which, &cached, srcline))
     {

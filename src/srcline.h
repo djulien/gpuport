@@ -62,7 +62,7 @@ static bool isunique(const char* folder, const char* basename, const char* ext)
 //    if (mySrcLine) params.srcline = mySrcLine;
 //    if (get_params) get_params(params); //params.i, params.s, params.b, params.srcline); //NOTE: must match macro signature; //get_params(params);
 //    static std::map<const char*, const char*> exts;
-    static struct { char name[32]; int count; } cached[10] = {0}; //base file name + #matching files
+    thread_local static struct { char name[32]; int count; } cached[10] = {0}; //base file name + #matching files
     const auto cachend /*const*/ = cached + SIZEOF(cached);
     if (!ext) return false; //don't check if no extension
     size_t baselen = std::min<size_t>(ext - basename + 1, sizeof(cached->name)); //ext - basename;
@@ -109,8 +109,8 @@ static bool isunique(const char* folder, const char* basename, const char* ext)
 SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
 {
 //NO-needs to be thread-safe:    static char buf[60]; //static to preserve after return to caller
-    static std::atomic<int> ff;
-    static char buf_pool[4][60]; //static to preserve after return to caller; kuldge: use buf pool in lieu of mem mgmt of ret bufs
+    thread_local static std::atomic<int> ff;
+    thread_local static char buf_pool[4][60]; //static to preserve after return to caller; kuldge: use buf pool in lieu of mem mgmt of ret bufs
     char* buf = buf_pool[ff++ % SIZEOF(buf_pool)];
     int toolong;
 

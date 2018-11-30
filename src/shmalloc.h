@@ -304,7 +304,7 @@ private: //helper methods
 private: //data members
     static std::vector<void*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
     {
-        static std::vector<void*> m_all;
+        static std::vector<void*> m_all; //TODO: should this be thread_local?
         return m_all;
     }
 //    static std::mutex m_mutex;

@@ -123,8 +123,8 @@ inline const char* skip_prefix(const char* str, const char* prefix)
 const char* commas(int64_t val)
 {
     const int LIMIT = 4; //max #commas to insert
-    static std::atomic<int> ff;
-    static char buf[12][16 + LIMIT]; //allow 12 simultaneous calls (across all threads)
+    thread_local static std::atomic<int> ff;
+    thread_local static char buf[12][16 + LIMIT]; //allow 12 simultaneous calls (across all threads)
 //    static auto_ptr<SDL_sem> acquire(SDL_CreateSemaphore(SIZE(buf)));
 //    auto_ptr<SDL_LockedSemaphore> lock_HERE(acquire.cast); //SDL_LOCK(acquire));
 

@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+//to debug:
+//node  debug  this-file  args
+//cmds: run, cont, step, out, next, .exit, repl
+
+
 "use strict";
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
@@ -17,6 +22,39 @@ extensions(); //hoist so inline code below can use
 //const napi = require('node-addon-api');
 //console.log("\nnapi.incl", JSON.stringify(napi.include));
 //console.log("\nnapi.gyp", JSON.stringify(napi.gyp));
+
+process.on('uncaughtException', (err) =>
+{
+    console.error(`${(new Date()).toUTCString()} uncaught exception: ${err.message}`.red_lt);
+    console.error(err.stack);
+    process.exit(1);
+});
+
+//TODO?
+//var cluster = require('cluster');
+//var workers = process.env.WORKERS || require('os').cpus().length;
+//if (cluster.isMaster)
+//{
+//  console.log('start cluster with %s workers', workers);
+//  for (var i = 0; i < workers; ++i)
+//    {
+//    var worker = cluster.fork().process;
+//    console.log('worker %s started.', worker.pid);
+//  }
+//  cluster.on('exit', function(worker)
+//  {
+//    console.log('worker %s died. restart...', worker.process.pid);
+//    cluster.fork();
+//  });
+//} else {
+//worker thread
+//}
+
+process.on('uncaughtException', function (err) {
+  console.error((new Date).toUTCString() + ' uncaughtException:', err.message)
+  console.error(err.stack)
+  process.exit(1)
+})
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -48,7 +86,7 @@ const PALETTE = [RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE];
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
 if (typeof limit == "function")
-{
+{ //use scope to delay execution of limit()
 debug(`
     limit blue ${hex(BLUE)} => ${hex(limit(BLUE))}, 
     cyan ${hex(CYAN)} => ${hex(limit(CYAN))},
@@ -65,28 +103,43 @@ debug(`
 const seqlen = 10;
 const opts =
 {
-    vgroup: 30,
+//    vgroup: 30, //vertical stretch for dev/debug
+//    vgroup: 3, //vertical stretch for dev/debug
+    vgroup: 1, //vertical stretch for dev/debug
     color: -1, //0xffff00ff,
-    protocol: GpuPort.NONE,
+//    protocol: GpuPort.NONE,
+//    protocol: GpuPort.DEV_MODE,
+    protocol: GpuPort.WS281X,
+//    fps: .1,
+    fps: 30,
 //    mynodes: new Uint32Array(GpuPort.NUM_UNIV * GpuPort.UNIV_MAXLEN + 1),
 };
 //var THIS = {count: 0, };
 //TODO: try{
-const SEQLEN = 5;
+const SEQLEN = 10 * opts.fps; //10 sec total
 //const WANT_GP = false; //true; //false;
+//const false_listen = false;
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo).json_tidy}, want more? ${frnum < SEQLEN}`);
+    const more = (frnum < SEQLEN);
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo, null, 2).json_tidy}, want more? ${more}`);
     /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this); //, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
 //    return (++THIS.count < SEQLEN)? 0xffffff: 0;
-    for (var i = 0; i < 5; ++i) nodes[i] = PALETTE[(frnum + i) % PALETTE.length];
-    const retval = (frnum < SEQLEN)? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
-    debug(`retval: ${frnum} < ${SEQLEN} => ${retval}`);
-    return retval;
+//    for (var i = 0; i < this.NUM_UNIV * this.UNIV_LEN; ++i) nodes[i] = PALETTE[(frnum + i) % PALETTE.length];
+    for (var x = 0; x < frinfo.NUM_UNIV; ++x)
+        for (var y = 0; y < frinfo.UNIV_LEN; ++y)
+//            nodes[x * frinfo.UNIV_LEN + y] = ((x + y) & 1)? (x && y && (x < frinfo.NUM_UNIV - 1) && (y < frinfo.UNIV_LEN - 1))? PALETTE[(x + frnum) % PALETTE.length]: WHITE: BLACK;
+            nodes[x][y] = ((x + y) & 1)? (x && y && (x < frinfo.NUM_UNIV - 1) && (y < frinfo.UNIV_LEN - 1))? PALETTE[(x + frnum) % (PALETTE.length - 1)]: WHITE: BLACK;
+//    for (var i = 0; i < nodes.length; ++i) nodes[i] = PALETTE[frnum % PALETTE.length];
+    debug(`elapsed: ${frinfo.elapsed / 1000} msec, perf avg: ${frinfo.perf.map((msec) => commas(msec / frnum)).join(", ")}`.cyan_lt);
+    if (!more) { debug("EOF".red_lt); setTimeout(() => process.exit(0), 2000); } //kludge: dangling refs keep proc open, so forcefully kill it
+    return more? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
+//    debug(`retval: ${frnum} < ${SEQLEN} => ${retval}`);
+//    return retval;
 });
 //}catch(exc){}
-debug("gpu listen:", `(${typeof gp})`, JSON.stringify(gp).json_tidy);
-setTimeout(() => debug("gpu +1 sec:", `(${typeof gp})`, /*JSON.stringify(gp).json_tidy*/ gp), 1000);
+debug("gpu listen:", `(${typeof gp})`, JSON.stringify(gp, null, 2).json_tidy);
+//setTimeout(() => debug("gpu +1 sec:", `(${typeof gp})`, JSON.stringify(gp, null, 2).json_tidy), 1000);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());
 
@@ -101,7 +154,7 @@ function* main()
     }
 //    wait.cancel("done"); //cancel latest
 //    yield; //kludge: wait for last timer to occur
-    process.stdout.end();
+//    process.stdout.end();
     return -2; //for debug
 }
 step.debug = debug;
@@ -112,6 +165,7 @@ function done(retval)
     debug("main retval: " + retval);
 //show anything preventing process exit:
 //    process.ste
+    return;
     debug("remaining handles", process._getActiveHandles()); //.map((obj) => (obj.constructor || {}).name || obj));
 //    process._getActiveHandles().forEach((obj) => ((obj.constructor || {}).name == "Timer")? debug(obj): null);
     debug("remaining requests", process._getActiveRequests());
@@ -121,7 +175,7 @@ debug("after main");
 //if (false)
 (function idle()
 {
-    if ((++idle.count || (idle.count = 1)) < 5) setTimeout(idle, 250);
+    if ((++idle.count || (idle.count = 1)) < 5) setTimeout(idle, 250); //.unref();
     debug(`idle ${idle.count}`.blue_lt); //, arguments.back); //how much overdue?
 })();
 
@@ -186,6 +240,7 @@ function step(gen, async_cb)
         {
             step.gen = null; //prevent further execution; step() will cause "undef" error
             if (step.async_cb) step.async_cb(value);
+//            setTimeout(() => process.exit(0), 2000); //kludge: dangling refs keep proc open, so forcefully kill it
 //        return value;
         }
         return step.value = value;
@@ -203,7 +258,7 @@ function wait(msec)
 //    wait.pending[setTimeout(step, msec)] =
     debug("wait: set timeout ", msec);
 //NOTE: Node timer api is richer than browser; see https://nodejs.org/api/timers.html
-    /*wait.latest =*/ setTimeout(step, msec); //function(){ wait.cancel("fired"); step(); }, msec); //CAUTION: assumes only 1 timer active
+    /*wait.latest =*/ setTimeout(step, msec); //.unref(); //function(){ wait.cancel("fired"); step(); }, msec); //CAUTION: assumes only 1 timer active
 //    wait.latest.unref();
 //    return msec; //dummy retval for testing
     return msec; //dummy value for debug
@@ -229,7 +284,7 @@ function srcline(depth)
 }
 
 
-function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); }
+function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); debugger; }
 
 function commas(num) { return num.toLocaleString(); } //grouping (1000s) default = true
 

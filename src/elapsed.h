@@ -96,6 +96,7 @@ std::string timestamp(bool undecorated = false)
 //    ss << THRID;
 //    float x = 1.2;
 //    int h = 42;
+//TODO: add commas
     if (undecorated) { ss << FMT("%4.3f") << elapsed_msec(); return ss.str(); }
     ss << FMT("[%4.3f msec") << elapsed_msec();
 #ifdef IPC_THREAD
