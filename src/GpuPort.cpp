@@ -78,6 +78,8 @@
 #include <string> //std::string
 #include <map> //std::map<>
 
+#define MAX_DEBUG_LEVEL  1
+
 #include "str-helpers.h" //unmap()
 #include "thr-helpers.h" //thrnx()
 #include "elapsed.h" //elapsed_msec(), timestamp(), now()
@@ -473,7 +475,7 @@ public: //methods
     uint32_t operator=(const uint32_t& new_val) { cre_uint32(new_val); return new_val; }
     void verify(napi_valuetype chk_type, bool subtypeok = true) //napi_typedarray_type arytype = 0)
     {
-        if ((type() != chk_type) || !subtypeok) debug(RED_MSG << "failed to create " << TypeName(chk_type) << ENDCOLOR);
+        if ((type() != chk_type) || !subtypeok) debug(22, RED_MSG << "failed to create " << TypeName(chk_type) << ENDCOLOR);
 //        else debug(BLUE_MSG << TypeName(chk_type) << " created ok" << ENDCOLOR);
     }
 };
@@ -738,7 +740,7 @@ public: //methods
         TXTR m_txtr2 = TXTR::create(NAMED{ _.wh = &txtr_wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
         m_txtr = m_txtr2; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
 //}
-        debug(BLUE_MSG "txtr after reset " << m_txtr << ENDCOLOR);
+        debug(19, BLUE_MSG "txtr after reset " << m_txtr << ENDCOLOR);
         m_txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //debug("here52" ENDCOLOR);
 //        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
@@ -771,7 +773,7 @@ public: //methods
 //        retval = m_cached.value();
 //        m_cached.env = env;
         static int count = 0;
-        debug(BLUE_MSG "wrap nodebuf[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
+        debug(19, BLUE_MSG "wrap nodebuf[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
 //        if (/*CachedWrapper && valp &&*/ (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
 //        if (m_cached.type() == napi_object) return m_cached;
 //        napi_thingy frinfo(env, napi_thingy::Object{});
@@ -823,7 +825,7 @@ public: //methods
             !NAPI_OK(napi_set_element(env, typary, x, univ_ary), "Cre inner node ary failed");
         }
 #endif
-        debug(YELLOW_MSG "nodes5 " << typary << ENDCOLOR);
+        debug(19, YELLOW_MSG "nodes5 " << typary << ENDCOLOR);
 //        debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(napi_uint32_array)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
 //        }
 //        if (nodes.env != env) NAPI_exc("nodes env mismatch");
@@ -889,7 +891,7 @@ private: //helpers
 //3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
         static const bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
         /*auto*/ MASK_TYPE dirty = nodebuf.dirty.load() | (255 * Ashift); //use dirty/ready bits as start bits
-        debug(BLUE_MSG "xfr " << xfrlen << " *3, protocol " << static_cast<int>(nodebuf.protocol) << ENDCOLOR);
+        debug(19, BLUE_MSG "xfr " << xfrlen << " *3, protocol " << static_cast<int>(nodebuf.protocol) << ENDCOLOR);
         switch (nodebuf.protocol)
         {
             default: //NONE (raw)
@@ -1142,7 +1144,7 @@ public: //playback methods
 //        retval = m_cached.value();
 //        m_cached.env = env;
         static int count = 0;
-        debug(BLUE_MSG "wrap frinfo[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
+        debug(19, BLUE_MSG "wrap frinfo[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
 //        if (/*CachedWrapper && valp &&*/ (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
 //        if (m_cached.type() == napi_object) return m_cached;
 //        napi_thingy frinfo(env, napi_thingy::Object{});
@@ -1647,7 +1649,7 @@ public:
 //                buf[1 + buflen] = '\0';
 //                if (!get_prop(env, optsval, buf, &propval.value)) propval.cre_undef();
                 !NAPI_OK(napi_get_named_property(env, optsval, buf, &propval.value), "Get named prop failed");
-                debug(BLUE_MSG "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d" ENDCOLOR, i, listlen, buflen, buf, !!known_opts.find(buf));
+                debug(17, BLUE_MSG "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d" ENDCOLOR, i, listlen, buflen, buf, !!known_opts.find(buf));
                 if (!strcmp(buf, "fps")) { double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); m_opts.frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
                 else if (!known_opts.find(buf)) exc_soft("unrecognized option: '%s' " << propval, buf); //strlen(buf) - 2, &buf[1]);
                 else !NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get prop failed");
@@ -1661,7 +1663,7 @@ public:
 //            int /*int32_t*/ prtemp;
 //            opts.get_prop("protocol", &prtemp); //!NAPI_OK(napi_get_value_int32(env, argv[0], &prtemp), "Get uint32 setval failed");
 //            m_opts.protocol = static_cast<Nodebuf::Protocol>(prtemp);
-            debug(BLUE_MSG "listen opts: screen %d, vgroup %d, init_color 0x%x, protocol %d, frtime_msec %d, debug %d" ENDCOLOR, m_opts.screen, m_opts.vgroup, m_opts.init_color, m_opts.protocol, m_opts.frtime_msec, m_opts.debug);
+            debug(17, BLUE_MSG "listen opts: screen %d, vgroup %d, init_color 0x%x, protocol %d, frtime_msec %d, debug %d" ENDCOLOR, m_opts.screen, m_opts.vgroup, m_opts.init_color, m_opts.protocol, m_opts.frtime_msec, m_opts.debug);
 //        if (islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
         }
 //void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
@@ -1687,7 +1689,7 @@ public:
 //TODO?        m_frinfo.wrap(env);
 //debug("here61" ENDCOLOR);
         if (!NAPI_OK(napi_acquire_threadsafe_function(m_opts.fats))) exc_hard("Can't acquire JS fats");
-        debug(PINK_MSG "start playback" ENDCOLOR);
+        debug(15, PINK_MSG "start playback" ENDCOLOR);
 //debug("here62" ENDCOLOR);
         m_frinfo.reset(); //(-1);
         m_frinfo.protocol = static_cast<Nodebuf::Protocol>(m_opts.protocol); //CAUTION: do this after frinfo.reset()
@@ -1711,7 +1713,7 @@ public:
         static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
         const decltype(m_frinfo.elapsed_msec()) /*elapsed_t*/ overdue = m_opts.frtime_msec? m_frinfo.elapsed_msec() - numfr.load() * m_opts.frtime_msec: 0, delay = (overdue < -TIMING_SLOP/2)? -overdue: 0;
         const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
-        debug(severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
+        debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
         if (delay) SDL_Delay(delay); //delay if early
 //debug("here65" ENDCOLOR);
         VOID m_nodebuf.update(m_opts.refill, SRCLINE);
@@ -1730,7 +1732,7 @@ public:
         if (!NAPI_OK(napi_release_threadsafe_function(m_opts.fats, napi_tsfn_release))) exc_hard("Can't release JS fats");
         m_opts.fats = NULL;
 //debug("here68" ENDCOLOR);
-        debug(PINK_MSG "stop playback after %s frames, %s msec" ENDCOLOR, commas(numfr.load()), commas(m_frinfo.elapsed_msec()));
+        debug(15, PINK_MSG "stop playback after %s frames, %s msec" ENDCOLOR, commas(numfr.load()), commas(m_frinfo.elapsed_msec()));
     }
 //    void make_thread(napi_env env)
 //    {
@@ -1790,7 +1792,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
   // Retrieve the prime from the item created by the worker thread.
 //    int the_prime = *(int*)data;
     GpuPortData* aoptr = static_cast<GpuPortData*>(data);
-    debug(BLUE_MSG "listen js cb func: aodata %p, valid? %d, listening? %d, context %p, clup mode? %d" ENDCOLOR, aoptr, aoptr->isvalid(), aoptr->isvalid()? aoptr->islistening(): false, context, !env);
+    debug(17, BLUE_MSG "listen js cb func: aodata %p, valid? %d, listening? %d, context %p, clup mode? %d" ENDCOLOR, aoptr, aoptr->isvalid(), aoptr->isvalid()? aoptr->islistening(): false, context, !env);
     aoptr->isvalid(env, SRCLINE);
 //no; allow one last time    if (!aoptr->islistening()) return;
 //    if (!aodata->listener.busy) NAPI_exc("not listening");
@@ -1852,7 +1854,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
     !NAPI_OK(napi_coerce_to_number(env, retval/*.value*/, &num_retval.value), "Get retval as num failed");
 //    debug(BLUE_MSG "cb: get bool %p" ENDCOLOR, aodata);
     !NAPI_OK(napi_get_value_uint32(env, num_retval/*.value*/, &ready_bits), "Get uint32 retval failed");
-    debug(BLUE_MSG "js fats: got retval " << retval << " => num " << num_retval << " => ready bits 0x%x, new dirty 0x%x, continue? %d, undef? %d" ENDCOLOR, ready_bits, aoptr->dirty | ready_bits, !!ready_bits, retval.type() == napi_undefined);
+    debug(17, BLUE_MSG "js fats: got retval " << retval << " => num " << num_retval << " => ready bits 0x%x, new dirty 0x%x, continue? %d, undef? %d" ENDCOLOR, ready_bits, aoptr->dirty | ready_bits, !!ready_bits, retval.type() == napi_undefined);
     if (!ready_bits) aoptr->islistening(false); //caller signals eof
     aoptr->dirty |= ready_bits; //.fetch_or(ALL_UNIV || more, SRCLINE); //mark rendered universes; wake up bkg wker (even wth no new dirty univ so it will see cancel)
 //    ++aoptr->numfr;
@@ -1880,7 +1882,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
     size_t argc = SIZEOF(argv);
 //    if (!env) return NULL; //Node cleanup mode
     !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aoptr), "Get cb info failed");
-    debug(CYAN_MSG "async listen loop: aoptr %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
+    debug(12, CYAN_MSG "async listen loop: aoptr %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
     if ((argc < 1) || (argc > 2)) NAPI_exc("expected 1-2 args: [{opts}], cb(); got " << argc << " args");
 //    debug(BLUE_MSG "async listen loop %d args: arg[0] " << napi_thingy(env, argv[0]) << ", arg[1] " << napi_thingy(env, argv[1]) << ENDCOLOR, argc);
     aoptr->isvalid(env, SRCLINE);
@@ -1922,7 +1924,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //        napi_status status;
 //        ExecuteWork(env, addon_data);
 //        WorkComplete(env, status, addon_data);
-        debug(PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
+        debug(12, PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
 //        !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
@@ -1940,7 +1942,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //                const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE};
 //                for (int i = 0; i < SIZEOF(aoptr->m_nodebuf.nodes); ++i) aoptr->m_nodebuf.nodes[0][i] = palette[aoptr->numfr.load() % SIZEOF(palette)];
 //                if (aoptr->numfr.load() >= 10) break;
-                debug(BLUE_MSG "bkg woke from fr# %s with ready 0x%x, caller listening? %d" ENDCOLOR, commas(aoptr->numfr.load()), aoptr->dirty.load(), aoptr->islistening());
+                debug(12, BLUE_MSG "bkg woke from fr# %s with ready 0x%x, caller listening? %d" ENDCOLOR, commas(aoptr->numfr.load()), aoptr->dirty.load(), aoptr->islistening());
                 if (!aoptr->islistening()) break;
 //                SDL_Delay(1 sec);
                 aoptr->update(); //env);
@@ -1951,20 +1953,20 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
         catch (...)
         {
             aoptr->excptr = std::current_exception(); //allow main thread to rethrow
-            debug(RED_MSG "bkg wker exc: %s" ENDCOLOR, aoptr->exc_reason().c_str());
+            debug(12, RED_MSG "bkg wker exc: %s" ENDCOLOR, aoptr->exc_reason().c_str());
 //            aoptr->islistening(false); //listener.busy = true; //(void*)1;
         }
         aoptr->stop(); //env);
 //        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
 //        aoptr->fats = NULL;
 //        aodata->listener.busy = false; //work = 0;
-        debug(YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(aoptr->/*m_frinfo.*/numfr.load()));
+        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(aoptr->/*m_frinfo.*/numfr.load()));
     });
     bkg.detach();
 //#endif
 //debug("here84" ENDCOLOR);
     aoptr->dirty.wait(0, NULL, true, SRCLINE); //block until bkg thread starts so frinfo values will be filled in; *don't* check islistening() - bkg thread might not be running yet
-    debug(BLUE_MSG "sync verify: woke up with dirty = 0x%x" ENDCOLOR, aoptr->dirty.load());
+    debug(15, BLUE_MSG "sync verify: woke up with dirty = 0x%x" ENDCOLOR, aoptr->dirty.load());
     napi_thingy retval(env);
     retval = aoptr->wrap_frinfo(env); //napi_thingy::Object{});
     aoptr->wrap_nodebuf(env); //go ahead and wrap nodebuf now also even though caller doesn't need it
@@ -1985,7 +1987,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     const napi_node_version* ver;
     !NAPI_OK(napi_get_node_version(env, &ver), "Get node version info failed");
     !NAPI_OK(napi_get_version(env, &napi_ver), "Get napi version info failed");
-    debug(BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi v" << napi_ver << ENDCOLOR);
+    debug(9, BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi v" << napi_ver << ENDCOLOR);
     exports = module_exports(env, exports); //include previous exports
 
     std::unique_ptr<GpuPortData> aodata(new GpuPortData(/*env,*/ SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
@@ -2065,7 +2067,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //decorate exports with the above-defined properties:
 //    if (pptr - props > SIZEOF(props)) NAPI_exc("prop ary overflow: needed " << (pptr - props) << ", only had space for " << SIZEOF(props));
 //    !NAPI_OK(napi_define_properties(env, exports, pptr - props, props), "export method props failed");
-    debug("export %d props" ENDCOLOR, props.size());
+    debug(9, "export %d props" ENDCOLOR, props.size());
     !NAPI_OK(napi_define_properties(env, exports, props.size(), props.data()), "export method props failed");
 
 //wrap internal data with module exports object:
@@ -2079,7 +2081,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         UNUSED(hint);
         GpuPortData* aoptr = static_cast<GpuPortData*>(data); //(GpuPortData*)data;
 //    if (!env) return; //Node cleanup mode
-        debug(RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aoptr, aoptr->isvalid(), hint);
+        debug(9, RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aoptr, aoptr->isvalid(), hint);
         aoptr->isvalid(env);
         if (aoptr->islistening()) NAPI_exc("Listener still active");
         aoptr->reset(env);
@@ -2232,7 +2234,7 @@ public: //methods
     {
         UNUSED(hint);
         GpuPortData* aodata = static_cast<GpuPortData*>(data);
-        debug(RED_MSG "thread final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
+        debug(9, RED_MSG "thread final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
 //    if (!env) return; //Node cleanup mode
         aodata->wker_ok(env, SRCLINE); //) NAPI_exc("Gpu wker problem: " << aodata->exc_reason());
     }
@@ -2250,26 +2252,26 @@ public: //methods
 //napi_get_null(env, &nodes.value);
 //            void* NO_HINT = NULL; //optional finalize_hint
 //debug("env " << env << ", size " << commas(sizeof(gpu_wker->m_nodes)) << ENDCOLOR);
-            debug("arybuf1 " << arybuf << ENDCOLOR);
+            debug(9, "arybuf1 " << arybuf << ENDCOLOR);
             !NAPI_OK(napi_create_int32(env, 1234, &arybuf.value), "cre int32 failed");
-            debug("arybuf2 " << arybuf << ENDCOLOR);
+            debug(9, "arybuf2 " << arybuf << ENDCOLOR);
             !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &arybuf.value), "cre str failed");
-            debug("arybuf3 " << arybuf << ENDCOLOR);
+            debug(9, "arybuf3 " << arybuf << ENDCOLOR);
             !NAPI_OK(napi_create_external_arraybuffer(env, &junk[0][0], sizeof(junk), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-            debug("arybuf4 " << arybuf << ENDCOLOR);
+            debug(9, "arybuf4 " << arybuf << ENDCOLOR);
             !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-            debug("arybuf5 " << arybuf << ENDCOLOR);
+            debug(9, "arybuf5 " << arybuf << ENDCOLOR);
 
-            debug("nodes1 " << nodes << ENDCOLOR);
+            debug(9, "nodes1 " << nodes << ENDCOLOR);
             !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "cre int32 failed");
-            debug("nodes2 " << nodes << ENDCOLOR);
+            debug(9, "nodes2 " << nodes << ENDCOLOR);
             !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
-            debug("nodes3 " << nodes << ENDCOLOR);
+            debug(9, "nodes3 " << nodes << ENDCOLOR);
             !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
-            debug("nodes4 " << nodes << ENDCOLOR);
+            debug(9, "nodes4 " << nodes << ENDCOLOR);
             !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
-            debug("nodes5 " << nodes << ENDCOLOR);
-            debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
+            debug(9, "nodes5 " << nodes << ENDCOLOR);
+            debug(9, YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
         }
         if (nodes.env != env) NAPI_exc("nodes env mismatch");
         *valp = nodes.value;
@@ -2579,7 +2581,7 @@ static void Listen_cb(napi_env env, napi_value js_func, void* context, void* dat
   // Retrieve the prime from the item created by the worker thread.
 //    int the_prime = *(int*)data;
     GpuPortData* aodata = static_cast<GpuPortData*>(data);
-    debug(BLUE_MSG "call listen fats: aodata %p, valid? %d, context %p, clup mode? %d" ENDCOLOR, aodata, aodata->isvalid(), context, !env);
+    debug(11, BLUE_MSG "call listen fats: aodata %p, valid? %d, context %p, clup mode? %d" ENDCOLOR, aodata, aodata->isvalid(), context, !env);
     if (!aodata->isvalid()) NAPI_exc("aodata invalid");
 //    if (!aodata->listener.busy) NAPI_exc("not listening");
     if (!aodata->islistening()) NAPI_exc("not listening");
@@ -2624,7 +2626,7 @@ static void Listen_cb(napi_env env, napi_value js_func, void* context, void* dat
     !NAPI_OK(napi_coerce_to_number(env, retval, &num_retval), "Get retval as num failed");
 //    debug(BLUE_MSG "cb: get bool %p" ENDCOLOR, aodata);
     !NAPI_OK(napi_get_value_uint32(env, num_retval, &ready_bits), "Get uint32 retval failed");
-    debug(BLUE_MSG "js fats: ready bits 0x%x, continue? %d" ENDCOLOR, ready_bits, !!ready_bits);
+    debug(11, BLUE_MSG "js fats: ready bits 0x%x, continue? %d" ENDCOLOR, ready_bits, !!ready_bits);
     if (!ready_bits) aodata->islistening(false);
     aodata->gpu_wker->m_frinfo.dirty |= ready_bits; //.fetch_or(ALL_UNIV || more, SRCLINE); //mark rendered universes; wake up bkg wker (even wth no univ so it will see cancel)
 //    aodata->frinfo.refill(); //++aodata->gpdata.numfr; //move to next frame
@@ -2746,7 +2748,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
   // worker thread, and the per-addon data.
     if (!env) return NULL; //Node cleanup mode
     !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aodata), "Get cb info failed");
-    debug(CYAN_MSG "listen: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
+    debug(9, CYAN_MSG "listen: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
     if ((argc < 1) || (argc > 2)) NAPI_exc("expected 1-2 args: [{opts}], cb(); got " << argc << " args");
     if (!aodata->isvalid()) NAPI_exc("aodata invalid");
     if (aodata->islistening()) NAPI_exc("Already listening (single threaded for now)"); //check if que empty
@@ -2813,11 +2815,11 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
         !NAPI_OK(get_prop(env, argv[0], "shmkey", &PREALLOC_shmkey), "Invalid .shmkey prop");
         !NAPI_OK(get_prop(env, argv[0], "vgroup", &vgroup), "Invalid .vgroup prop");
         !NAPI_OK(get_prop(env, argv[0], "color", &init_color), "Invalid .color prop");
-        debug(BLUE_MSG "listen opts: screen %d, shmkey %lx, vgroup %d, init_color 0x%x" ENDCOLOR, screen, PREALLOC_shmkey, vgroup, init_color);
+        debug(9, BLUE_MSG "listen opts: screen %d, shmkey %lx, vgroup %d, init_color 0x%x" ENDCOLOR, screen, PREALLOC_shmkey, vgroup, init_color);
         if (aodata->gpu_wker) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
     }
     PREALLOC_shmkey = shmkey(&aodata->m_shdata);
-    debug(YELLOW_MSG "override shmkey with prealloc key 0x%x" ENDCOLOR, PREALLOC_shmkey);
+    debug(12, YELLOW_MSG "override shmkey with prealloc key 0x%x" ENDCOLOR, PREALLOC_shmkey);
 //wrapped object for state info:
 //    void* NO_HINT = NULL; //optional finalize_hint
 //    napi_ref* NO_REF = NULL; //optional ref to wrapped object
@@ -2857,7 +2859,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
 //??    aodata->islistening(true); //listener.busy = true; //(void*)1;
     std::thread bkg([aodata, screen, PREALLOC_shmkey, vgroup, init_color, refill]() //,refill,env](); //NOTE: bkg thread code should not use env
     {
-        debug(PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
+        debug(9, PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, aodata, aodata->isvalid());
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
         !NAPI_OK(napi_acquire_threadsafe_function(aodata->fats), aodata->listener.env, "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
@@ -2912,7 +2914,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
         catch (...)
         {
             aodata->excptr = std::current_exception(); //allow main thread to rethrow
-            debug(RED_MSG "bkg wker exc: " << aodata->exc_reason() << ENDCOLOR);
+            debug(5, RED_MSG "bkg wker exc: " << aodata->exc_reason() << ENDCOLOR);
             aodata->islistening(false); //listener.busy = true; //(void*)1;
         }
 //        debug(YELLOW_MSG "bkg release" ENDCOLOR);
@@ -2920,7 +2922,7 @@ static napi_value Listen_NAPI(napi_env env, napi_callback_info info)
         !NAPI_OK(napi_release_threadsafe_function(aodata->fats, napi_tsfn_release), aodata->listener.env, "Can't release JS fats");
         aodata->fats = NULL;
 //        aodata->listener.busy = false; //work = 0;
-        debug(YELLOW_MSG "bkg exit after %d frames" ENDCOLOR, aodata->gpu_wker->m_frinfo.numfr.load());
+        debug(5, YELLOW_MSG "bkg exit after %d frames" ENDCOLOR, aodata->gpu_wker->m_frinfo.numfr.load());
     });
     bkg.detach();
 //    while (!wker()) { debug(YELLOW_MSG "waiting for new bkg wker" ENDCOLOR); SDL_Delay(.1 sec); } //kludge: wait for bkg wker to init; TODO: use sync/wait
@@ -2971,7 +2973,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     const napi_node_version* ver;
     !NAPI_OK(napi_get_node_version(env, &ver), "Get node version info failed");
     !NAPI_OK(napi_get_version(env, &napi_ver), "Get napi version info failed");
-    debug(BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi " << napi_ver << ENDCOLOR);
+    debug(9, BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi " << napi_ver << ENDCOLOR);
   // Define addon-level data associated with this instance of the addon.
 //    GpuPortData* addon_data = new GpuPortData; //(GpuPortData*)malloc(sizeof(*addon_data));
     std::unique_ptr<GpuPortData> aodata(new GpuPortData(env)); //(GpuPortData*)malloc(sizeof(*addon_data));
@@ -3021,7 +3023,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         UNUSED(hint);
         GpuPortData* aodata = static_cast<GpuPortData*>(data); //(GpuPortData*)data;
 //    if (!env) return; //Node cleanup mode
-        debug(RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
+        debug(9, RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aodata, aodata->isvalid(), hint);
         if (!aodata->isvalid()) NAPI_exc("aodata invalid");
         if (aodata->islistening()) NAPI_exc("Listener still active");
         delete aodata; //free(addon_data);
@@ -3029,7 +3031,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     !NAPI_OK(napi_wrap(env, exports, aodata.get(), addon_final, /*aodata.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
   // Return the decorated exports object.
 //    napi_status status;
-    debug(GREEN_MSG "napi init: aodata %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+    debug(9, GREEN_MSG "napi init: aodata %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
 
 //return exports to caller:
 #if 0 //paranoid check
@@ -3063,25 +3065,25 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //            nodes.env = env;
     Uint32 junk[3][5];
     napi_thingy arybuf(env), nodes(env);
-    debug("ary buf1 " << arybuf << ENDCOLOR);
+    debug(9, "ary buf1 " << arybuf << ENDCOLOR);
     !NAPI_OK(napi_create_int32(env, 1234, &arybuf.value), "cre int32 failed");
-    debug("ary buf2 " << arybuf << ENDCOLOR);
+    debug(9, "ary buf2 " << arybuf << ENDCOLOR);
     !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &arybuf.value), "cre str failed");
-    debug("ary buf3 " << arybuf << ENDCOLOR);
+    debug(9, "ary buf3 " << arybuf << ENDCOLOR);
     !NAPI_OK(napi_create_external_arraybuffer(env, &junk[0][0], sizeof(junk), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-    debug("ary buf4 " << arybuf << ENDCOLOR);
+    debug(9, "ary buf4 " << arybuf << ENDCOLOR);
     !NAPI_OK(napi_create_external_arraybuffer(env, &aodata->m_shdata.nodes[0][0], sizeof(aodata->m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
-    debug("shdata arybuf " << arybuf << ENDCOLOR);
+    debug(9, "shdata arybuf " << arybuf << ENDCOLOR);
 
-    debug("nodes1 " << nodes << ENDCOLOR);
+    debug(9, "nodes1 " << nodes << ENDCOLOR);
     !NAPI_OK(napi_create_int32(env, 1234, &nodes.value), "cre int32 failed");
-    debug("nodes2 " << nodes << ENDCOLOR);
+    debug(9, "nodes2 " << nodes << ENDCOLOR);
     !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
-    debug("nodes3 " << nodes << ENDCOLOR);
+    debug(9, "nodes3 " << nodes << ENDCOLOR);
     !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
-    debug("nodes4 " << nodes << ENDCOLOR);
+    debug(9, "nodes4 " << nodes << ENDCOLOR);
     !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(aodata->m_shdata.nodes) * SIZEOF(aodata->m_shdata.nodes[0]), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
-    debug("shdata nodes " << nodes << ENDCOLOR);
+    debug(9, "shdata nodes " << nodes << ENDCOLOR);
 #endif
     aodata.release(); //NAPI owns it now
     return exports;
@@ -3263,7 +3265,7 @@ static void CallJs(napi_env env, napi_value js_cb, void* context, void* data) {
 //    napi_finalize NO_FINAL = NULL;
     assert(napi_create_external_arraybuffer(env, ((AddonData*)data)->junk, sizeof(((AddonData*)data)->junk), NO_FINALIZE, NO_HINT, &arybuf) == napi_ok);
     assert(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(((AddonData*)data)->junk), arybuf, 0, &argv[1]) == napi_ok);
-    debug(YELLOW_MSG "cb arybuf " << napi_thingy(env, arybuf) << ", typed ary " << napi_thingy(env, argv[1]) << ENDCOLOR);
+    debug(0, YELLOW_MSG "cb arybuf " << napi_thingy(env, arybuf) << ", typed ary " << napi_thingy(env, argv[1]) << ENDCOLOR);
 
     // Call the JavaScript function and pass it the prime that the secondary
     // thread found.

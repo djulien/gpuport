@@ -129,9 +129,9 @@ std::string timestamp(bool undecorated = false)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(BLUE_MSG << timestamp() << "start" << ENDCOLOR);
+    debug(0, BLUE_MSG << timestamp() << "start" << ENDCOLOR);
     sleep(2); //give parent head start
-    debug(GREEN_MSG << timestamp() << "finish" << ENDCOLOR);
+    debug(0, GREEN_MSG << timestamp() << "finish" << ENDCOLOR);
 //    return 0;
 }
 #endif //def WANT_UNIT_TEST

@@ -314,6 +314,8 @@ static void deleter(SDL_Window* ptr)
 }
 #endif
 
+const int CFG_LEVEL = 65;
+
 //see https://stackoverflow.com/questions/1829706/how-to-query-x11-display-resolution
 //see https://tronche.com/gui/x/xlib/display/information.html#display
 //or use cli xrandr or xwininfo
@@ -329,7 +331,7 @@ static void deleter(SDL_Window* ptr)
     std::unique_ptr<XDisplay, std::function<void(XDisplay*)>> display(XOpenDisplay(NULL), XCloseDisplay);
 //    cfg->screen = -1;
     int num_screens = display.get()? ScreenCount(display.get()/*.cast*/): 0;
-    debug(BLUE_MSG << FMT("got disp %p") << display.get() << ", #screens: " << num_screens << ENDCOLOR_ATLINE(srcline));
+    debug(CFG_LEVEL, BLUE_MSG << FMT("got disp %p") << display.get() << ", #screens: " << num_screens << ENDCOLOR_ATLINE(srcline));
     int first = (screen != -1)? screen: 0, last = (screen != -1)? screen + 1: num_screens;
     for (int i = first; i < last; ++i)
     {
@@ -419,7 +421,7 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
     int vblank = cached.vlead + cached.vsync + cached.vtrail, vtotal = vblank + cached.vdisplay;
 //    double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
 //    double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    debug_level(28, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
+    debug(CFG_LEVEL, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
 //            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
 //            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
 //            cached.mode_line.vsyncstart - cached.mode_line.vdisplay, cached.mode_line.vsyncend - cached.mode_line.vsyncstart, cached.mode_line.vtotal - cached.mode_line.vsyncend, cached.mode_line.vtotal - cached.mode_line.vdisplay, (double)100 * (cached.mode_line.vtotal - cached.mode_line.vdisplay) / cached.mode_line.vtotal, //vinfo.upper_margin, vinfo.lower_margin, vinfo.vsync_len,
@@ -597,7 +599,7 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfi
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
+    debug(0, CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
 //    return 0;
 //    for (int screen = 0;; ++screen)
 //    SDL_AutoLib sdl(SDL_INIT_VIDEO, SRCLINE);

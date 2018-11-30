@@ -129,6 +129,8 @@ const ShmHdr* get_shmhdr(const void* addr, SrcLine srcline = 0)
 }
 
 
+const int SHM_LEVEL = 75;
+
 //allocate shm:
 //TODO: use ftok?
 //NOTE: same shm seg can be attached at multiple addresses within same proc
@@ -147,7 +149,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
     {
         /*ShmHdr* */ ptr = static_cast<ShmHdr*>(malloc(size));
         if (!ptr) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
-        debug(CYAN_MSG << timestamp() << "shmalloc: get LOCAL size " << commas(size - sizeof(ShmHdr)) << " (hdr " << sizeof(ShmHdr) << ") => " << FMT(" addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+        debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmalloc: get LOCAL size " << commas(size - sizeof(ShmHdr)) << " (hdr " << sizeof(ShmHdr) << ") => " << FMT(" addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
         ptr->id = 0;
         ptr->key = key;
         ptr->size = size - sizeof(ShmHdr);
@@ -169,7 +171,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
         /*ShmHdr* */ ptr = static_cast<ShmHdr*>(shmat(shmid, NULL /*system choses adrs*/, 0)); //read/write access
 //printf("here4 %p\n", ptr); fflush(stdout);
         if (ptr == (ShmHdr*)-1) err_ret(0); //errno already set by shmat(); //throw std::runtime_error(std::string(strerror(errno)));
-        debug(CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
+        debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size - sizeof(ShmHdr)) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << sizeof(ShmHdr) << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << ptr << ENDCOLOR_ATLINE(srcline));
         ptr->id = shmid;
         ptr->key = key;
         ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
@@ -244,7 +246,7 @@ int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not v
 //        debug(CYAN_MSG << timestamp() << "shmfree: freed " << svhdr.id << FMT("0x%lx") << svhdr.key << ", size " << shminfo.shm_segsz << ENDCOLOR_ATLINE(srcline));
 //    }
     }
-    debug(CYAN_MSG << timestamp() << "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ENDCOLOR_ATLINE(srcline));
+    debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ENDCOLOR_ATLINE(srcline));
     err_ret(shminfo.shm_nattch, 0); //return #procs still using memory
 }
 #undef err_ret
@@ -256,7 +258,7 @@ inline const char* const_strerror(int my_errno) { return strerror(my_errno); } /
 void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
     void* retval = shmalloc(size, key, srcline);
-    debug(CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
+    debug(SHM_LEVEL, CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
     return retval;
 }
 #define shmalloc  shmalloc_debug
@@ -264,7 +266,7 @@ void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine 
 int shmfree_debug(const void* addr, SrcLine srcline = 0)
 {
     int retval = shmfree(addr, srcline);
-    debug(BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
+    debug(SHM_LEVEL, BLUE_MSG "shmfree(%p) => %d (%d %s)" ENDCOLOR_ATLINE(srcline), addr, retval, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
     return retval;
 }
 #define shmfree  shmfree_debug
@@ -298,7 +300,7 @@ private: //helper methods
     static void cleanup()
     {
         SrcLine srcline = 0; //TODO: where to get this?
-        debug(CYAN_MSG "AutoShmary: clean up %d shm ptr%s" ENDCOLOR_ATLINE(srcline), all().size(), plural(all().size()));
+        debug(SHM_LEVEL, CYAN_MSG "AutoShmary: clean up %d shm ptr%s" ENDCOLOR_ATLINE(srcline), all().size(), plural(all().size()));
         for (auto it = all().begin(); it != all().end(); ++it) shmfree(*it);
     }
 private: //data members
@@ -411,28 +413,28 @@ void unit_test(ARGS& args)
     const key_t KEY = 0; //SHM_LOCAL;
     uint32_t* ptr = shmalloc_typed<uint32_t>(KEY, 4, SRCLINE);
     ptr[0] = 0x12345678;
-    debug(BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
+    debug(0, BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
     shmfree(ptr);
 
     AutoShmary<> ary1(KEY, 5, SRCLINE);
-    debug(BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
+    debug(0, BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
 
     { //create nested scope to force dtor
         AutoShmary<> ary2(ary1.key(), 0, SRCLINE);
-        debug(BLUE_MSG << ary2 << ENDCOLOR);
+        debug(0, BLUE_MSG << ary2 << ENDCOLOR);
     }
 
     key_t key;
     { //create nested scope to force dtor
         AutoShmary<uint32_t> ary3(KEY, 12, SRCLINE);
-        debug(BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[12]);
+        debug(0, BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[12]);
         key = ary3.key();
     }
     AutoShmary<uint32_t> ary4(key, 4, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
-    debug(BLUE_MSG << ary4 << ENDCOLOR);
+    debug(0, BLUE_MSG << ary4 << ENDCOLOR);
 
     AutoShmary<uint32_t> ary5(key, 40, SRCLINE); //NOTE: this one should fail because original memory is smaller than requested
-    debug(BLUE_MSG << ary5 << ENDCOLOR);
+    debug(0, BLUE_MSG << ary5 << ENDCOLOR);
 }
 
 #endif //def WANT_UNIT_TEST

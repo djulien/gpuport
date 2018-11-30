@@ -160,21 +160,21 @@ const char* commas(int64_t val)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
-    debug(BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
+    debug(0, BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
+    debug(0, BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
     int count0 = 0, count1 = 1, count2 = 2;
-    debug(BLUE_MSG << count0 << " thing" << plural(count0) << ENDCOLOR);
-    debug(BLUE_MSG << count1 << " thing" << plural(count1) << ENDCOLOR);
-    debug(BLUE_MSG << count2 << " thing" << plural(count2, "ies") << ENDCOLOR);
+    debug(0, BLUE_MSG << count0 << " thing" << plural(count0) << ENDCOLOR);
+    debug(0, BLUE_MSG << count1 << " thing" << plural(count1) << ENDCOLOR);
+    debug(0, BLUE_MSG << count2 << " thing" << plural(count2, "ies") << ENDCOLOR);
     int x1 = 0, x2 = 1;
 //    debug(BLUE_MSG << NVL(x1, -1) << ENDCOLOR);
 //    debug(BLUE_MSG << NVL(x2, -1) << ENDCOLOR);
     const char* str = "hello";
     const char* null = 0;
-    debug(BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
-    debug(BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
-    debug(BLUE_MSG << NVL(123, -1) << ENDCOLOR);
-    debug(BLUE_MSG << NVL(0, -1) << ENDCOLOR);
+    debug(0, BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
+    debug(0, BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
+    debug(0, BLUE_MSG << NVL(123, -1) << ENDCOLOR);
+    debug(0, BLUE_MSG << NVL(0, -1) << ENDCOLOR);
 
 #if 0
 //    static const std::map<int, const char*> SDL_RendererFlagNames =
@@ -202,9 +202,9 @@ void unit_test(ARGS& args)
         {"fifth", 5},
     };
 //printf("here2\n"); fflush(stdout);
-    debug(BLUE_MSG "find third: %p = %d" ENDCOLOR, opts.find("third"), opts.find("third", 0)->second);
+    debug(0, BLUE_MSG "find third: %p = %d" ENDCOLOR, opts.find("third"), opts.find("third", 0)->second);
 //printf("here3\n"); fflush(stdout);
-    debug(BLUE_MSG "find sixth: %p = %d" ENDCOLOR, opts.find("sixth"), opts.find("sixth", 0)->second);
+    debug(0, BLUE_MSG "find sixth: %p = %d" ENDCOLOR, opts.find("sixth"), opts.find("sixth", 0)->second);
 
 //    return 0;
 }

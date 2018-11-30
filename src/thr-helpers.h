@@ -82,7 +82,8 @@ public:
 template <typename VALTYPE = uint32_t, bool WANT_DEBUG = false>
 class BkgSync
 {
-#define DEBUG(desc, srcline)  debug(GREEN_MSG << desc << ENDCOLOR_ATLINE(srcline))
+    static const int SYNC_LEVEL = 55;
+#define DEBUG(desc, srcline)  debug(SYNC_LEVEL, GREEN_MSG << desc << ENDCOLOR_ATLINE(srcline))
     std::atomic<VALTYPE> m_val; //avoid mutex locks except when waiting; //= 0; //init to !busy
     std::mutex m_mtx;
 //    std::atomic<std::condition_variable> m_cv; //avoid mutex locks except when waiting
@@ -194,7 +195,7 @@ public:
 #include "msgcolors.h"
 #include "debugexc.h"
 #include "srcline.h"
-#include "sdl-helpers.h"
+#include "sdl-helpers.h" //SDL_Delay()
 #include "elapsed.h" //timestamp()
 
 #include "thr-helpers.h"
@@ -220,15 +221,15 @@ void fg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int which)
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
-        debug(CYAN_MSG << info() << "FG " << status << "set %d" ENDCOLOR, which);
+        debug(0, CYAN_MSG << info() << "FG " << status << "set %d" ENDCOLOR, which);
         for (int bit = 1; which & ~(bit - 1); bit <<= 1)
             if (which & bit)
             {
                 SDL_Delay(bit * 0.25 sec);
                 bs.fetch_or(bit, SRCLINE); // |= bit;
             }
-        debug(CYAN_MSG << info() << "FG now wait for 0" ENDCOLOR);
-        bs.wait(0, SRCLINE);
+        debug(0, CYAN_MSG << info() << "FG now wait for 0" ENDCOLOR);
+        bs.wait(0, NULL, true, SRCLINE);
         status = "got 0, now ";
     }
 }
@@ -242,9 +243,9 @@ void bg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
-        debug(CYAN_MSG << info() << "BKG wait for %d" ENDCOLOR, want);
-        bs.wait(want, SRCLINE);
-        debug(CYAN_MSG << info() << "BKG got %d, now reset to 0" ENDCOLOR, want);
+        debug(0, CYAN_MSG << info() << "BKG wait for %d" ENDCOLOR, want);
+        bs.wait(want, NULL, true, SRCLINE);
+        debug(0, CYAN_MSG << info() << "BKG got %d, now reset to 0" ENDCOLOR, want);
         SDL_Delay(0.5 sec);
         bs.store(0, SRCLINE);
     }
@@ -299,7 +300,7 @@ void sync_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(BLUE_MSG << "my thrid " << thrid() << ", my inx " << thrinx() << ENDCOLOR);
+    debug(0, BLUE_MSG << "my thrid " << thrid() << ", my inx " << thrinx() << ENDCOLOR);
     sync_test();
 }
 

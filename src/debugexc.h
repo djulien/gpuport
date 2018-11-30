@@ -86,8 +86,12 @@ public: //operators
 //{
 //    myprintf(-1, std::forward<ARGS>(args) ...); //perfect fwding
 //}
-#define debug(...)  myprintf(0, std::ostringstream() << __VA_ARGS__)
-#define debug_level(level, ...)  myprintf(level, std::ostringstream() << __VA_ARGS__)
+//#ifndef DEBUG_DEFLEVEL
+// #define DEBUG_DEFLEVEL  0
+//#endif
+//#define debug(...)  myprintf(DEBUG_DEFLEVEL, std::ostringstream() << __VA_ARGS__)
+//#define debug_level(level, ...)  myprintf(level, std::ostringstream() << __VA_ARGS__)
+#define debug(level, ...)  ((level <= MAX_DEBUG_LEVEL)? (myprintf(level, std::ostringstream() << __VA_ARGS__), 0): 0)
 //#define debug(...)  myprintf(0, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
 //void debug(ARGS&& ... args)
@@ -104,19 +108,20 @@ public: //operators
 #define SNAT(...)  UPTO_4ARGS(__VA_ARGS__, SNAT_4ARGS, SNAT_3ARGS, SNAT_2ARGS, SNAT_1ARG) (__VA_ARGS__)
 
 
+#define INSP_LEVEL  12
 //put desc/dump of object to debug:
 #define inspect_1ARG(thing)  inspect_2ARGS(thing, 0)
-#define inspect_2ARGS(thing, srcline)  inspect_3ARGS(12, thing, srcline)
-#define inspect_3ARGS(level, thing, srcline)  debug_level(level, BLUE_MSG << thing << ENDCOLOR_ATLINE(srcline))
+#define inspect_2ARGS(thing, srcline)  inspect_3ARGS(INSP_LEVEL, thing, srcline)
+#define inspect_3ARGS(level, thing, srcline)  debug(level, BLUE_MSG << thing << ENDCOLOR_ATLINE(srcline))
 #define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
 
 
-void myprintf(int level, const char* fmt, ...); //fwd ref
+/*void*/ int myprintf(int level, const char* fmt, ...); //fwd ref
 
 //kludge: overload with perfect forwarding until implicit cast ostringstream -> const char* works
 template <typename ... ARGS>
 //see https://stackoverflow.com/questions/24315434/trouble-with-stdostringstream-as-function-parameter
-void myprintf(int level, std::/*ostringstream*/ostream& fmt, ARGS&& ... args) //const std::ostringstream& fmt, ...);
+/*void*/ int myprintf(int level, std::/*ostringstream*/ostream& fmt, ARGS&& ... args) //const std::ostringstream& fmt, ...);
 {
     myprintf(level, static_cast<std::ostringstream&>(fmt).str().c_str(), std::forward<ARGS>(args) ...); //perfect fwding
 //    printf(static_cast<std::ostringstream&>(fmt).str().c_str(), std::forward<ARGS>(args) ...);
@@ -132,11 +137,12 @@ void myprintf(int level, std::/*ostringstream*/ostream& fmt, ARGS&& ... args) //
 #define DebugInOut(...)  InOutDebug inout(std::ostringstream() << __VA_ARGS__)
 class InOutDebug
 {
+    static const int INOUT_LEVEL = 15;
 public:
 //kludge: overload until implicit cast ostringstream -> const char* works
     explicit InOutDebug(std::/*ostringstream*/ostream& label, SrcLine srcline = 0): InOutDebug(static_cast<std::ostringstream&>(label).str().c_str(), srcline) {} //delegated ctor
-    explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(BLUE_MSG << label << " IN" ENDCOLOR_ATLINE(srcline)); }
-    /*virtual*/ ~InOutDebug() { debug(BLUE_MSG << m_label << " OUT after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
+    explicit InOutDebug(const char* label = "", SrcLine srcline = 0): m_started(elapsed_msec()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(INOUT_LEVEL, BLUE_MSG << label << " IN" ENDCOLOR_ATLINE(srcline)); }
+    /*virtual*/ ~InOutDebug() { debug(INOUT_LEVEL, BLUE_MSG << m_label << " OUT after %f msec" ENDCOLOR_ATLINE(m_srcline), restart()); }
 public: //methods
     double restart(bool update = true) //my_elapsed_msec(bool restart = false)
     {
@@ -144,7 +150,7 @@ public: //methods
         if (update) m_started = elapsed_msec();
         return retval;
     }
-    void checkpt(const char* desc = 0, SrcLine srcline = 0) { debug(BLUE_MSG << m_label << " CHKPT(%s) after %f msec" ENDCOLOR_ATLINE(NVL(srcline, m_srcline)), NVL(desc, ""), restart(false)); }
+    void checkpt(const char* desc = 0, SrcLine srcline = 0) { debug(INOUT_LEVEL, BLUE_MSG << m_label << " CHKPT(%s) after %f msec" ENDCOLOR_ATLINE(NVL(srcline, m_srcline)), NVL(desc, ""), restart(false)); }
 protected: //data members
     /*const*/ int m_started; //= -elapsed_msec();
 //    const char* m_label;
@@ -153,9 +159,10 @@ protected: //data members
 };
 
 
+const int SNAT_LEVEL = 33;
 void snapshot(const char* desc, const void* addr, size_t len, SrcLine srcline = 0)
 {
-    debug(BLUE_MSG "%s %p..+%u:" ENDCOLOR_ATLINE(srcline), desc, addr, len);
+    debug(SNAT_LEVEL, BLUE_MSG "%s %p..+%u:" ENDCOLOR_ATLINE(srcline), desc, addr, len);
     std::ostringstream ss;
 //    ss << std::hex;
     for (int i = 0; i < len; i += 4)
@@ -168,7 +175,7 @@ void snapshot(const char* desc, const void* addr, size_t len, SrcLine srcline = 
         }
         ss << FMT(" 0x%.8x") << *(uint32_t*)(addr + i);
     }
-    debug(BLUE_MSG << ss.str() << ENDCOLOR);
+    debug(SNAT_LEVEL, BLUE_MSG << ss.str() << ENDCOLOR);
 }
 
 //display a message:
@@ -176,9 +183,9 @@ void snapshot(const char* desc, const void* addr, size_t len, SrcLine srcline = 
 //NOTE: must come before perfect fwding overloads (or else use fwd ref)
 //void* errprintf(FILE* dest, const char* reason /*= 0*/, const char* fmt, ...)
 #include "thr-helpers.h" //thrid(), thrinx(); //CAUTION: cyclic #include; must be after #def debug
-void myprintf(int level, const char* fmt, ...)
+/*void*/ int myprintf(int level, const char* fmt, ...) //use ret type to allow conditional/ternary usage
 {
-    if (level > MAX_DEBUG_LEVEL) return; //0;
+    if (level > MAX_DEBUG_LEVEL) return 0;
     char fmtbuf[800];
     va_list args;
     va_start(args, fmt);
@@ -232,9 +239,10 @@ void myprintf(int level, const char* fmt, ...)
 
 void func(int val = -1, SrcLine srcline = 0)
 {
-    debug(CYAN_MSG "in func(%d)" ENDCOLOR, val); //without "<<", with value
-    debug(BLUE_MSG "func " << "val: " << "0x%x" ENDCOLOR_ATLINE(srcline), val); //with "<<", with value
-    debug(CYAN_MSG "out func" ENDCOLOR); //without "<<", without value
+    debug(0, CYAN_MSG "in func(%d)" ENDCOLOR, val); //without "<<", with value
+    debug(0, BLUE_MSG "func " << "val: " << "0x%x" ENDCOLOR_ATLINE(srcline), val); //with "<<", with value
+    debug(0, CYAN_MSG "out func" ENDCOLOR); //without "<<", without value
+    debug(40, RED_MSG "shouldn't see this one" ENDCOLOR);
 }
 
 //int main(int argc, const char* argv[])

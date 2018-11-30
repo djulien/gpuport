@@ -289,16 +289,23 @@ inline bool SDL_OK(void* ptr) { return SDL_OK(ptr? SDL_Success: SDL_OtherError);
 //#define SDL_OK_2ARGS(retval, okval)  ((retfval) == (okval))?
 
 
+#define SDL_LEVEL 29
+
 //report SDL error (throw exc):
 //use optional param to show msg instead of throw exc
 //#define SDL_exc(what_failed)  exc(RED_MSG what_failed " failed: %s (error %d)" ENDCOLOR, SDL_GetError(), SDL_LastError)
+#if 0
 #define SDL_errmsg(handler, what_failed, srcline)  handler(RED_MSG << what_failed << " failed: %s (error %d)" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetError()), SDL_LastError)
 #define SDL_exc_1ARG(what_failed)  SDL_errmsg(exc, what_failed, SRCLINE)
 //#define SDL_exc_2ARGS(what_failed, want_throw)  ((want_throw)? SDL_errmsg(exc, what_failed, 0): SDL_errmsg(debug, what_failed, 0))
 #define SDL_exc_2ARGS(what_failed, srcline)  SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE))
 #define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE)): SDL_errmsg(debug, what_failed, NVL(srcline, SRCLINE)))
+#else
+#define SDL_exc_1ARG(what_failed)  exc(what_failed, SRCLINE)
+#define SDL_exc_2ARGS(what_failed, srcline)  exc(what_failed, NVL(srcline, SRCLINE))
+#define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? exc(what_failed, NVL(srcline, SRCLINE)): debug(SDL_LEVEL, what_failed, NVL(srcline, SRCLINE)))
+#endif
 #define SDL_exc(...)  UPTO_3ARGS(__VA_ARGS__, SDL_exc_3ARGS, SDL_exc_2ARGS, SDL_exc_1ARG) (__VA_ARGS__)
-
 
 //SDL_HINT_RENDER_SCALE_QUALITY wrapper:
 //use compiler to force correct values
@@ -791,6 +798,7 @@ typedef Uint32  SDL_SubSystemFlags;
 //thread safe (although SDL may not be)
 class mySDL_AutoLib //: public SDL_version //kludge: define some displayable data for operator<<()
 {
+    static const int LEVEL = 48;
 //readable names (mainly for debug msgs):
 //    static const /*std::map<Uint32, const char*>&*/ char* mySDL_SubSystemName(Uint32 key)
     static inline const std::map<SDL_SubSystemFlags, const char*>& SDL_SubSystemNames()
@@ -826,7 +834,7 @@ public: //ctor/dtor
         for (SDL_SubSystemFlags bit = 1; bit; bit <<= 1) //do one at a time
             if (flags & bit) //caller wants this one
                 if (!SDL_SubSystemName(bit)) exc(RED_MSG "SDL_AutoLib: unknown subsys: 0x%x" ENDCOLOR_ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
-                else if (inited & bit) debug(BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), SDL_SubSystemName(bit), bit);
+                else if (inited & bit) debug(LEVEL, BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" ENDCOLOR_ATLINE(srcline), SDL_SubSystemName(bit), bit);
                 else if (!SDL_OK(SDL_InitSubSystem(bit))) SDL_exc("SDL_AutoLib: init subsys " << FMT("'%s'") << SDL_SubSystemName(bit) << FMT(" (0x%x)") << bit << " failed", srcline);
                 else
                 {
@@ -838,7 +846,7 @@ public: //ctor/dtor
                         if (!SDL_OK(SDL_SetHint(RENDER_SCALE_QUALITY_Nearest), "SetHint")) SDL_exc("Linear render scale quality", srcline); //need crisp edges when scaled
                         if (!SDL_OK(SDL_SetHint(VIDEO_MINIMIZE_ON_FOCUS_LOSS_False), "SetHint")) SDL_exc("Minimize on focus", srcline); //keep window open (mainly debug on multiple screens); https://forums.libsdl.org/viewtopic.php?p=40716
                     }
-                    debug(CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%x) init[%d] success" ENDCOLOR_ATLINE(srcline), SDL_SubSystemName(bit), bit, all().size());
+                    debug(LEVEL, CYAN_MSG "SDL_AutoLib: subsys '%s' (0x%x) init[%d] success" ENDCOLOR_ATLINE(srcline), SDL_SubSystemName(bit), bit, all().size());
 //                    std::lock_guard<std::mutex> guard(mutex());
                     if (!all().size()) first_time(NVL(srcline, SRCLINE));
 //                    if (!all().size()) atexit(cleanup); //defer cleanup in case other threads or processes want to use it
@@ -864,7 +872,7 @@ public: //operators
             if (flags & pair.first) { flag_desc << ";" << pair.second; flags &= ~pair.first; }
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
-//        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
+//        debug(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
         ostrm << FMT(", flags 0x%x (") << that.m_flags << flag_desc.str().substr(1) << ")"; //FMT(", flags %s") << flag_desc.str().c_str() + 1;
         ostrm << "}";
         return ostrm;
@@ -882,27 +890,27 @@ protected: //helpers
     static void TMI(SrcLine srcline = 0)
     {
 //        SDL_AutoLib* dummy = 0;
-//        debug_level(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
+//        debug(12, BLUE_MSG << *dummy << ENDCOLOR_ATLINE(srcline)); //for completeness
 //std::thread::hardware_concurrency()
         SDL_version ver;
         VOID SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
-        debug_level(12, BLUE_MSG "SDL version %d.%d.%d, platform '%s', #cores %d, tick freq %s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, NVL(SDL_GetPlatform()), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_TickFreq()), commas(SDL_GetSystemRAM()), isRPi());
-//        debug_level(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
+        debug(12, BLUE_MSG "SDL version %d.%d.%d, platform '%s', #cores %d, tick freq %s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, NVL(SDL_GetPlatform()), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_TickFreq()), commas(SDL_GetSystemRAM()), isRPi());
+//        debug(12, BLUE_MSG "platform: '%s', %d core%s, ram %s MB, isRPi? %d" ENDCOLOR_ATLINE(srcline), NVL(SDL_GetPlatform()), SDL_GetCPUCount(), plural(SDL_GetCPUCount()), NVL(commas(SDL_GetSystemRAM())), isRPi());
 //TMI?
-        debug_level(12, BLUE_MSG "%d video display%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDisplays(), plural(SDL_GetNumVideoDisplays()));
+        debug(12, BLUE_MSG "%d video display%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDisplays(), plural(SDL_GetNumVideoDisplays()));
         for (int i = 0; i < SDL_GetNumVideoDisplays(); ++i)
         {
             SDL_Rect bounds, usable;
             if (!SDL_OK(SDL_GetDisplayBounds(i, &bounds))) SDL_exc("get bounds", srcline);
             if (!SDL_OK(SDL_GetDisplayUsableBounds(i, &usable))) SDL_exc("get usable bounds", srcline);
-            debug_level(12, BLUE_MSG "  [%d/%d]: name '%s' " << bounds << " (" << usable << " usable)" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDisplays(), NVL(SDL_GetDisplayName(i)));
+            debug(12, BLUE_MSG "  [%d/%d]: name '%s' " << bounds << " (" << usable << " usable)" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDisplays(), NVL(SDL_GetDisplayName(i)));
         }
 //TMI?
-        debug_level(12, BLUE_MSG "%d video driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers(), plural(SDL_GetNumVideoDrivers()));
+        debug(12, BLUE_MSG "%d video driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers(), plural(SDL_GetNumVideoDrivers()));
         for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
-            debug_level(12, BLUE_MSG "  [%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), NVL(SDL_GetVideoDriver(i)));
+            debug(12, BLUE_MSG "  [%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), NVL(SDL_GetVideoDriver(i)));
 //TMI?
-        debug_level(12, BLUE_MSG "%d render driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumRenderDrivers(), plural(SDL_GetNumRenderDrivers()));
+        debug(12, BLUE_MSG "%d render driver%s:" ENDCOLOR_ATLINE(srcline), SDL_GetNumRenderDrivers(), plural(SDL_GetNumRenderDrivers()));
         for (int i = 0; i < SDL_GetNumRenderDrivers(); ++i)
         {
             SDL_RendererInfo info;
@@ -916,8 +924,8 @@ protected: //helpers
 //                fmts << ", " << SDL_BITSPERPIXEL(info.texture_formats[i]) << " bpp " << SDL_PixelFormatShortName(info.texture_formats[i]));
 //            if (!info.num_texture_formats) { count << "no fmts"; fmts << "  "; }
 //            else if (info.num_texture_formats != 1) count << info.num_texture_formats << " fmts: ";
-//            debug_level(12, BLUE_MSG "Renderer[%s]: '%s', flags 0x%x %s, max %d x %d, %s%s" ENDCOLOR, which.str().c_str(), info.name, info.flags, flags.str().c_str() + 1, info.max_texture_width, info.max_texture_height, count.str().c_str(), fmts.str().c_str() + 2);
-            debug_level(12, BLUE_MSG "  [%d/%d]: " << info << ENDCOLOR_ATLINE(srcline), i, SDL_GetNumRenderDrivers()); //, NVL(renderer_desc(info).c_str()));
+//            debug(12, BLUE_MSG "Renderer[%s]: '%s', flags 0x%x %s, max %d x %d, %s%s" ENDCOLOR, which.str().c_str(), info.name, info.flags, flags.str().c_str() + 1, info.max_texture_width, info.max_texture_height, count.str().c_str(), fmts.str().c_str() + 2);
+            debug(12, BLUE_MSG "  [%d/%d]: " << info << ENDCOLOR_ATLINE(srcline), i, SDL_GetNumRenderDrivers()); //, NVL(renderer_desc(info).c_str()));
         }
 //NOTE: SDL_Init() seems to call bcm_host_init() on RPi to init VC(GPU) (or else it's no longer needed);  http://elinux.org/Raspberry_Pi_VideoCore_APIs
 //        if (!SDL_OK(SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Missing file", "File is missing. Please reinstall the program.", NO_PARENT_WND))) SDL_exc("simple msg box", false);
@@ -929,7 +937,7 @@ protected: //helpers
         SDL_SubSystemFlags inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         exc_soft("TODO: fix it->srcline");
         for (auto it = all().begin(); it != all().end(); ++it)
-            debug(CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(0/*(*it)->m_srcline*/), inited, NVL(SDL_SubSystemName(inited), "multiple"));
+            debug(LEVEL, CYAN_MSG "SDL_Lib: cleanup 0x%x (%s)" ENDCOLOR_ATLINE(0/*(*it)->m_srcline*/), inited, NVL(SDL_SubSystemName(inited), "multiple"));
         VOID SDL_Quit(); //all inited subsystems (1x only)
     }
 #if 0
@@ -937,12 +945,12 @@ protected: //helpers
     {
 //        SDL_version ver;
 //        SDL_GetVersion(&ver);
-//        debug_level(12, BLUE_MSG "SDL version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
-//        debug_level(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
+//        debug(12, BLUE_MSG "SDL version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d" ENDCOLOR_ATLINE(srcline), ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+//        debug(12, BLUE_MSG "%d video driver(s):" ENDCOLOR_ATLINE(srcline), SDL_GetNumVideoDrivers());
 //        for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
-//            debug_level(12, BLUE_MSG "Video driver[%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
+//            debug(12, BLUE_MSG "Video driver[%d/%d]: name '%s'" ENDCOLOR_ATLINE(srcline), i, SDL_GetNumVideoDrivers(), SDL_GetVideoDriver(i));
         SDL_AutoLib dummy(srcline);
-        debug_level(12, BLUE_MSG << dummy << ENDCOLOR_ATLINE(srcline));
+        debug(12, BLUE_MSG << dummy << ENDCOLOR_ATLINE(srcline));
     }
 #endif
 protected: //data members
@@ -1013,6 +1021,7 @@ using mySDL_AutoWindow_super = std::unique_ptr<SDL_Window, std::function<void(SD
 template <bool WantRenderer = true> //, Uint32 INIT_COLOR = BLUE> //BLACK> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
 class mySDL_AutoWindow: public mySDL_AutoWindow_super //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
+    static const int LEVEL = 46;
 //readable names (mainly for debug msgs):
     static inline const std::map<SDL_WindowFlags, const char*> SDL_WindowFlagNames()
     {
@@ -1166,7 +1175,7 @@ public: //operators
 //        SDL_Window* ptr = that.release();
 //        if (!srcline) srcline = m_srcline;
         SrcLine srcline = m_srcline; //TODO: where to get this?
-        debug(BLUE_MSG "SDL_AutoWindow: old window %p, new window %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
+        debug(LEVEL, BLUE_MSG "SDL_AutoWindow: old window %p, new window %p" ENDCOLOR_ATLINE(srcline), get(), ptr);
 //        DebugInOut("Awnd=wnd*", SRCLINE);
         reset(ptr, NVL(srcline, SRCLINE));
         return *this; //fluent/chainable
@@ -1194,7 +1203,7 @@ public: //operators
             if (flags & pair.first) { flag_desc << ";" << pair.second; flags &= ~pair.first; }
         if (flags) flag_desc << FMT(";??0x%x??") << flags; //unknown flags?
         if (!flag_desc.tellp()) flag_desc << ";";
-//        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
+//        debug(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
         ostrm << FMT(", wnd@ %p, ") << wnd;
         ostrm << that.m_rect; //wndw << " x " << wndh;
         ostrm << ", fmt " << fmt; //SDL_BITSPERPIXEL(fmt); //FMT(", fmt %i") << SDL_BITSPERPIXEL(fmt);
@@ -1246,7 +1255,7 @@ public: //methods; mostly just wrappers for static utility methods
 //debug("here30" ENDCOLOR);
         if (new_ptr) check(new_ptr, NO_POINT, NO_SIZE, NO_FORMAT, NVL(srcline, SRCLINE)); //validate before acquiring new ptr
 //        if (new_ptr) INSPECT(*new_ptr, srcline); //inspect(new_ptr, NVL(srcline, SRCLINE));
-        debug(BLUE_MSG << FMT("AutoWindow(%p)") << this << " taking ownership of " << FMT("%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
+        debug(LEVEL, BLUE_MSG << FMT("AutoWindow(%p)") << this << " taking ownership of " << FMT("%p") << new_ptr << ENDCOLOR_ATLINE(srcline));
 //debug("here31" ENDCOLOR);
         super::reset(new_ptr);
         if (!new_ptr) m_rect.x = m_rect.y = m_rect.w = m_rect.h = 0;
@@ -1326,7 +1335,7 @@ public: //static utility methods
         SDL_Renderer* rndr = renderer(wnd, NVL(srcline, SRCLINE)); //SDL_GetRenderer(wnd); //get());
 //        if (!SDL_OK(rndr)) SDL_exc("get renderer");
         if (!SDL_OK(SDL_RenderSetScale(rndr, hscale, vscale))) SDL_exc("set render scale", srcline);
-        debug(BLUE_MSG "virt size: %d x %d / %d x %d => scale %f x %f" ENDCOLOR_ATLINE(srcline), want_wh.w, want_wh.h, wh.w, wh.h, hscale, vscale);
+        debug(LEVEL, BLUE_MSG "virt size: %d x %d / %d x %d => scale %f x %f" ENDCOLOR_ATLINE(srcline), want_wh.w, want_wh.h, wh.w, wh.h, hscale, vscale);
     }
 //NOTE: leaves in-memory copy stale, so not too useful
 //    static void clear(SDL_Renderer* rndr, Uint32 color = BLACK, SrcLine srcline = 0)
@@ -1347,7 +1356,7 @@ public: //static utility methods
 //        SDL_Window* wnd = windowof(rndr, srcline);
         VOID SDL_GetWindowRect(wnd, &rect);
 //no worky        VOID SDL_RenderGetViewport(rndr, &rect);
-        debug(BLUE_MSG "set " << rect/*.size()*/ << " pixels in window to color 0x%x" ENDCOLOR_ATLINE(srcline), color);
+        debug(LEVEL, BLUE_MSG "set " << rect/*.size()*/ << " pixels in window to color 0x%x" ENDCOLOR_ATLINE(srcline), color);
 //printf("hello2 %p\n", rndr); fflush(stdout);
         VOID SDL_RenderPresent(rndr); //flips texture to screen
 #if 1 //api docs recommend this even if caller will update all pixels
@@ -1407,11 +1416,11 @@ public: //static utility methods
 //        for (const auto& pair: SDL_WindowFlagNames)
 //            if (flags & pair.first) desc << ";" << pair.second;
 //        if (!desc.tellp()) desc << ";";
-//        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
+//        debug(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
 //        super no_ctor(wnd, [](SDL_Window* wnd){});
 //        SDL_AutoWindow<false>& super autownd(wnd, srcline); //CAUTION: can't call ctor here (causes recursion)
         super wrapper(wnd, [](SDL_Window* wnd){}); //kludge: need unique_ptr<>, don't delete ptr
-        debug_level(12, BLUE_MSG << /*static_cast<SDL_AutoWindow<>>(no_ctor)*/ wrapper << ENDCOLOR_ATLINE(srcline));
+        debug(12, BLUE_MSG << /*static_cast<SDL_AutoWindow<>>(no_ctor)*/ wrapper << ENDCOLOR_ATLINE(srcline));
     }
 #endif
 //get renderer from window:
@@ -1437,7 +1446,7 @@ public: //static utility methods
 //[](SDL_Surface* surf){ 
 //debug("here22" ENDCOLOR);
         delete_renderer(ptr); //delete renderer first (get it from window)
-        debug(RED_MSG "SDL_AutoWindow: destroy window %p" ENDCOLOR, ptr);
+        debug(LEVEL, RED_MSG "SDL_AutoWindow: destroy window %p" ENDCOLOR, ptr);
 //debug("here23" ENDCOLOR);
         VOID SDL_DestroyWindow(ptr);
 //debug("here24" ENDCOLOR);
@@ -1462,7 +1471,7 @@ public: //static utility methods
 //debug("here20" ENDCOLOR);
         SDL_Renderer* rndr = SDL_GetRenderer(ptr); //renderer(ptr, false); //CAUTION: don't throw(); don't want to interfere with window deleter()
         if (!rndr) return;
-        debug(RED_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
+        debug(LEVEL, RED_MSG "SDL_AutoWindow: destroy renderer %p" ENDCOLOR, ptr);
 //debug("here21" ENDCOLOR);
         VOID SDL_DestroyRenderer(rndr);
     }
@@ -1729,6 +1738,7 @@ using mySDL_AutoTexture_super = std::unique_ptr<SDL_Texture, std::function<void(
 template <typename PXTYPE = Uint32> //, super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //super DRY kludge
 class mySDL_AutoTexture: public mySDL_AutoTexture_super //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
 {
+    static const int LEVEL = 44;
 //readable names (mainly for debug msgs):
     static inline const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
     {
@@ -2093,9 +2103,9 @@ public: //static helper methods
 //        for (const auto& pair: SDL_WindowFlagNames)
 //            if (flags & pair.first) desc << ";" << pair.second;
 //        if (!desc.tellp()) desc << ";";
-//        debug_level(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
+//        debug(12, BLUE_MSG "SDL_Window %d x %d, fmt %i bpp %s, flags %s" ENDCOLOR_ATLINE(srcline), wndw, wndh, SDL_BITSPERPIXEL(fmt), SDL_PixelFormatShortName(fmt), desc.str().c_str() + 1);
         SDL_AutoTexture autotxtr(txtr, NVL(srcline, SRCLINE));
-        debug_level(12, BLUE_MSG << autotxtr << ENDCOLOR_ATLINE(srcline));
+        debug(12, BLUE_MSG << autotxtr << ENDCOLOR_ATLINE(srcline));
     }
 #endif
 //private: //static helpers
@@ -2105,7 +2115,7 @@ public: //static helper methods
 //debug("here10" ENDCOLOR);
 //see custom lamba deleter example at https://en.cppreference.com/w/cpp/memory/unique_ptr
 //[](SDL_Surface* surf){ 
-        debug(BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
+        debug(LEVEL, BLUE_MSG "SDL_AutoTexture: free texture %p" ENDCOLOR, ptr);
         VOID SDL_DestroyTexture(ptr);
 //debug("here11" ENDCOLOR);
     }
@@ -2197,8 +2207,8 @@ void timer_test()
     float r4 = perftime2(); //elapsed (sec)
     float t5 = perftime1(0); //raw ticks (nsec)
     float r5 = perftime2(0); //raw ticks (nsec)
-    debug(BLUE_MSG "t1 " << t1 << ", " << t2 << ", " << t3 << ", " << t4 << ", " << t5 << ", ticks/sec " << SDL_TickFreq() << ENDCOLOR);
-    debug(BLUE_MSG "r1 " << r1 << ", " << r2 << ", " << r3 << ", " << r4 << ", " << r5 << ", ticks/sec " << SDL_TickFreq() << ENDCOLOR);
+    debug(0, BLUE_MSG "t1 " << t1 << ", " << t2 << ", " << t3 << ", " << t4 << ", " << t5 << ", ticks/sec " << SDL_TickFreq() << ENDCOLOR);
+    debug(0, BLUE_MSG "r1 " << r1 << ", " << r2 << ", " << r3 << ", " << r4 << ", " << r5 << ", ticks/sec " << SDL_TickFreq() << ENDCOLOR);
 }
 
 
@@ -2207,8 +2217,8 @@ class aclass
     SDL_AutoLib sdl;
     SrcLine m_srcline;
 public:
-    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)), m_srcline(srcline) { debug(GREEN_MSG "aclass(%p) ctor" ENDCOLOR_ATLINE(srcline), this); }
-    ~aclass() { debug(RED_MSG "aclass(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
+    aclass(SrcLine srcline = 0): sdl(SDL_INIT_VIDEO, NVL(srcline, SRCLINE)), m_srcline(srcline) { debug(0, GREEN_MSG "aclass(%p) ctor" ENDCOLOR_ATLINE(srcline), this); }
+    ~aclass() { debug(0, RED_MSG "aclass(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 };
 
 void other(SrcLine srcline = 0)
@@ -2231,7 +2241,7 @@ aclass AA(SRCLINE); //CAUTION: "A" conflicts with color macro; use another name
 
 void lib_test()
 {
-    debug(PINK_MSG << "lib_test start" << ENDCOLOR);
+    debug(0, PINK_MSG << "lib_test start" << ENDCOLOR);
     afunc();
     aclass BB(SRCLINE);
 }
@@ -2316,7 +2326,7 @@ int main(int argc, char* argv[])
 //using "fully rendered frames" style
 void sdl_api_test()
 {
-    debug(PINK_MSG << "api_test start" << ENDCOLOR);
+    debug(0, PINK_MSG << "api_test start" << ENDCOLOR);
     SDL_AutoLib sdllib(SDL_INIT_VIDEO, SRCLINE);
 
 //give me the whole screen and don't change the resolution:
@@ -2325,7 +2335,7 @@ void sdl_api_test()
     SDL_Renderer* sdlRenderer;
     const int W = 4, H = 5; //W = 3 * 24, H = 64; //1111;
     if (!SDL_OK(SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer))) SDL_exc("cre wnd & rndr");
-    debug(BLUE_MSG "wnd renderer %p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
+    debug(0, BLUE_MSG "wnd renderer %p already set? %d" ENDCOLOR, SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
     if (!SDL_OK(SDL_RenderSetLogicalSize(sdlRenderer, W, H))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
     if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(mixARGB(0.5, BLACK, WHITE))))) SDL_exc("set render draw color");
     if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear");
@@ -2344,7 +2354,7 @@ void sdl_api_test()
     myPixels[0][W] = RED;
     myPixels[0][2 * W] = GREEN;
     myPixels[0][3 * W] = BLUE;
-    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
+    debug(0, BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
 #endif
 //primary color test:
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
@@ -2355,7 +2365,7 @@ void sdl_api_test()
         if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
         if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
         if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-        debug(BLUE_MSG "set all %d pixels to 0x%x %s " ENDCOLOR, W * H, palette[c], NVL(unmap(ColorNames, palette[c])));
+        debug(0, BLUE_MSG "set all %d pixels to 0x%x %s " ENDCOLOR, W * H, palette[c], NVL(unmap(ColorNames, palette[c])));
         VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
@@ -2374,7 +2384,7 @@ void sdl_api_test()
             if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
             if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
             if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-            debug(BLUE_MSG "set pixel[%d, %d] to 0x%x %s " ENDCOLOR, x, y, myPixels[y][x], NVL(unmap(ColorNames, myPixels[y][x])));
+            debug(0, BLUE_MSG "set pixel[%d, %d] to 0x%x %s " ENDCOLOR, x, y, myPixels[y][x], NVL(unmap(ColorNames, myPixels[y][x])));
             VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
@@ -2399,7 +2409,7 @@ void fullscreen_test(ARGS& args)
 
     for (auto arg : args) //int i = 0; i < args.size(); ++i)
         if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
-    debug(PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start" << ENDCOLOR);
+    debug(0, PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start" << ENDCOLOR);
 //    SDL_Delay(2 sec);
     /*SDL_AutoTexture<>*/ auto other_txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
     txtr = other_txtr;
@@ -2427,8 +2437,8 @@ void fullscreen_test(ARGS& args)
 //primary color test:
     int numfr = 0;
     elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1]; //, total_stats[SIZEOF(perf_stats)] = {0};
-    debug(CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)" ENDCOLOR);
-    auto show_stats = [&perf_stats, &numfr](const char* msg_color = BLUE_MSG, SrcLine srcline = 0) { debug(msg_color << "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR_ATLINE(srcline), numfr? perf_stats[0] / numfr / 1e6: 0, numfr? perf_stats[1] / numfr / 1e3: 0, numfr? perf_stats[2] / numfr / 1e3: 0, numfr? perf_stats[3] / numfr / 1e3: 0, numfr? perf_stats[4] / numfr / 1e3: 0); };
+    debug(0, CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)" ENDCOLOR);
+    auto show_stats = [&perf_stats, &numfr](const char* msg_color = BLUE_MSG, SrcLine srcline = 0) { debug(0, msg_color << "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR_ATLINE(srcline), numfr? perf_stats[0] / numfr / 1e6: 0, numfr? perf_stats[1] / numfr / 1e3: 0, numfr? perf_stats[2] / numfr / 1e3: 0, numfr? perf_stats[3] / numfr / 1e3: 0, numfr? perf_stats[4] / numfr / 1e3: 0); };
 
     Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
@@ -2438,7 +2448,7 @@ void fullscreen_test(ARGS& args)
     {
         perf_stats[0] += txtr.perftime();
         SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
-        debug(BLUE_MSG << timestamp() << "all " << wh << " pixels => 0x%x" ENDCOLOR, myPixels[0][0]);
+        debug(0, BLUE_MSG << timestamp() << "all " << wh << " pixels => 0x%x" ENDCOLOR, myPixels[0][0]);
         VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
         show_stats(BLUE_MSG, SRCLINE);
@@ -2462,7 +2472,7 @@ void fullscreen_test(ARGS& args)
         {
             perf_stats[0] += txtr.perftime();
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
-            debug(BLUE_MSG << timestamp() << "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
+            debug(0, BLUE_MSG << timestamp() << "0x%x => [r %d, c %d]" ENDCOLOR, myPixels[y][x], y, x);
             VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
 //            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
             show_stats(BLUE_MSG, SRCLINE);
@@ -2537,9 +2547,9 @@ void gl_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(BLUE_MSG << FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
-    debug(BLUE_MSG << FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
-    debug(BLUE_MSG << *ScreenInfo(SRCLINE) << ENDCOLOR);
+    debug(0, BLUE_MSG << FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256) << ENDCOLOR);
+    debug(0, BLUE_MSG << FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE) << ENDCOLOR);
+    debug(0, BLUE_MSG << *ScreenInfo(SRCLINE) << ENDCOLOR);
 
 //    timer_test();
 //return;
@@ -2551,7 +2561,7 @@ void unit_test(ARGS& args)
 //    gl_test();
 
 //template <int FLAGS = SDL_INIT_VIDEO | SDL_INIT_AUDIO>
-    debug(BLUE_MSG << "finish" << ENDCOLOR);
+    debug(0, BLUE_MSG << "finish" << ENDCOLOR);
 //    return 0;
 }
 
