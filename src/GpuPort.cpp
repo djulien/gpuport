@@ -1585,14 +1585,10 @@ public:
 //        m_opts.vgroup = 1;
 //        m_opts.init_color = BLACK;
 //    }
-<<<<<<< HEAD
 //    static constexpr const Nodebuf::TXTR* const NO_ADVANCE = (const Nodebuf::TXTR*)-1;
-    static constexpr Nodebuf::TXTR* NO_ADVANCE = NULL; //(Nodebuf::TXTR*)-1;
-=======
-    static constexpr const Nodebuf::TXTR* NO_ADVANCE = (const Nodebuf::TXTR*)-1;
 //    typedef Nodebuf::TXTR* txptr;
 //    static constexpr txptr NO_ADVANCE = reinterpret_cast<txptr>(-1);
->>>>>>> 974181e3d908d7b46e83a594a6f974cc49200390
+    static constexpr Nodebuf::TXTR* NO_ADVANCE = NULL; //(Nodebuf::TXTR*)-1;
     void set_opts(napi_env env, napi_value& optsval, napi_value& jsfunc, napi_threadsafe_function_call_js napi_cb) //napi_callback napi_cb)
     {
 //prep caller's port params:
