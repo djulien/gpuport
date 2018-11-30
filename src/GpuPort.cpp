@@ -78,7 +78,7 @@
 #include <string> //std::string
 #include <map> //std::map<>
 
-#define MAX_DEBUG_LEVEL  1
+#define MAX_DEBUG_LEVEL  99 //1
 
 #include "str-helpers.h" //unmap()
 #include "thr-helpers.h" //thrnx()
