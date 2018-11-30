@@ -903,8 +903,9 @@ private: //helpers
                 for (int y = 0; y < nodebuf.wh.h; ++y) //outer loop = node# within each universe
                     for (uint32_t x = 0, /*xofs = 0,*/ xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, /*xofs += nodebuf.wh.h,*/ xmask >>= 1) //inner loop = universe#
                     {
+                        static const Uint32 ByteColors[] {RED, GREEN, BLUE};
 //show start + stop bits around unpivoted data:
-                        *ptr++ = dirty; //WHITE;
+                        *ptr++ = ByteColors[x / 8]; //show byte (color) indicator (easier dev/debug); //dirty; //WHITE;
                         *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(nodebuf.nodes[x][/*xofs +*/ y]): nodebuf.nodes[x][/*xofs +*/ y]: BLACK; //unpivoted node values
                         *ptr++ = BLACK;
                     }
@@ -1584,9 +1585,14 @@ public:
 //        m_opts.vgroup = 1;
 //        m_opts.init_color = BLACK;
 //    }
+<<<<<<< HEAD
+//    static constexpr const Nodebuf::TXTR* const NO_ADVANCE = (const Nodebuf::TXTR*)-1;
+    static constexpr Nodebuf::TXTR* NO_ADVANCE = NULL; //(Nodebuf::TXTR*)-1;
+=======
     static constexpr const Nodebuf::TXTR* NO_ADVANCE = (const Nodebuf::TXTR*)-1;
 //    typedef Nodebuf::TXTR* txptr;
 //    static constexpr txptr NO_ADVANCE = reinterpret_cast<txptr>(-1);
+>>>>>>> 974181e3d908d7b46e83a594a6f974cc49200390
     void set_opts(napi_env env, napi_value& optsval, napi_value& jsfunc, napi_threadsafe_function_call_js napi_cb) //napi_callback napi_cb)
     {
 //prep caller's port params:
@@ -1664,7 +1670,7 @@ public:
         }
 //void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
         make_fats(env, jsfunc, napi_cb, &m_opts.fats); //last arg = js cb func
-        m_opts.refill = std::bind([](/*napi_env env,*/ GpuPortData* aodata, Nodebuf::TXTR* txtr)
+        m_opts.refill = std::bind([](/*napi_env env,*/ GpuPortData* aodata, const Nodebuf::TXTR* txtr)
         {
             aodata->dirty.store(0);
             if (txtr != NO_ADVANCE) ++aodata->m_frinfo.numfr; //advance to next frame
