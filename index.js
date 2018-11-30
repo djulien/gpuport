@@ -131,6 +131,12 @@ const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 //            nodes[x * frinfo.UNIV_LEN + y] = ((x + y) & 1)? (x && y && (x < frinfo.NUM_UNIV - 1) && (y < frinfo.UNIV_LEN - 1))? PALETTE[(x + frnum) % PALETTE.length]: WHITE: BLACK;
             nodes[x][y] = ((x + y) & 1)? (x && y && (x < frinfo.NUM_UNIV - 1) && (y < frinfo.UNIV_LEN - 1))? PALETTE[(x + frnum) % (PALETTE.length - 1)]: WHITE: BLACK;
 //    for (var i = 0; i < nodes.length; ++i) nodes[i] = PALETTE[frnum % PALETTE.length];
+//perf stats:
+// '0 = wait for caller data
+// '1 = 0
+// '2 = txtr lock + pivot/encode + unlock
+// '3 = render copy txtr to GPU
+// '4 = render present + vsync wait
     debug(`elapsed: ${frinfo.elapsed / 1000} msec, perf avg: ${frinfo.perf.map((msec) => commas(msec / frnum)).join(", ")}`.cyan_lt);
     if (!more) { debug("EOF".red_lt); setTimeout(() => process.exit(0), 2000); } //kludge: dangling refs keep proc open, so forcefully kill it
     return more? 0xffffff: 0; //tell GpuPort which univ ready; 0 => stop
