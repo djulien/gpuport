@@ -45,6 +45,8 @@
 /// check for host:
 //
 
+const int CFG_LEVEL = 65;
+
 enum class tristate: int {No = false, Yes = true, Maybe, Error = Maybe};
 
 //check for file existence:
@@ -314,7 +316,6 @@ static void deleter(SDL_Window* ptr)
 }
 #endif
 
-const int CFG_LEVEL = 65;
 
 //see https://stackoverflow.com/questions/1829706/how-to-query-x11-display-resolution
 //see https://tronche.com/gui/x/xlib/display/information.html#display
