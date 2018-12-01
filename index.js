@@ -2,7 +2,7 @@
 
 //to debug:
 //node  debug  this-file  args
-//cmds: run, cont, step, out, next, .exit, repl
+//cmds: run, cont, step, out, next, bt, .exit, repl
 
 
 "use strict";

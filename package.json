@@ -47,9 +47,10 @@
   "dependencies": {},
   "devDependencies": {
     "colors": "git+https://github.com/djulien/colors.js.git",
+    "glob": "^7.1.3",
     "lame": "^1.2.4",
     "magic-globals": "^0.9.1",
-    "speaker": "^0.4.1"
+    "speaker": "git+https://github.com/djulien/node-speaker.git"
   },
   "demoDependencies": {
     "JSONStream": "^1.3.5",
