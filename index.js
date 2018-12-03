@@ -11,7 +11,7 @@ require("colors").enabled = true; //for console output; https://github.com/Marak
 const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
 //TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
 const GpuPort = require('./build/Release/gpuport'); //.node');
-const /*GpuPort*/ {limit, listen} = GpuPort; //require('./build/Release/gpuport'); //.node');
+const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 //console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
 
@@ -50,12 +50,6 @@ process.on('uncaughtException', (err) =>
 //worker thread
 //}
 
-process.on('uncaughtException', function (err) {
-  console.error((new Date).toUTCString() + ' uncaughtException:', err.message)
-  console.error(err.stack)
-  process.exit(1)
-})
-
 
 ///////////////////////////////////////////////////////////////////////////////
 ////
@@ -83,6 +77,8 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 
 const PALETTE = [RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE];
 
+//debug(`nodebufq: ${nodebufq.length} x ${nodebufq[0].length} x ${nodebufq[0][0].length}`);
+//process.exit();
 
 const TB1 = 0xff80ff, TB2 = 0xffddbb; //too bright
 if (typeof limit == "function")

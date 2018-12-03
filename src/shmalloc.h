@@ -31,7 +31,7 @@
 #ifndef _SHMALLOC_H
 #define _SHMALLOC_H
 
-#include <cstdlib> //atexit()0.093443 msec  
+#include <cstdlib> //atexit()
 #include <sys/shm.h> //shmctl(), shmget(), shmat(), shmdt(), shmid_ds
 //TODO: convert to Posix shm api:
 //#include <sys/mman.h> //shm_*()
@@ -136,6 +136,7 @@ const int SHM_LEVEL = 75;
 //NOTE: same shm seg can be attached at multiple addresses within same proc
 void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
+    errno = 0; //clear previous error; this shouldn't be necessary
 //printf("here1\n"); fflush(stdout);
 //        if (key) throw std::runtime_error("key not applicable to non-shared memory");
 //        return static_cast<MemHdr*>(::malloc(size));
@@ -228,6 +229,7 @@ int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not v
 //    ShmPtr* shmptr = static_cast<ShmPtr*>(addr);
 //    if (!shmptr-- || (shmptr->marker != SHM_MAGIC)) return;
 //printf("here7\n"); fflush(stdout);
+    errno = 0; //clear previous error; this shouldn't be necessary
     struct shmid_ds shminfo;
     const ShmHdr* ptr = get_shmhdr(addr, srcline), svhdr = *ptr; //copy before destroying memory
     if (svhdr.key == SHM_LOCAL)
@@ -258,7 +260,7 @@ inline const char* const_strerror(int my_errno) { return strerror(my_errno); } /
 void* shmalloc_debug(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
 {
     void* retval = shmalloc(size, key, srcline);
-    debug(SHM_LEVEL, CYAN_MSG "shmalloc(size %zu, key 0x%lx) => key 0x%lx, ptr %p, size %zu (%d %s)" ENDCOLOR_ATLINE(srcline), size, key, retval? shmkey(retval): 0, retval, retval? shmsize(retval): 0, errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
+    debug(SHM_LEVEL, CYAN_MSG "shmalloc(size %s, key 0x%lx) => key 0x%lx, ptr %p, size %s (%d %s)" ENDCOLOR_ATLINE(srcline), commas(size), key, retval? shmkey(retval): 0, retval, commas(retval? shmsize(retval): 0), errno, errno? NVL(const_strerror(errno), &"??error??"[0]): "no error");
     return retval;
 }
 #define shmalloc  shmalloc_debug
@@ -271,6 +273,56 @@ int shmfree_debug(const void* addr, SrcLine srcline = 0)
 }
 #define shmfree  shmfree_debug
 #endif
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Generic (shared or private):
+//
+
+//#ifndef _GENERIC_MEMORY_H
+//#define _GENERIC_MEMORY_H
+
+//accept variable # up to 3 - 4 macro args:
+#ifndef UPTO_3ARGS
+ #define UPTO_3ARGS(one, two, three, four, ...)  four
+#endif
+
+
+//kludge: wrapper to avoid trailing static decl at global scope:
+#if 1
+#define INIT_NONE  //dummy arg for macro
+#define STATIC_WRAP_3ARGS(TYPE, VAR, INIT)  \
+    /*static*/ inline TYPE& static_##VAR() \
+    { \
+        static TYPE m_##VAR /*=*/ INIT; \
+        return m_##VAR; \
+    }; \
+    TYPE& VAR = static_##VAR() //kludge-2: create ref to avoid the need for "()"
+#define STATIC_WRAP_2ARGS(TYPE, VAR)  STATIC_WRAP_3ARGS(TYPE, VAR, INIT_NONE) //optional third param
+#define STATIC_WRAP(...)  UPTO_3ARGS(__VA_ARGS__, STATIC_WRAP_3ARGS, STATIC_WRAP_2ARGS, STATIC_WRAP_1ARG) (__VA_ARGS__)
+#else //no worky
+template <typename TYPE>
+class static_wrap
+{
+public:
+    /*no: explicit*/ inline static_wrap(TYPE&& that) { get() = that; } //copy ctor
+//    static_wrap(TYPE&& that)
+//    inline static_wrap& operator=(TYPE /*&&*/ that) { return get() = that; } //fluent
+//    inline static_wrap& operator=(int that)
+    inline TYPE& get() { return *this; }
+    inline operator TYPE&() const
+    {
+        static TYPE m_var; //wrapped in method to avoid trailing static decl at global scope; CAUTION: pseudo-static (shared)
+        return m_var;
+    }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const static_wrap& that)
+    {
+        return ostrm << ((static_wrap)that).get(); //static_cast<TYPE>(that.get());
+    }
+};
+#endif
+//#endif //ndef _GENERIC_MEMORY_H
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -290,31 +342,49 @@ const key_t KEY_NONE = -2;
 class AutoShmary_common_base
 {
 protected: //methods
-    static void cleanup_later(void* ptr)
+    typedef void (*DTOR)(void*);
+    typedef std::pair<DTOR, void*> DTOR_INFO; //trying to keep things DRY
+    /*STATIC*/ static void cleanup_later(DTOR dtor, void* data = 0) //void* ptr)
     {
-        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init or get count at a time
-        if (!all().size()) atexit(cleanup); //defer cleanup in case other threads or processes want to use it
-        all().push_back(ptr); //cleanup() must be a static member, so make a list and do it all once at the time
+        auto& m_mutex = static_m_mutex();
+        auto& m_all = static_m_all();
+//        static int done = 0;
+        std::lock_guard<std::mutex> guard(m_mutex); //only allow one thread to init or get count at a time
+//        if (done++) return;
+        if (!m_all.size())
+        {
+//            auto thunk = [](AutoShmary_common_base* that){ that->cleanup(); }; //NOTE: must be captureless (for use as template arg), so wrap it
+//            atexit(std::bind<void(*)(void)>(thunk, this)); //kludge: convert to parameterless static function
+            atexit(cleanup);
+        }
+        m_all.push_back(DTOR_INFO(dtor, data)); //cleanup() must be a static member, so make a list and do it all once at the time
     }
 private: //helper methods
-    static void cleanup()
+    /*STATIC*/ static void cleanup()
     {
+        auto& m_all = static_m_all();
         SrcLine srcline = 0; //TODO: where to get this?
-        debug(SHM_LEVEL, CYAN_MSG "AutoShmary: clean up %d shm ptr%s" ENDCOLOR_ATLINE(srcline), all().size(), plural(all().size()));
-        for (auto it = all().begin(); it != all().end(); ++it) shmfree(*it);
+        debug(SHM_LEVEL, CYAN_MSG "AutoShmary: clean up %d shm ptr%s" ENDCOLOR_ATLINE(srcline), m_all.size(), plural(m_all.size()));
+        for (auto it = m_all.begin(); it != m_all.end(); ++it) it->first(it->second); //shmfree(*it);
     }
 private: //data members
-    static std::vector<void*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
+#if 0
+    static std::vector<DTOR_INFO>& m_static_all() //kludge: use wrapper to avoid trailing static decl at global scope
     {
-        static std::vector<void*> m_all; //TODO: should this be thread_local?
+        static std::vector<DTOR_INFO> m_all; //TODO: should this be thread_local?
         return m_all;
     }
-//    static std::mutex m_mutex;
-    static std::mutex& mutex() //kludge: use wrapper to avoid trailing static decl at global scope
+//broken    static std::vector<DTOR_INFO>& m_all = m_shared_all();
+    static std::mutex& m_static_mutex() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::mutex m_mutex;
         return m_mutex;
     }
+//broken    static std::mutex& m_mutex = m_shared_mutex();
+#else //broken
+    static STATIC_WRAP(std::vector<DTOR_INFO>, m_all); //TODO: should this be thread_local?
+    static STATIC_WRAP(std::mutex, m_mutex);
+#endif
 };
 
 
@@ -322,37 +392,60 @@ private: //data members
 //defers cleanup until process exit in case other threads or processes are using shmbuf
 //thread safe
 //NOTE: no need for std::unique_ptr<> or std::shared_ptr<> since underlying memory itself is shared
-template <typename TYPE = uint8_t, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
+template <typename TYPE = uint8_t, size_t ENTS = 1, bool AUTO_INIT = true, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
 class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
 public:
 //    const key_t KEY_NONE = -2;
 //TODO: use "new shmalloc()" to call ctor on shm directly
-    explicit AutoShmary(SrcLine srcline = 0): AutoShmary(0, 1, srcline) {}
-    AutoShmary(key_t key = 0, size_t ents = 1, SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ents * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
+    explicit AutoShmary(SrcLine srcline = 0): AutoShmary(0, srcline) {}
+    AutoShmary(key_t key = 0, /*size_t ents = 1,*/ SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ENTS * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
     {
-        if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << my_templargs() << "(" << ents << FMT(", 0x%lx") << key << ") failed");
+        if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << m_templargs << "(" << ENTS << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;
+        if (shmnattch(m_ptr) > 1) return; //already inited and dtors defered; nothing else to do here
+//NOTE: can't get std::bind to attach #ents to func ptr, so embed #ents into template instead (ENTS)
+        if (AUTO_INIT) //call ctors
+            for (int i = 0; i < ENTS; ++i)
+//            {
+//                debug(0, "placement new @%p" ENDCOLOR, &m_ptr[i]);
+                new (&m_ptr[i]) TYPE(); //placement new; apply ctors so shm is really inited and has valid state (esp mutex)
+//            }
+        AutoShmary_common_base::DTOR dtor = /*AUTO_INIT? std::bind(*/ [](/*size_t ents,*/ void* ptr)
+        {
+            TYPE* m_ptr = static_cast<TYPE*>(ptr);
+            if (AUTO_INIT) //call dtors for each array item
+                for (int i = 0; i < ENTS; ++i) //TODO: should this be reverse order?  atexit is in order of occurrence so it's probably okay here too
+//                {
+//                    debug(0, "delete @%p" ENDCOLOR, &m_ptr[i]);
+//                    delete &m_ptr[i]; //WRONG
+                    m_ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
+//                }
+            shmfree(ptr);
+//            }, ents, std::placeholders::_1):
+//            [](void* ptr) { shmfree(ptr); };
+        };
 //        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
 //        debug(GREEN_MSG "AutoShmary(%p) ctor: ptr %p, key 0x%x => 0x%x, size %zu * %zu => %zu, existed? %d, page size %ld" ENDCOLOR_ATLINE(srcline), this, m_ptr, key, shmkey(m_ptr), ents, sizeof(TYPE), shmsize(m_ptr), shmexisted(m_ptr), sysconf(_SC_PAGESIZE));
 //        debug(GREEN_MSG "ctor " << *this << ENDCOLOR_ATLINE(srcline));
-        cleanup_later(m_ptr);
+        cleanup_later(dtor, m_ptr);
     }
-    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(%p) dtor, ptr %p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
+//    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(%p) dtor, ptr %p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
 public: //operators
     operator TYPE*() { return m_ptr; }
 //    operator void*() { return m_ptr; }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const AutoShmary& that) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
 //        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
-        ostrm << "AutoShmary" << my_templargs();
-        ostrm << FMT("{%p: ") << &that;
-        ostrm << FMT("key 0x%lx, ") << that.key();
-        ostrm << FMT("ptr %p ") << that.m_ptr;
-        ostrm << FMT("len %zu, ") << that.len();
-        ostrm << FMT("hdr %p ") << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
-        ostrm << FMT("len %zu, ") << (that.m_ptr? sizeof(*get_shmhdr(that.m_ptr)): 0);
-        ostrm << "existed? " << that.existed();
+        ostrm << "AutoShmary" << that.m_templargs;
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        ostrm << FMT(", key 0x%lx") << that.key();
+        ostrm << ", ptr " << that.m_ptr;
+        ostrm << ", len " << that.len();
+        ostrm << ", hdr " << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
+        ostrm << ", len " << (that.m_ptr? sizeof(*get_shmhdr(that.m_ptr)): 0);
+        ostrm << ", existed? " << that.existed();
         ostrm << ", #attch " << (that.m_ptr? shmnattch(that.m_ptr): 0);
         ostrm << "}";
         return ostrm;
@@ -365,19 +458,22 @@ public: //operators
 public: //methods
 //    PTRTYPE& ptr() /*const*/ { return m_ptr; }
     TYPE* ptr() const { return m_ptr; }
-    size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down
+    size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down; >= ENTS (shm seg might have given more than requested)
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
 private: //data members
     TYPE* /*const*/ m_ptr; //doesn't change after ctor
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+#if 0
     static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //only used for debug msgs
         return m_templ_args;
     }
+#else
+    static STATIC_WRAP(std::string, m_templargs, = TEMPL_ARGS); //only used for debug msgs
+#endif
 };
-
 
 #endif //ndef _SHMALLOC_H
 
@@ -392,8 +488,81 @@ private: //data members
 
 #include "debugexc.h" //debug()
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
-#include "shmalloc.h" //shmalloc(), shmfree(), AutoShmary<>
+#include "shmalloc.h" //shmalloc(), shmfree(), AutoShmary<>, static_wrap<>
 
+struct A
+{
+//members:
+    static STATIC_WRAP(int, count, = 0); //static_wrap<int> count = 0; //CAUTION: must be placed < uniq_val
+    int my_val;
+    int uniq_val;
+    static STATIC_WRAP(char*, bufptr);
+//ctors/dtors:
+    A(int val = 0): uniq_val(count++), my_val(val) {}
+//operators:
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const A& that)
+    {
+        ostrm << "A{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        ostrm << ", val " << that.my_val;
+        ostrm << ", uniq " << that.uniq_val;
+        ostrm << ", count " << that.count;
+        ostrm << "}";
+        return ostrm; 
+    }
+};
+
+//exact copy of A:
+//(except "struct" vs. "class")
+//checks whether count will be shared between A & B
+class B1
+{
+public:
+//members:
+    static STATIC_WRAP(int, count, = 0); //static_wrap<int> count = 0; //NOTE: shared between B1 & B2, separate from A; //CAUTION: must be placed < uniq_val
+    int my_val;
+    int uniq_val;
+    static STATIC_WRAP(char*, bufptr);
+//ctors/dtors:
+    B1(int val = 0): uniq_val(count++), my_val(val) {}
+//operators:
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const B1& that)
+    {
+        ostrm << "B1{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        ostrm << ", val " << that.my_val;
+        ostrm << ", uniq " << that.uniq_val;
+        ostrm << ", count " << that.count;
+        ostrm << "}";
+        return ostrm; 
+    }
+};
+
+class B2: public B1
+{
+public:
+    int other_member;
+//ctors/dtors:
+    B2(int val = 0): B1(val), other_member(0) {}
+//operators:
+//    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const B2& that)
+};
+
+
+struct TestClass
+{
+    int val = 0;
+    TestClass() { INSPECT(GREEN_MSG "ctor " << *this); }
+    ~TestClass() { INSPECT(RED_MSG "dtor " << *this); }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const TestClass& that)
+    {
+        ostrm << "TestClass{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        ostrm << ", val " << that.val;
+        ostrm << "}";
+        return ostrm; 
+    }
+};
 
 void unit_test(ARGS& args)
 {
@@ -416,25 +585,41 @@ void unit_test(ARGS& args)
     debug(0, BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
     shmfree(ptr);
 
-    AutoShmary<> ary1(KEY, 5, SRCLINE);
+    AutoShmary<TestClass, 5> ary1(KEY, SRCLINE);
     debug(0, BLUE_MSG << ary1 << ", &end %p" << ENDCOLOR, &ary1[5]);
 
     { //create nested scope to force dtor
-        AutoShmary<> ary2(ary1.key(), 0, SRCLINE);
+        AutoShmary<TestClass, 0> ary2(ary1.key(), SRCLINE);
         debug(0, BLUE_MSG << ary2 << ENDCOLOR);
     }
 
     key_t key;
     { //create nested scope to force dtor
-        AutoShmary<uint32_t> ary3(KEY, 12, SRCLINE);
-        debug(0, BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[12]);
+        AutoShmary<TestClass, 6> ary3(KEY, SRCLINE);
+        debug(0, BLUE_MSG << ary3 << ", &end %p" << ENDCOLOR, &ary3[6]);
         key = ary3.key();
     }
-    AutoShmary<uint32_t> ary4(key, 4, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
+    AutoShmary<TestClass, 2> ary4(key, SRCLINE); //NOTE: even though ary2 went out of scope, it should still be alive
     debug(0, BLUE_MSG << ary4 << ENDCOLOR);
 
-    AutoShmary<uint32_t> ary5(key, 40, SRCLINE); //NOTE: this one should fail because original memory is smaller than requested
+    AutoShmary<TestClass, 40> ary5(key, SRCLINE); //NOTE: this one should fail because original memory is smaller than requested
     debug(0, BLUE_MSG << ary5 << ENDCOLOR);
+
+    A a1, a2(22);
+    B1 b3, b4(44);
+    B2 b5(55);
+    A a6(66);
+    B1 b7(77);
+    B2 b8(88);
+//    debug(0, BLUE_MSG "a1 " << a1 << ", \na2 " << a2 << ", \nb3 " << b3 << ", \nb4 " << b4 << ", \nb5 " << b5 << ", \na6 " << a6 << ", \nb7 " << b7 << ", \nb8 " << b8 << ENDCOLOR);
+    INSPECT("a1 " << a1);
+    INSPECT("a2 " << a2);
+    INSPECT("b3 " << b3);
+    INSPECT("b4 " << b4);
+    INSPECT("b5 " << b5);
+    INSPECT("a6 " << a6);
+    INSPECT("b7 " << b7);
+    INSPECT("b8 " << b8);
 }
 
 #endif //def WANT_UNIT_TEST

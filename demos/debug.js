@@ -28,6 +28,23 @@ extensions(); //hoist for in-line code below
 //const parent_name = module.parent.filename;
 
 
+const caller =
+module.exports.caller =
+function caller(depth)
+{
+    if (isNaN(depth)) depth = 0;
+    for (var i = 1; __stack[i]; ++i) //skip self
+    {
+        var parent = `${__stack[i].getFileName().split(/[\\\/]/g).back.replace(/\.js$/, "")}:${__stack[i].getLineNumber()}`; //drop ".js" (redundant since we already know it's Javascript)
+//        if (!want_all)
+        if (parent.indexOf("node_modules") != -1) continue; //exclude npm pkgs
+//        if (stack.getFileName() == __filename) return true;
+//if (!debug.nested--) break;
+        if (!depth--) return parent;
+    }
+}
+
+
 const debug =
 module.exports.debug =
 function debug(args)
@@ -38,15 +55,7 @@ function debug(args)
     if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args[1].toString().indexOf("%") != -1)) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
-    for (var i = 1; __stack[i]; ++i) //skip first level (this function)
-    {
-        var parent = `${__stack[i].getFileName().split(/[\\\/]/g).back.replace(/\.js$/, "")}:${__stack[i].getLineNumber()}`; //drop ".js" - redundant
-//        if (!want_all)
-        if (parent.indexOf("node_modules") != -1) continue; //exclude npm pkgs
-//        if (stack.getFileName() == __filename) return true;
-//if (!debug.nested--) break;
-        if (!debug.nested--) break;
-    }
+    const parent = caller(++debug.nested || 1);
     debug.nested = 0; //reset for next time
 //    debug.wanted || (debug.wanted = {});
     var want_detail = debug.wanted[parent.replace(/^@|:.*$/g, "")] || debug.wanted['*'] || -1;
@@ -108,6 +117,8 @@ debug.wanted = {};
     else //named module
         debug.wanted[name] = (remove == "-")? -1: level || Number.MAX_SAFE_INTEGER;
 });
+//tell user how to get debug msgs:
+if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*" for debug msgs.`.yellow_lt);
 
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -143,9 +154,9 @@ if (!module.parent)
 {
     require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
 
-    /*if (!process.env.DEBUG)*/ console.error(`use "DEBUG=${__file}" prefix for debug`.yellow_lt);
+//    /*if (!process.env.DEBUG)*/ console.error(`use "DEBUG=${__file}" prefix for debug`.yellow_lt);
     debug("hello".green_lt);
-    setTimeout(() => debug("good", "bye".red_lt), 1000);
+    setTimeout(() => { ++debug.nested; debug("good", "bye".red_lt); }, 1000);
 }
 
 //eof

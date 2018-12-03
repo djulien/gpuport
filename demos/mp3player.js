@@ -3,7 +3,7 @@
 
 //to debug:
 //node  debug  this-file  args
-//cmds: run, cont, step, out, next, .exit, repl
+//cmds: run, cont, step, out, next, bt, .exit, repl
 
 'use strict';
 const DEV = true; //false;
@@ -166,14 +166,14 @@ function extensions()
     Array.prototype.unshift_fluent = function(args) { this.unshift.apply(this, arguments); return this; };
     String.prototype.grab = function(inx) { return grab(this, inx); }
     Object.defineProperties(String.prototype,
-        {
+    {
 //            escnl: { get() { return this.replace(/\n/g, "\\n"); }}, //escape all newlines
 //            nocomment: { get() { return this.replace(/\/\*.*?\*\//gm, "").replace(/(#|\/\/).*?$/gm, ""); }}, //strip comments; multi-line has priority over single-line; CAUTION: no parsing or overlapping
 //            nonempty: { get() { return this.replace(/^\s*\r?\n/gm , ""); }}, //strip empty lines
 //            escre: { get() { return this.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }}, //escape all RE special chars
-            json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
-        });
-    }
+        json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
+    });
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////

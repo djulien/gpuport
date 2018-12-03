@@ -25,7 +25,7 @@
 
 //to debug:
 //1. compile first
-//2. gdb node; run ../
+//2. gdb -tui node; run ../; layout split
 
 //example/setup info:
 //** https://github.com/nodejs/node-addon-examples
@@ -92,6 +92,11 @@
 
 
 #define UNUSED(thing)  //(void)thing //avoid compiler warnings
+
+#ifndef SIZEOF_2D
+ #define SIZEOF_2D(thing)  (SIZEOF(thing) * SIZEOF(thing[0]))
+#endif
+
 
 //accept variable # 2-4 macro args:
 #ifndef UPTO_2ARGS
@@ -625,6 +630,7 @@ struct Nodebuf
 //    static const unsigned int NODEVAL_MASK = 1 << NODEBITS - 1;
     static const MASK_TYPE UNIV_MASK = (1 << NUM_UNIV) - 1;
     static const MASK_TYPE ALL_UNIV = UNIV_MASK; //NODEVAL_MASK;
+    static const MASK_TYPE NOT_READY = ALL_UNIV >> (NUM_UNIV / 2); //turn off half the universes to use as intermediate value
 //    std::unique_ptr<NODEVAL> m_nodes; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
     using SYNCTYPE = BkgSync<MASK_TYPE, true>;
 protected: //data members
@@ -651,13 +657,14 @@ public: //data members
     elapsed_t perf_stats[SIZEOF(TXTR::perf_stats) + 1] = {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows:
+    typedef NODEVAL NODEBUF[NUM_UNIV][UNIV_MAXLEN_pad];
     NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
 public: //ctors/dtors
     explicit Nodebuf(): // /*napi_env env*/):
 //        m_cached(env), //allow napi values to be inited
         m_xfr(std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE)), //protocol bit-banger shim
         m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
-        dirty(ALL_UNIV >> 1) //>> (NUM_UNIV / 2)) //init to intermediate value to force sync first time (don't use -1 in case all bits valid)
+        dirty(NOT_READY) //>> (NUM_UNIV / 2)) //init to intermediate value to force sync first time (don't use -1 in case all bits valid)
         {}
 //        m_cached(nullptr),
 //        { reset(); }
@@ -730,7 +737,7 @@ public: //methods
         view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
         view.h = wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), static_cast<int>(SIZEOF(nodes[0]))); //univ len == display height
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
-        for (int i = 0; i < SIZEOF(nodes) * SIZEOF(nodes[0]); ++i) nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+        for (int i = 0; i < SIZEOF_2D(nodes); ++i) nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size
@@ -807,7 +814,7 @@ public: //methods
 //            debug("nodes2 " << nodes << ENDCOLOR);
 //            !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
 //            debug("nodes3 " << nodes << ENDCOLOR);
-//            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
+//            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF_2D(junk), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
 //            debug("nodes4 " << nodes << ENDCOLOR);
 //        m_cached.object(env);
 //        debug("cre typed array nodes wrapper " << wh << ENDCOLOR);
@@ -815,25 +822,25 @@ public: //methods
 #if 0 //1D array; caller must use UNIV_MAXLEN_pad in index arithmeric :(
         napi_thingy typary(env, GPU_NODE_type, wh.w * wh.h, arybuf);
 #else //2D array; helps separate univ from eacher
-        napi_thingy typary(env);
-        !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &typary.value), "Cre outer univ ary failed");
+        napi_thingy univ_ary(env);
+        !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &univ_ary.value), "Cre outer univ ary failed");
 //    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
         for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
         {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-            napi_thingy univ_ary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad, arybuf, x * UNIV_MAXLEN_pad * sizeof(nodes[0][0]));
-            !NAPI_OK(napi_set_element(env, typary, x, univ_ary), "Cre inner node ary failed");
+            napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad, arybuf, x * sizeof(nodes[0])); //UNIV_MAXLEN_pad * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+            !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
         }
 #endif
-        debug(19, YELLOW_MSG "nodes5 " << typary << ENDCOLOR);
-//        debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(napi_uint32_array)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
+        debug(19, YELLOW_MSG "nodes5 " << univ_ary << ENDCOLOR);
+//        debug(YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF_2D(/*gpu_wker->*/m_shdata.nodes)) << " " << NVL(TypeName(napi_uint32_array)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
 //        }
 //        if (nodes.env != env) NAPI_exc("nodes env mismatch");
 //        if (valp) *valp = m_cached.value;
 //        *valp = wrapper;
         const int REF_COUNT = 1;
-        !NAPI_OK(napi_create_reference(env, typary, REF_COUNT, &m_cached), "Cre ref failed"); //allow to be reused next time
-        return typary;
+        !NAPI_OK(napi_create_reference(env, univ_ary, REF_COUNT, &m_cached), "Cre ref failed"); //allow to be reused next time
+        return univ_ary;
     }
     void update(TXTR::REFILL& refill, SrcLine srcline = 0)
     {
@@ -1447,6 +1454,134 @@ public: //playback methods
 };
 
 
+//express 4 digit dec number in hex:
+//ie, 1234 dec becomes 0x1234
+constexpr uint32_t NNNN_hex(uint32_t val)
+{
+    return (((val / 1000) % 10) * 0x1000) | (((val / 100) % 10) * 0x100) | (((val / 10) % 10) * 0x10) | (val % 10);
+}
+
+
+//circular queue entry of nodebufs:
+//goes in shm for multi-proc access
+struct NodebufQuent
+{
+    static const int NUM_UNIV = Nodebuf::NUM_UNIV;
+    static const int UNIV_MAXLEN = Nodebuf::UNIV_MAXLEN_pad;
+    static const auto GPU_NODE_type = Nodebuf::GPU_NODE_type;
+    using MASK_TYPE = Nodebuf::MASK_TYPE;
+    using NODEVAL = Nodebuf::NODEVAL;
+//    std::mutex mutex;
+//CAUTION: reuse same key each time so new procs can take ownership of old data:
+    static const key_t KEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
+    static const int QUELEN = 4;
+//    struct NodebufFrame
+//    {
+    std::atomic<int32_t> frnum, prevfr; //bkg gpu wker bumps fr# (lockless)
+    std::atomic<elapsed_t> frtime, prevtime; //frame timestamp
+    std::atomic<MASK_TYPE> ready; //fx gen threads/procs set ready bits; bkg gpu wker resets after xfr to GPU
+//TODO: cache pad here
+    NODEVAL nodes/*[QUELEN]*/[NUM_UNIV][UNIV_MAXLEN];
+//    };
+//    NodebufFrame bufs[QUELEN]; //4 x 24 x 1136 x 4 ~= 440KB
+    static STATIC_WRAP(std::vector<NodebufQuent*>, m_all);
+//    static WRAP(int, m_count, = 0);
+public: //ctors/dtors
+    explicit NodebufQuent() //NOTE: only called when first process attaches
+    {
+//        debug(5, CYAN_MSG << "NodebufQuent[%d]: init (shm) %p" << ENDCOLOR, m_all.size(), this);
+//        for (int i = 0; i < SIZEOF(bufs); ++i)
+        frnum = m_all.size(); //m_count++; //first round of fr#s are sequential from 0
+        prevfr = -1;
+        frtime = prevtime = 0;
+        ready = Nodebuf::NOT_READY;
+        debug(5, BLUE_MSG "clearing %s = %s nodes" ENDCOLOR, commas(SIZEOF_2D(nodes)), commas(sizeof(nodes) / sizeof(nodes[0][0]))); //, frnum); //, i, SIZEOF(bufs));
+        for (int n = 0; n < SIZEOF_2D(nodes); ++n) //CAUTION: 1D addressing for simpler loop control
+            /*bufs[i].*/nodes[0][n] = BLACK; //start in known state
+        m_all.push_back(this);
+        INSPECT(GREEN_MSG << "ctor " << *this); //, srcline);
+    }
+    ~NodebufQuent() { INSPECT(RED_MSG << "dtor " << *this); } //, srcline); }
+public: //operators
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const NodebufQuent& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    { 
+//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+        ostrm << "NodebufQuent"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+        ostrm << ", " << commas(SIZEOF_2D(that.nodes)) << " nodes";
+        ostrm << ", fr# " << that.frnum << ", prev " << that.prevfr;
+        ostrm << ", fr time " << that.frtime << ", prev " << that.prevtime;
+        ostrm << ", ready 0x" << std::hex << that.ready.load() << std::dec;
+        ostrm << "}";
+        return ostrm;
+    }
+public: //methods
+    int GetNext(int previous = 0) { return ++previous % m_all.size(); } //SIZEOF(bufs); } //TODO
+    int nextrd() {} //TODO
+    int nextwr() {} //TODO
+//    static inline napi_ref& ref() //kludge: use wrapper to avoid trailing static decl at global scope
+//    {
+//        static napi_ref m_ref = nullptr; //NOTE: this also 
+//        return m_ref;
+//    }
+//    static WRAP(napi_ref, m_ref, = nullptr); //napi_ref m_ref = nullptr;
+    static STATIC_WRAP(napi_ref, m_ref, = nullptr);
+    STATIC void reset(napi_env env)
+    {
+//        napi_ref& m_ref = ref();
+        if (m_ref) !NAPI_OK(napi_delete_reference(env, m_ref), "Del ref failed");
+        m_ref = nullptr;
+    }
+//TODO: split into 2 levels (private + shared)?
+    /*static*/ STATIC napi_value expose(napi_env env)
+    {
+        if (!env) return NULL; //Node cleanup mode?
+        napi_thingy retval(env);
+        if (m_ref) !NAPI_OK(napi_get_reference_value(env, m_ref, &retval.value), "Get ret val failed");
+        static int count = 0;
+        debug(19, BLUE_MSG "wrap nodeque[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
+//can't cache :(        if (nodes.arytype() != napi_uint32_array) //napi_typedarray_type)
+//        if (/*CachedWrapper && valp &&*/ (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
+//        if (m_cached.type() == napi_object) return m_cached;
+        if (retval.type() == napi_object) return retval;
+//        retval.cre_object();
+//CAUTION:
+//no        if (CachedWrapper && valp && (m_cached.env == env) && (m_cached.arytype() == GPU_NODE_type /*m_cached.type() != napi_undefined*/)) { *valp = m_cached.value; return; }
+//can't check yet:        if (!wh.w || !wh.h) NAPI_exc("no nodes");
+        !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
+//        for (int q = 0; q < /*QUELEN*/ m_all.size(); ++q)
+        for (auto it = m_all.begin(); it != m_all.end(); ++it)
+        {
+            napi_thingy arybuf(env, &(*it)->nodes[0][0], sizeof((*it)->nodes)); //ext buf for all nodes in all univ
+//        arybuf.cre_ext_arybuf(&nodes[0][0], sizeof(nodes));
+//        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
+//        debug(YELLOW_MSG "arybuf5 " << arybuf << ", dims " << wh << ENDCOLOR);
+//        m_cached.cre_typed_ary(env, GPU_NODE_type, wh.w * wh.h, arybuf);
+#if 0 //1D array; caller must use UNIV_MAXLEN_pad in index arithmeric :(
+        napi_thingy typary(env, GPU_NODE_type, wh.w * wh.h, arybuf);
+#else //2D array; helps separate univ from eacher
+            napi_thingy univ_ary(env);
+            !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &univ_ary.value), "Cre univ ary failed");
+//    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+            for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
+            {
+//TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN, arybuf, x * sizeof((*it)->nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
+            }
+            !NAPI_OK(napi_set_element(env, retval, it - m_all.begin(), univ_ary), "Cre inner node ary failed");
+#endif
+        }
+        debug(19, YELLOW_MSG "nodebq " << retval << ENDCOLOR);
+        const int REF_COUNT = 1;
+        !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_ref), "Cre ref failed"); //allow to be reused next time
+        return retval;
+    }
+};
+
+
 //addon state/context data:
 //using structs to allow inline member init
 struct GpuPortData
@@ -1465,7 +1600,8 @@ public: //public data members
 //    uint32_t dirty = 0; //must be locked for cond var notify any; don't need atomic<> here
 //    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
     FrameInfo m_frinfo;
-    Nodebuf m_nodebuf;
+    Nodebuf m_nodebuf; //TODO: replace with nodebuf que
+    AutoShmary<NodebufQuent, NodebufQuent::QUELEN> m_nodebq; //circular queue of nodebufs in shm
 //    decltype(m_nodebuf.m_txtr)& m_txtr = m_nodebuf.m_txtr;
     decltype(m_frinfo.numfr)& numfr = m_frinfo.numfr; //delegated
     decltype(m_nodebuf.dirty)& dirty = m_nodebuf.dirty; //delegated
@@ -1483,6 +1619,7 @@ public: //ctors/dtors
 //    explicit GpuPortData(napi_env env, SrcLine srcline = 0): /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
     explicit GpuPortData(/*napi_env env,*/ SrcLine srcline = 0):
         m_frinfo(/*env,*/ m_nodebuf, std::bind([](const GpuPortData* aodata, napi_env env) -> bool { return aodata->isvalid(env, SRCLINE); }, this, std::placeholders::_1)), //m_nodebuf(env),
+        m_nodebq(NodebufQuent::KEY, /*NodebufQuent::QUELEN,*/ SRCLINE),
         /*cbthis(env), nodes(env), frinfo(env),*/ m_started(now()), m_srcline(srcline)
 //        nodes(env), frinfo(env), listener(env), //NOTE: need these because default ctor deleted
 //        m_shmptr(shmalloc_typed<SHDATA>(SHM_LOCAL), std::bind(shmfree, std::placeholders::_1, SRCLINE)), //NVL(srcline, SRCLINE))), //shim; put nodes in shm so multiple procs/threads can render
@@ -1560,6 +1697,7 @@ public: //playback methods
     {
         m_nodebuf.reset(env);
         m_frinfo.reset(env);
+        m_nodebq[0].reset(env);
     }
 //set playback options:
 private:
@@ -1781,6 +1919,54 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 }
 
 
+//return a js wrapper to node buf:
+napi_value GetNodes_NAPI(napi_env env, napi_callback_info info)
+{
+//    elapsed_t started = now_msec();
+    if (!env) return NULL; //Node cleanup mode?
+    DebugInOut("GetNodes_napi", SRCLINE);
+
+    GpuPortData* aoptr;
+    napi_value argv[3+1], This; //allow 1 extra arg to check for extras
+    size_t argc = SIZEOF(argv);
+//    if (!env) return NULL; //Node cleanup mode
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&aoptr), "Get cb info failed");
+    debug(12, CYAN_MSG "get nodes: aoptr %p, valid? %d" ENDCOLOR, aoptr, aoptr->isvalid());
+    if ((argc < 2) || (argc > 3)) NAPI_exc("expected 2-3 int args: q, w, h; got " << argc << " args");
+//    debug(BLUE_MSG "async listen loop %d args: arg[0] " << napi_thingy(env, argv[0]) << ", arg[1] " << napi_thingy(env, argv[1]) << ENDCOLOR, argc);
+    aoptr->isvalid(env, SRCLINE);
+//no; allow restart    if (aoptr->islistening()) NAPI_exc("Already listening (single threaded for now)"); //check if que empty
+
+    int frnum;
+    SDL_Size want_wh;
+//    !NAPI_OK(napi_coerce_to_number(env, retval/*.value*/, &num_retval.value), "Get retval as num failed");
+    !NAPI_OK(napi_get_value_int32(env, argv[0], &want_wh.w), "Get int32 retval failed");
+    !NAPI_OK(napi_get_value_int32(env, argv[1], &want_wh.h), "Get int32 retval failed");
+    if ((want_wh.w < 1) || (want_wh.w > aoptr->m_nodebuf.wh.w)) NAPI_exc(env, "Bad #univ " << want_wh.w << ": should be 1.." << aoptr->m_nodebuf.wh.w);
+    if ((want_wh.h < 1) || (want_wh.h > aoptr->m_nodebuf.wh.h)) NAPI_exc(env, "Bad univ len " << want_wh.h << ": should be 1.." << aoptr->m_nodebuf.wh.h);
+
+//    if (!wh.w || !wh.h) NAPI_exc("no nodes");
+    napi_thingy arybuf(env, &aoptr->m_nodebuf.nodes[0][0], sizeof(aoptr->m_nodebuf.nodes));
+#if 0 //1D array; caller must use UNIV_MAXLEN_pad in index arithmeric :(
+    napi_thingy typary(env, GPU_NODE_type, wh.w * wh.h, arybuf);
+#else //2D array; helps separate univ from eacher
+    napi_thingy typary(env);
+    !NAPI_OK(napi_create_array_with_length(env, want_wh.w, &typary.value), "Cre outer univ ary failed");
+//    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+    for (int x = 0; x < want_wh.w; ++x)
+    {
+//TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
+        napi_thingy univ_ary(env, Nodebuf::GPU_NODE_type, want_wh.h, arybuf, x * Nodebuf::UNIV_MAXLEN_pad * sizeof(aoptr->m_nodebuf.nodes[0][0]));
+        !NAPI_OK(napi_set_element(env, typary, x, univ_ary), "Cre inner node ary failed");
+    }
+#endif
+    debug(19, YELLOW_MSG "nodes" << typary << ENDCOLOR);
+//    const int REF_COUNT = 1;
+//    !NAPI_OK(napi_create_reference(env, typary, REF_COUNT, &m_cached), "Cre ref failed"); //allow to be reused next time
+    return typary;
+}
+
+
 //convert results from wker thread to napi and pass to JavaScript callback:
 //NOTE: this executes on Node main thread only
 static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data)
@@ -1987,7 +2173,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     const napi_node_version* ver;
     !NAPI_OK(napi_get_node_version(env, &ver), "Get node version info failed");
     !NAPI_OK(napi_get_version(env, &napi_ver), "Get napi version info failed");
-    debug(9, BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), napi v" << napi_ver << ENDCOLOR);
+    debug(9, BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), N-API v" << napi_ver << ENDCOLOR);
     exports = module_exports(env, exports); //include previous exports
 
     std::unique_ptr<GpuPortData> aodata(new GpuPortData(/*env,*/ SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
@@ -2004,6 +2190,14 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     {
         _.utf8name = "limit"; //TODO: add prop to show <pct>?
         _.method = Limit_NAPI;
+        _.attributes = napi_default; //!writable, !enumerable
+//        _.data = aoptr;
+    }(props.emplace_back()); //(*pptr++);
+    [env, aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
+    {
+        _.utf8name = "nodebufq"; //"GetNodes";
+//        _.method = GetNodes_NAPI;
+        _.value = aoptr->m_nodebq[0].expose(env);
         _.attributes = napi_default; //!writable, !enumerable
 //        _.data = aoptr;
     }(props.emplace_back()); //(*pptr++);
@@ -2267,11 +2461,11 @@ public: //methods
             debug(9, "nodes2 " << nodes << ENDCOLOR);
             !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
             debug(9, "nodes3 " << nodes << ENDCOLOR);
-            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
+            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF_2D(junk), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
             debug(9, "nodes4 " << nodes << ENDCOLOR);
-            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0]), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
+            !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF_2D(/*gpu_wker->*/m_shdata.nodes), arybuf.value, 0, &nodes.value), "Cre nodes typed array failed");
             debug(9, "nodes5 " << nodes << ENDCOLOR);
-            debug(9, YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF(/*gpu_wker->*/m_shdata.nodes) * SIZEOF(/*gpu_wker->*/m_shdata.nodes[0])) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
+            debug(9, YELLOW_MSG "nodes typed array created: &node[0][0] " << &/*gpu_wker->*/m_shdata.nodes[0][0] << ", #bytes " <<  commas(sizeof(/*gpu_wker->*/m_shdata.nodes)) << ", " << commas(SIZEOF_2D(/*gpu_wker->*/m_shdata.nodes)) << " " << NVL(TypeName(GPU_NODE_type)) << " elements, arybuf " << arybuf << ", nodes thingy " << nodes << ENDCOLOR);
         }
         if (nodes.env != env) NAPI_exc("nodes env mismatch");
         *valp = nodes.value;
@@ -3080,9 +3274,9 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     debug(9, "nodes2 " << nodes << ENDCOLOR);
     !NAPI_OK(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &nodes.value), "cre str failed");
     debug(9, "nodes3 " << nodes << ENDCOLOR);
-    !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(junk) * SIZEOF(junk[0]), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
+    !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF_2D(junk), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
     debug(9, "nodes4 " << nodes << ENDCOLOR);
-    !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF(aodata->m_shdata.nodes) * SIZEOF(aodata->m_shdata.nodes[0]), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
+    !NAPI_OK(napi_create_typedarray(env, GPU_NODE_type, SIZEOF_2D(aodata->m_shdata.nodes), arybuf, 0, &nodes.value), "Cre nodes typed array failed");
     debug(9, "shdata nodes " << nodes << ENDCOLOR);
 #endif
     aodata.release(); //NAPI owns it now

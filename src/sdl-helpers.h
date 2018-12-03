@@ -24,7 +24,7 @@
 #include "rpi-helpers.h" //isrpi()
 #include "ostrfmt.h" //FMT()
 #include "elapsed.h" //elapsed_msec(), timestamp()
-//#include "shmalloc.h" //AutoShmary<>
+#include "shmalloc.h" //AutoShmary<>, STATIC_WRAP()
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -441,7 +441,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
     inline mySDL_Rect(const mySDL_Rect& that): mySDL_Rect(that.x, that.y, that.w, that.h) {} //x(that.x), y(that.y), w(that.w), h(that.h) {} //copy ctor
     /*explicit*/ mySDL_Rect(const SDL_Point& newxy, const SDL_Size& newwh): mySDL_Rect(newxy.x, newxy.y, newwh.w, newwh.h) {} //x(newxy.x), y(newxy.y), w(newwh.w), h(newwh.h) {}
 //operators:
-    inline const SDL_Point& position() const { static SDL_Point xy; xy.x = x; xy.y = y; return xy; }
+    inline const SDL_Point& position() const { static SDL_Point xy; xy.x = x; xy.y = y; return xy; } //CAUTION: not thread-safe (static var)
     inline const SDL_Size& size() const { static SDL_Size wh; wh.w = w; wh.h = h; return wh; }
     /*explicit*/ operator const SDL_Point*() const { return &position(); }
     /*explicit*/ operator const SDL_Size*() const { return &size(); }
@@ -963,6 +963,7 @@ protected: //data members
 //        static /*std::atomic<int>*/int m_count = 0;
 //        return m_count;
 //    }
+#if 1
     static inline std::vector<mySDL_AutoLib*>& all() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::vector<mySDL_AutoLib*> m_all;
@@ -974,6 +975,10 @@ protected: //data members
         static std::mutex m_mutex;
         return m_mutex;
     }
+#else
+    static STATIC_WRAP(std::vector<mySDL_AutoLib*>, all);
+    static STATIC_WRAP(std::mutex, mutex);
+#endif
 };
 #define SDL_AutoLib  mySDL_AutoLib //use my def instead of SDL def (in case SDL defines one in future)
 
@@ -1183,7 +1188,7 @@ public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoWindow& that) //CONST SDL_Window* wnd) //causes recursion via inspect: const SDL_AutoWindow& me) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
-        ostrm << "SDL_Window" << my_templargs();
+        ostrm << "SDL_Window" << that.my_templargs; //();
         ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         if (!&that) return ostrm << " NO DATA}";
         CONST SDL_Window* wnd = that.get();
@@ -1480,6 +1485,7 @@ protected: //members
     const elapsed_t m_started;
     mySDL_Rect m_rect; //cached window size + position
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+#if 0
 //    static /*std::atomic<int>*/int& count() //kludge: use wrapper to avoid trailing static decl at global scope
 //    {
 //        static /*std::atomic<int>*/int m_count = 0;
@@ -1490,6 +1496,10 @@ protected: //members
         static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
     }
+#else
+//    static STATIC_WRAP(int, count, = 0);
+    static STATIC_WRAP(std::string, my_templargs, = TEMPL_ARGS);
+#endif
 };
 #define SDL_AutoWindow  mySDL_AutoWindow //use my def instead of SDL def (in case SDL defines one in future)
 
@@ -1857,7 +1867,7 @@ public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoTexture& that) //CONST SDL_Window* wnd) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
         SrcLine srcline = NVL(that.m_srcline, SRCLINE);
-        ostrm << "SDL_AutoTexture" << my_templargs();
+        ostrm << "SDL_AutoTexture" << that.my_templargs; //();
         ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         if (!&that) return ostrm << " NO DATA}";
         CONST SDL_Texture* txtr = that.get();
@@ -2134,11 +2144,15 @@ private: //member vars
     SDL_AutoWindow<true> m_wnd;
     const elapsed_t m_started; //measure performance
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+#if 0
     static inline std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
     {
         static std::string m_templ_args(TEMPL_ARGS); //, dummy = m_templ_args.append("\n"); //only used for debug msgs
         return m_templ_args;
     }
+#else
+#endif
+    static STATIC_WRAP(std::string, my_templargs, = TEMPL_ARGS);
 };
 #define SDL_AutoTexture  mySDL_AutoTexture //use my def instead of SDL def (in case SDL defines one in future)
 
