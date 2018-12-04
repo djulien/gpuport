@@ -100,6 +100,12 @@ inline TYPE NVL(const TYPE val, const TYPE defval = 0)
 //        return SDL_AutoSurface(::SDL_CreateRGBSurfaceWithFormat(std::forward<ARGS>(args) ...), srcline); //perfect fwd
 
 
+//express 4 digit dec number in hex:
+//ie, 1234 dec becomes 0x1234
+constexpr uint32_t NNNN_hex(uint32_t val)
+{
+    return (((val / 1000) % 10) * 0x1000) | (((val / 100) % 10) * 0x100) | (((val / 10) % 10) * 0x10) | (val % 10);
+}
 
 
 //for grammatically correct msgs: :)
@@ -160,6 +166,8 @@ const char* commas(int64_t val)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
+    debug(0, BLUE_MSG "0x%d = 0x%x" ENDCOLOR, 1234, NNNN_hex(1234));
+
     debug(0, BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
     debug(0, BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
     int count0 = 0, count1 = 1, count2 = 2;

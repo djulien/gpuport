@@ -45,6 +45,7 @@
     "node-gyp": "^3.8.0"
   },
   "dependencies": {
+    "shared-buffer": "^1.2.0",
     "try-require": "^1.2.1"
   },
   "devDependencies": {

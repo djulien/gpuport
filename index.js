@@ -112,7 +112,7 @@ const opts =
 };
 //var THIS = {count: 0, };
 //TODO: try{
-const SEQLEN = 10 * opts.fps; //10 sec total
+const SEQLEN = 10; //* opts.fps; //10 sec total
 //const WANT_GP = false; //true; //false;
 //const false_listen = false;
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>

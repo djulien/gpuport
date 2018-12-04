@@ -47,11 +47,12 @@
 //#include <type_traits> //std::remove_const<>
 
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
-#include "debugexc.h" //debug(), TEMPL_ARGS
 #include "elapsed.h" //timestamp()
 #include "srcline.h" //SrcLine, SRCLINE
-#include "str-helpers.h" //NVL(), plural(), commas()
+#include "str-helpers.h" //NVL(), plural(), commas(), NNNN_hex()
 #include "ostrfmt.h" //FMT()
+#include "debugexc.h" //debug(), TEMPL_ARGS; //CAUTION: cyclic #include; put this one last
+
 
 #ifndef STATIC
  #define STATIC
@@ -125,7 +126,8 @@ const ShmHdr* get_shmhdr(const void* addr, SrcLine srcline = 0)
 //    char buf[64];
 //    snprintf(buf, sizeof(buf), "%s: bad shmem pointer %p", func, addr);
 //    throw std::runtime_error(buf);
-    exc(FMT("bad shm ptr %p") << addr, srcline);
+//    exc(FMT("bad shm ptr %p") << addr, srcline);
+    exc("bad shm ptr " << addr, srcline);
 }
 
 
@@ -274,14 +276,16 @@ int shmfree_debug(const void* addr, SrcLine srcline = 0)
 #define shmfree  shmfree_debug
 #endif
 
+#endif //ndef _SHMALLOC_H
+
 
 ///////////////////////////////////////////////////////////////////////////////
 ////
 /// Generic (shared or private):
 //
 
-//#ifndef _GENERIC_MEMORY_H
-//#define _GENERIC_MEMORY_H
+#ifndef _GENERIC_MEMORY_H
+#define _GENERIC_MEMORY_H
 
 //accept variable # up to 3 - 4 macro args:
 #ifndef UPTO_3ARGS
@@ -322,7 +326,8 @@ public:
     }
 };
 #endif
-//#endif //ndef _GENERIC_MEMORY_H
+
+#endif //ndef _GENERIC_MEMORY_H
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -335,6 +340,8 @@ public:
 //MMU page size 4K
 //see also https://softwareengineering.stackexchange.com/questions/328775/how-important-is-memory-alignment-does-it-still-matter
 
+#ifndef _SHMARY_H //NOTE: had to split due to circular #include in "thr-helpers.h"
+#define _SHMARY_H
 
 const key_t KEY_NONE = -2;
 
@@ -392,6 +399,8 @@ private: //data members
 //defers cleanup until process exit in case other threads or processes are using shmbuf
 //thread safe
 //NOTE: no need for std::unique_ptr<> or std::shared_ptr<> since underlying memory itself is shared
+//#pragma message("debug() used here")
+//#pragma message("AutoShmary<> defined here")
 template <typename TYPE = uint8_t, size_t ENTS = 1, bool AUTO_INIT = true, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
 class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
@@ -399,28 +408,38 @@ public:
 //    const key_t KEY_NONE = -2;
 //TODO: use "new shmalloc()" to call ctor on shm directly
     explicit AutoShmary(SrcLine srcline = 0): AutoShmary(0, srcline) {}
-    AutoShmary(key_t key = 0, /*size_t ents = 1,*/ SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ENTS * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_srcline(NVL(srcline, SRCLINE))
+    AutoShmary(key_t key = 0, /*size_t ents = 1,*/ SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ENTS * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_count(0), m_srcline(NVL(srcline, SRCLINE))
     {
         if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << m_templargs << "(" << ENTS << FMT(", 0x%lx") << key << ") failed");
         if (!m_ptr) return;
         if (shmnattch(m_ptr) > 1) return; //already inited and dtors defered; nothing else to do here
 //NOTE: can't get std::bind to attach #ents to func ptr, so embed #ents into template instead (ENTS)
         if (AUTO_INIT) //call ctors
+        {
             for (int i = 0; i < ENTS; ++i)
 //            {
 //                debug(0, "placement new @%p" ENDCOLOR, &m_ptr[i]);
+//TODO: should take into account m_count
                 new (&m_ptr[i]) TYPE(); //placement new; apply ctors so shm is really inited and has valid state (esp mutex)
 //            }
+            if (WANT_MUTEX) new (&m_ptr[ENTS]) std::mutex();
+        }
         AutoShmary_common_base::DTOR dtor = /*AUTO_INIT? std::bind(*/ [](/*size_t ents,*/ void* ptr)
         {
             TYPE* m_ptr = static_cast<TYPE*>(ptr);
+            std::mutex* m_mutex = reinterpret_cast<std::mutex*>(&m_ptr[ENTS]);
             if (AUTO_INIT) //call dtors for each array item
+            {
                 for (int i = 0; i < ENTS; ++i) //TODO: should this be reverse order?  atexit is in order of occurrence so it's probably okay here too
 //                {
 //                    debug(0, "delete @%p" ENDCOLOR, &m_ptr[i]);
 //                    delete &m_ptr[i]; //WRONG
+//TODO: should take into account m_count
                     m_ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
 //                }
+                using std_mutex = std::mutex; //kludge: compiler seems to mis-parse explicit call to dtor with "::" so use alias
+                if (WANT_MUTEX) /*mutex()*/ m_mutex->~std_mutex(); //kludge: "this" not captured, so cast from m_ptr
+            }
             shmfree(ptr);
 //            }, ents, std::placeholders::_1):
 //            [](void* ptr) { shmfree(ptr); };
@@ -433,6 +452,7 @@ public:
 //    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(%p) dtor, ptr %p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
 public: //operators
     operator TYPE*() { return m_ptr; }
+    std::mutex& mutex() { return *(std::mutex*)(WANT_MUTEX? &m_ptr[ENTS]: NULL); } //NOTE: usage of retval will give memory error if !WANT_MUTEX
 //    operator void*() { return m_ptr; }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const AutoShmary& that) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
@@ -461,7 +481,18 @@ public: //methods
     size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down; >= ENTS (shm seg might have given more than requested)
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
+public: //std::vector methods
+    TYPE* begin() { return m_ptr; }
+    TYPE* end() { return &m_ptr[m_count]; }
+    size_t size() const { return m_count; }
+    void push_back(const TYPE& new_item)
+    {
+//TODO: reserve(), capacity(), grow(), etc
+        if (m_count >= ENTS) exc_hard("shm::vector no room");
+        m_ptr[m_count++] = new_item; //TODO: emplace?
+    }
 private: //data members
+    int m_count;
     TYPE* /*const*/ m_ptr; //doesn't change after ctor
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 #if 0
@@ -475,7 +506,43 @@ private: //data members
 #endif
 };
 
-#endif //ndef _SHMALLOC_H
+
+//fixed len vector for use in shm:
+template <typename TYPE, size_t SIZE>
+class FixedVector
+{
+public:
+    static const key_t KEY = 0xbeef0000 | NNNN_hex(SIZE); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
+    struct shdata
+    {
+        int count = 0;
+        TYPE list[SIZE];
+        std::mutex mutex;
+        inline auto begin() /*const*/ { return &list[0]; }
+        inline auto end() /*const*/ { return &list[count]; }
+        inline size_t size() /*const*/ { return count; }
+        void push_back(/*const*/ TYPE& new_item)
+        {
+//TODO: reserve(), capacity(), grow(), etc
+            if (count >= SIZEOF(list)) exc_hard("FixedVector<" << SIZE << "> no room");
+            list[count++] = new_item; //TODO: emplace?
+        }
+    };
+#if 0 //broken
+    /*static*/ AutoShmary<shdata> wrapper(KEY, SRCLINE); //MYKEY, SRCLINE);
+public:
+    std::mutex* mutex() { return &wrapper.ptr()->mutex; }
+    /*static*/ void info() { debug(33, YELLOW_MSG "shm ids @" << wrapper.ptr() << ", #attch " << shmnattch(wrapper.ptr()) << ENDCOLOR); }
+public:
+    /*static*/ inline auto /*std::thread::id* */ begin() /*const*/ { return wrapper->ptr().begin(); }
+    /*static*/ inline auto /*std::thread::id* */ end() /*const*/ { return wrapper->ptr().end(); }
+    /*static*/ inline size_t size() /*const*/ { return wrapper->ptr().count; }
+    /*static*/ inline void push_back(const TYPE& new_item) { wrapper->ptr().push_back(new_item); }
+#endif
+};
+
+
+#endif //ndef _SHMARY_H
 
 
 ///////////////////////////////////////////////////////////////////////////////

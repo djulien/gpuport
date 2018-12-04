@@ -17,6 +17,13 @@
 //RPi headless config: https://raspberrypi.stackexchange.com/questions/14963/how-do-i-maximize-a-headless-pi-to-run-node-js
 //GPIO ui, auto-boot Node: https://tutorials-raspberrypi.com/setup-raspberry-pi-node-js-webserver-control-gpios/
 
+//node shm options:
+//https://www.npmjs.com/package/shmmap
+//https://www.npmjs.com/package/mmap-object
+//https://github.com/ukrbublik/shm-typed-array
+//https://www.npmjs.com/package/shared-buffer
+
+
 
 'use strict'; //find bugs easier
 //modules common to main + wker threads:
@@ -27,34 +34,31 @@ require('colors').enabled = true; //for console output (incl bkg threads); https
 const fs = require("fs");
 const util = require("util");
 //const buffer = require("buffer"); //needed for consts; only classes/methods are pre-included in global Node scope
-const {debug, caller} = require("./debug");
 const {elapsed} = require("./elapsed");
+const {debug, caller} = require("./debug");
 //const tryRequire = require("try-require"); //https://github.com/rragan/try-require
 //const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
-//const cluster = require("cluster"); //http://learnboost.github.com/cluster
-const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
-console.log("here1");
-debug("here2");
-console.log("here3");
+const cluster = require("cluster"); //http://learnboost.github.com/cluster
+//const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
+const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
+//console.log("here1");
+//debug("here2");
+//console.log("here3");
 const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_LEN: 1136, FPS: 30};
-console.log("here4");
+//console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
-const {limit, listen, nodebufq, NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
+const {limit, listen, /*nodebufq,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
-const NO_PID = "?NO-PID?";
+const QUELEN = 4;
+
+//const NO_PID = "?NO-PID?";
 show_env();
 extensions(); //hoist for use by in-line code
 
+//set up node bufs in shared memory:
+const nodes = make_nodes();
 
-//set up 2D array of nodes in shared memory:
-//const NUM_UNIV = 24;
-//const UNIV_LEN = 1136; //max #nodes per univ
-//const UNIV_ROWSIZE = UNIV_LEN * Uint32Array.BYTES_PER_ELEMENT; //sizeof(Uin32) * univ_len
-//const shbuf = new SharedArrayBuffer(NUM_UNIV * UNIV_ROWSIZE); //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
-//const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
-//nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
-//debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
-debug(`shm nodebuf queue ${nodebufq.length} x ${nodebufq[0].length} x ${nodebufq[0][0].length} created`.pink_lt);
+
 //debug("env", process.env);
 
 //(A)RGB primary colors:
@@ -132,7 +136,7 @@ function start_wker(filename, data, opts)
 //    const wker = new multi.Worker(filename || __filename, opts || OPTS)
 //    const wker = cluster.fork(data || {wker_data: {ID: start_wker.count || 0}})
     opts = Object.assign({}, OPTS, opts || {});
-    const wker = fork(filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)
+    const wker = cluster.fork(filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)
         .on("online", () => debug(`wker ${wker/*.threadId .process || {})*/.pid || NO_PID} is on line`.cyan_lt, arguments))
         .on('message', (data) => debug("msg from wker".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
         .on('error', (data) => debug("err from wker".red_lt, data, arguments))
@@ -194,7 +198,7 @@ function* wker(wker_data)
     for (var fr = 0; fr < 4; ++fr)
     {
         yield wait(0.6 * 1e3); //.6, 1.2, 1.8, 2.4 sec
-        nodebufq[2][3][4] = PALETTE[fr + 1];
+        nodes[2][3][4] = PALETTE[fr + 1];
         debug(`wker loop[${fr}/4]. set node to ${hex(PALETTE[fr + 1])}`);
     }
 //    process.send({data}, (err) => {});
@@ -288,6 +292,32 @@ function fwrite_test()
 ////
 /// Misc utility/helper functions:
 //
+
+function cache_pad64(val) { return ((val + 15) >>> 0) & ~15; }
+
+//set up 2D array of nodes in shared memory:
+//const NUM_UNIV = 24;
+//const UNIV_LEN = 1136; //max #nodes per univ
+//const UNIV_ROWSIZE = UNIV_LEN * Uint32Array.BYTES_PER_ELEMENT; //sizeof(Uin32) * univ_len
+//const shbuf = new SharedArrayBuffer(NUM_UNIV * UNIV_ROWSIZE); //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
+//const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
+//nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
+//debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
+function make_nodes()
+{
+    const UNIV_BYTELEN = cache_pad64(UNIV_LEN) * Uint32Array.BYTES_PER_ELEMENT;
+    const shbuf = sharedbuf.createSharedBuffer(0xfeed0000 | NNNN_hex(UNIV_LEN), QUELEN * NUM_UNIV * UNIV_BYTELEN, cluster.isMaster); //master creates new, slaves acquire existing
+    const nodes = Array.from({length: QUELEN}, (undef, quent) =>
+        Array.from({length: NUM_UNIV}, (undef, univ) =>
+            new Uint32Array(shbuf, (quent * NUM_UNIV + univ) * UNIV_BYTELEN, UNIV_LEN))); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
+    debug(`shm nodebuf queue ${nodes.length} x ${noded[0].length} x ${noded[0][0].length} created`.pink_lt);
+    if (cluster.isMaster) nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
+//    if (cluster.isMaster) cluster.fork();
+    return nodes;
+//??    detachSharedBuffer(sharedBuffer); 
+//    process.exit(0);
+}
+
 
 //step thru generator function:
 //cb called async at end
@@ -385,6 +415,8 @@ function datestr(date)
 function NN(val) { return ("00" + val.toString()).slice(-2); }
 function NNNN(val) { return ("0000" + val.toString()).slice(-2); }
 
+//express decimal as hex:
+function NNNN_hex(val) { return (((val / 1000) % 10) * 0x1000) | (((val / 100) % 10) * 0x100) | (((val / 10) % 10) * 0x10) | (val % 10); }
 
 //show info about env:
 function show_env(more_details)

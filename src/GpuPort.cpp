@@ -1,3 +1,9 @@
+//TODO:
+//MULTI_PROC thrinx()
+//DEBUG=* => C++
+//cache pad nodebq
+
+
 ////////////////////////////////////////////////////////////////////////////////
 ////
 /// GpuPort: a Node.js add-on with simple async callback to wrap RPi GPU as a parallel port
@@ -80,7 +86,7 @@
 
 #define MAX_DEBUG_LEVEL  99 //1
 
-#include "str-helpers.h" //unmap()
+#include "str-helpers.h" //unmap(), NNNN_hex()
 #include "thr-helpers.h" //thrnx()
 #include "elapsed.h" //elapsed_msec(), timestamp(), now()
 #include "msgcolors.h"
@@ -1454,14 +1460,6 @@ public: //playback methods
 };
 
 
-//express 4 digit dec number in hex:
-//ie, 1234 dec becomes 0x1234
-constexpr uint32_t NNNN_hex(uint32_t val)
-{
-    return (((val / 1000) % 10) * 0x1000) | (((val / 100) % 10) * 0x100) | (((val / 10) % 10) * 0x10) | (val % 10);
-}
-
-
 //circular queue entry of nodebufs:
 //goes in shm for multi-proc access
 struct NodebufQuent
@@ -1484,21 +1482,22 @@ struct NodebufQuent
     NODEVAL nodes/*[QUELEN]*/[NUM_UNIV][UNIV_MAXLEN];
 //    };
 //    NodebufFrame bufs[QUELEN]; //4 x 24 x 1136 x 4 ~= 440KB
-    static STATIC_WRAP(std::vector<NodebufQuent*>, m_all);
+//    static STATIC_WRAP(std::vector<NodebufQuent*>, m_all);
 //    static WRAP(int, m_count, = 0);
 public: //ctors/dtors
     explicit NodebufQuent() //NOTE: only called when first process attaches
     {
+        static int count = 0;
 //        debug(5, CYAN_MSG << "NodebufQuent[%d]: init (shm) %p" << ENDCOLOR, m_all.size(), this);
 //        for (int i = 0; i < SIZEOF(bufs); ++i)
-        frnum = m_all.size(); //m_count++; //first round of fr#s are sequential from 0
+        frnum = count++; //m_all.size(); //m_count++; //first round of fr#s are sequential from 0
         prevfr = -1;
         frtime = prevtime = 0;
         ready = Nodebuf::NOT_READY;
         debug(5, BLUE_MSG "clearing %s = %s nodes" ENDCOLOR, commas(SIZEOF_2D(nodes)), commas(sizeof(nodes) / sizeof(nodes[0][0]))); //, frnum); //, i, SIZEOF(bufs));
         for (int n = 0; n < SIZEOF_2D(nodes); ++n) //CAUTION: 1D addressing for simpler loop control
             /*bufs[i].*/nodes[0][n] = BLACK; //start in known state
-        m_all.push_back(this);
+//        m_all.push_back(this);
         INSPECT(GREEN_MSG << "ctor " << *this); //, srcline);
     }
     ~NodebufQuent() { INSPECT(RED_MSG << "dtor " << *this); } //, srcline); }
@@ -1518,7 +1517,7 @@ public: //operators
         return ostrm;
     }
 public: //methods
-    int GetNext(int previous = 0) { return ++previous % m_all.size(); } //SIZEOF(bufs); } //TODO
+    int GetNext(int previous = 0) { return ++previous % QUELEN; } //m_all.size(); } //SIZEOF(bufs); } //TODO
     int nextrd() {} //TODO
     int nextwr() {} //TODO
 //    static inline napi_ref& ref() //kludge: use wrapper to avoid trailing static decl at global scope
@@ -1535,26 +1534,33 @@ public: //methods
         m_ref = nullptr;
     }
 //TODO: split into 2 levels (private + shared)?
-    /*static*/ STATIC napi_value expose(napi_env env)
+    /*static*/ STATIC napi_value expose(napi_env env, NodebufQuent* nodebufs)
     {
+debug(9, BLUE_MSG "here20, env %p" ENDCOLOR, env);
         if (!env) return NULL; //Node cleanup mode?
         napi_thingy retval(env);
+//debug(9, BLUE_MSG "here21" << m_ref << ENDCOLOR);
         if (m_ref) !NAPI_OK(napi_get_reference_value(env, m_ref, &retval.value), "Get ret val failed");
+debug(9, BLUE_MSG "here22" ENDCOLOR);
         static int count = 0;
         debug(19, BLUE_MSG "wrap nodeque[%d]: cached " << retval << ", ret? %d" ENDCOLOR, count++, retval.type() == napi_object);
 //can't cache :(        if (nodes.arytype() != napi_uint32_array) //napi_typedarray_type)
 //        if (/*CachedWrapper && valp &&*/ (m_cached.env == env) && (m_cached.type() == napi_object)) { *valp = m_cached.value; return; }
 //        if (m_cached.type() == napi_object) return m_cached;
         if (retval.type() == napi_object) return retval;
+//debug(9, BLUE_MSG "here23" ENDCOLOR);
 //        retval.cre_object();
 //CAUTION:
 //no        if (CachedWrapper && valp && (m_cached.env == env) && (m_cached.arytype() == GPU_NODE_type /*m_cached.type() != napi_undefined*/)) { *valp = m_cached.value; return; }
 //can't check yet:        if (!wh.w || !wh.h) NAPI_exc("no nodes");
         !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
 //        for (int q = 0; q < /*QUELEN*/ m_all.size(); ++q)
-        for (auto it = m_all.begin(); it != m_all.end(); ++it)
+//NO: only set on first process        for (auto it = m_all.begin(); it != m_all.end(); ++it)
+        for (NodebufQuent* it = nodebufs; it != &nodebufs[QUELEN]; ++it)
         {
-            napi_thingy arybuf(env, &(*it)->nodes[0][0], sizeof((*it)->nodes)); //ext buf for all nodes in all univ
+debug(9, BLUE_MSG "here24, buf[%d/%d]" ENDCOLOR, it - nodebufs, QUELEN); //m_all.begin(), m_all.size());
+            napi_thingy arybuf(env, &it->nodes[0][0], sizeof(it->nodes)); //ext buf for all nodes in all univ
+//debug(9, BLUE_MSG "here25" ENDCOLOR);
 //        arybuf.cre_ext_arybuf(&nodes[0][0], sizeof(nodes));
 //        !NAPI_OK(napi_create_external_arraybuffer(env, &/*gpu_wker->*/m_shdata.nodes[0][0], sizeof(/*gpu_wker->*/m_shdata.nodes), /*wker_check*/ NULL, NO_HINT, &arybuf.value), "Cre arraybuf failed");
 //        debug(YELLOW_MSG "arybuf5 " << arybuf << ", dims " << wh << ENDCOLOR);
@@ -1567,15 +1573,18 @@ public: //methods
 //    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
             for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
             {
+//debug(9, BLUE_MSG "here26, univ[%d/%d]" ENDCOLOR, x, NUM_UNIV);
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN, arybuf, x * sizeof((*it)->nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN, arybuf, x * sizeof(it->nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
-            !NAPI_OK(napi_set_element(env, retval, it - m_all.begin(), univ_ary), "Cre inner node ary failed");
+debug(9, BLUE_MSG "here27" ENDCOLOR);
+            !NAPI_OK(napi_set_element(env, retval, it - nodebufs, univ_ary), "Cre inner node ary failed");
 #endif
         }
         debug(19, YELLOW_MSG "nodebq " << retval << ENDCOLOR);
         const int REF_COUNT = 1;
+//debug(9, BLUE_MSG "here28" ENDCOLOR);
         !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_ref), "Cre ref failed"); //allow to be reused next time
         return retval;
     }
@@ -2178,11 +2187,13 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 
     std::unique_ptr<GpuPortData> aodata(new GpuPortData(/*env,*/ SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     GpuPortData* aoptr = aodata.get();
+    debug(11, BLUE_MSG "aodata %p, &node[0][0[0] %p" ENDCOLOR, aoptr, &aoptr->m_nodebq[0].nodes[0][0]);
     inout.checkpt("cre data");
 //    aoptr->isvalid(env);
 //expose methods for caller to use:
 //    my_napi_property_descriptor props[7], *pptr = props; //TODO: use std::vector<>
     my_vector<my_napi_property_descriptor> props;
+//debug(9, BLUE_MSG "here10" ENDCOLOR);
 //    memset(&props[0], 0, sizeof(props)); //clear first so NULL members don't need to be explicitly set below
 //kludge: use lambas in lieu of C++ named member init:
 //(named args easier to maintain than long param lists)
@@ -2197,7 +2208,9 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     {
         _.utf8name = "nodebufq"; //"GetNodes";
 //        _.method = GetNodes_NAPI;
-        _.value = aoptr->m_nodebq[0].expose(env);
+//debug(9, BLUE_MSG "here11" ENDCOLOR);
+        _.value = aoptr->m_nodebq[0].expose(env, aoptr->m_nodebq);
+//debug(9, BLUE_MSG "here12" ENDCOLOR);
         _.attributes = napi_default; //!writable, !enumerable
 //        _.data = aoptr;
     }(props.emplace_back()); //(*pptr++);
@@ -2263,6 +2276,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //    !NAPI_OK(napi_define_properties(env, exports, pptr - props, props), "export method props failed");
     debug(9, "export %d props" ENDCOLOR, props.size());
     !NAPI_OK(napi_define_properties(env, exports, props.size(), props.data()), "export method props failed");
+//debug(9, BLUE_MSG "here14" ENDCOLOR);
 
 //wrap internal data with module exports object:
   // Associate the addon data with the exports object, to make sure that when the addon gets unloaded our data gets freed.
@@ -2281,12 +2295,16 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         aoptr->reset(env);
         delete aoptr; //free(addon_data);
     };
+//debug(9, BLUE_MSG "here15" ENDCOLOR);
     !NAPI_OK(napi_wrap(env, exports, aoptr, addon_final, /*aoptr.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
   // Return the decorated exports object.
 //    napi_status status;
     INSPECT(CYAN_MSG "napi init: " << *aoptr, SRCLINE);
+//debug(9, BLUE_MSG "here16" ENDCOLOR);
     aoptr->isvalid(env);
+//debug(9, BLUE_MSG "here17" ENDCOLOR);
     aodata.release(); //NAPI owns it now
+//debug(9, BLUE_MSG "here18" ENDCOLOR);
     return exports;
 }
 // NAPI_MODULE(NODE_GYP_MODULE_NAME, ModuleInit)
