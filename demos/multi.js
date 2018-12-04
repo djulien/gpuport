@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 //example multi-threaded render + I/O
-//example code fragments at: https://nodejs.org/api/worker_threads.html
+//to run: DEBUG=* node --experimental-worker ./multi.js
 //NOTE: use  --experimental-worker flag
 //requires Node >= 10.5.0
+//example code fragments at: https://nodejs.org/api/worker_threads.html
 
 //to debug:
 //node  debug  this-file  args
@@ -22,17 +23,25 @@
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require('colors').enabled = true; //for console output (incl bkg threads); https://github.com/Marak/colors.js/issues/127
 
+//console.log("here1", process.pid, "env", process.env);
 const fs = require("fs");
 const util = require("util");
 //const buffer = require("buffer"); //needed for consts; only classes/methods are pre-included in global Node scope
 const {debug, caller} = require("./debug");
 const {elapsed} = require("./elapsed");
-const tryRequire = require("try-require"); //https://github.com/rragan/try-require
-const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
+//const tryRequire = require("try-require"); //https://github.com/rragan/try-require
+//const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
+//const cluster = require("cluster"); //http://learnboost.github.com/cluster
+const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
+console.log("here1");
+debug("here2");
+console.log("here3");
 const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_LEN: 1136, FPS: 30};
+console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 const {limit, listen, nodebufq, NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
+const NO_PID = "?NO-PID?";
 show_env();
 extensions(); //hoist for use by in-line code
 
@@ -46,7 +55,7 @@ extensions(); //hoist for use by in-line code
 //nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
 //debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
 debug(`shm nodebuf queue ${nodebufq.length} x ${nodebufq[0].length} x ${nodebufq[0][0].length} created`.pink_lt);
-
+//debug("env", process.env);
 
 //(A)RGB primary colors:
 //NOTE: consts below are processor-independent (hard-coded for ARGB msb..lsb)
@@ -76,6 +85,7 @@ const PALETTE = [BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0
 /// Main thread:
 //
 
+//step.debug = debug;
 //if (multi.isMainThread)
 function* main()
 {
@@ -106,22 +116,32 @@ function* main()
 
 function start_wker(filename, data, opts)
 {
-    const OPTS =
+//    debug("env", process.env);
+    data = Object.assign({}, data, {ID: start_wker.count || 0}); //shallow copy + extend
+    const OPTS = //null;
     {
-        eval: false, //whether first arg is javascript instead of filename
-        workerData: data || {ID: start_wker.count || 0}, //cloned wker data
-        stdin: false, //whether to give wker a process.stdin
-        stdout: false, //whether to prevent wker process.stdout going to parent
-        stderr: false, //whether to prevent wker process.stderr going to parent
+//        cwd: process.cwd(),
+        env: Object.assign({}, process.env, {wker_data: JSON.stringify(data)}), //shallow copy + extend
+//        silent: false, //inherit from parent; //true, //stdin/out/err piped to parent
+//        eval: false, //whether first arg is javascript instead of filename
+//        workerData: data || {ID: start_wker.count || 0}, //cloned wker data
+//        stdin: false, //whether to give wker a process.stdin
+//        stdout: false, //whether to prevent wker process.stdout going to parent
+//        stderr: false, //whether to prevent wker process.stderr going to parent
     };
-    const wker = new multi.Worker(filename || __filename, opts || OPTS)
-        .on("online", () => debug(`wker ${wker.threadId} is on line`.cyan_lt))
-        .on('message', (data) => debug("msg from wker".blue_lt, data, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
-        .on('error', (data) => debug("err from wker".red_lt, data, /*arguments*/))
-        .on('exit', (code) => debug("wker exit".yellow_lt, code, /*arguments*/)); //args: {}, require, module, filename, dirname
+//    const wker = new multi.Worker(filename || __filename, opts || OPTS)
+//    const wker = cluster.fork(data || {wker_data: {ID: start_wker.count || 0}})
+    opts = Object.assign({}, OPTS, opts || {});
+    const wker = fork(filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)
+        .on("online", () => debug(`wker ${wker/*.threadId .process || {})*/.pid || NO_PID} is on line`.cyan_lt, arguments))
+        .on('message', (data) => debug("msg from wker".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
+        .on('error', (data) => debug("err from wker".red_lt, data, arguments))
+        .on('exit', (code) => debug("wker exit".yellow_lt, code)) //, arguments)) //args: {}, require, module, filename, dirname
 //          if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-    debug(`launch wker#${start_wker.count || 0} ...`.cyan_lt)
+        .on('disconnect', () => debug(`wker disconnect`.cyan_lt)); //, arguments));
+    debug(`launched wker#${start_wker.count || 0} pid ${wker /*.process || {})*/.pid || NO_PID} ...`.cyan_lt)
     ++start_wker.count || (start_wker.count = 1);
+//    if (wker.connected) wker.send()
     return wker;
 }
 
@@ -162,9 +182,11 @@ function start_wker(filename, data, opts)
 //
 
 
-function* wker()
+function* wker(wker_data)
 {
-    debug(`wker thread start`.cyan_lt, "cloned data", multi.workerData);
+    wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
+    debug("wker env", process.env);
+    debug(`wker thread start`.cyan_lt, "cloned data", process.env.wker_data); //multi.workerData);
 //    for (let i = 1; i <= 3; ++i)
 //        setTimeout(() => multi.parentPort.postMessage(`hello-from-wker#${multi.workerData.wker_which = i}`, {other: 123}), 6000 * i);
 //    multi.parentPort.on("message", (data) => debug("msg from main".blue_lt, data, /*arguments,*/ "his data".blue_lt, multi.workerData)); //args: {}, require, module, filename, dirname
@@ -175,6 +197,7 @@ function* wker()
         nodebufq[2][3][4] = PALETTE[fr + 1];
         debug(`wker loop[${fr}/4]. set node to ${hex(PALETTE[fr + 1])}`);
     }
+//    process.send({data}, (err) => {});
     debug("wker idle".cyan_lt);
 }
 
@@ -279,7 +302,7 @@ function step(gen, async_cb)
     try
     {
         const {done, value} = step.gen.next? step.gen.next(step.value): {done: true, value: step.gen}; //done if !generator
-        if (step.debug) step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
+        !step.debug || step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
 //    if (typeof value == "function") value = value(); //execute wakeup events
 //    step.value = value;
         if (done)
@@ -291,7 +314,7 @@ function step(gen, async_cb)
         }
         return step.value = value;
     }
-    catch (exc) { console.error(`EXC: ${exc}`.red_lt); }
+    catch (exc) { console.error(`EXC: ${exc}  @${caller()}`.red_lt, __stack); }
 }
 
 
@@ -302,7 +325,7 @@ function wait(msec)
 //    return setTimeout.bind(null, step, msec); //defer to step loop
 //    wait.pending || (wait.pending = {});
 //    wait.pending[setTimeout(step, msec)] =
-    debug("wait: set timeout ", msec);
+    !step.debug || step.debug("wait: set timeout ", msec);
 //NOTE: Node timer api is richer than browser; see https://nodejs.org/api/timers.html
     /*wait.latest =*/ setTimeout(step, msec); //.unref(); //function(){ wait.cancel("fired"); step(); }, msec); //CAUTION: assumes only 1 timer active
 //    wait.latest.unref();
@@ -316,6 +339,26 @@ function wait(msec)
 //    if (typeof this.latest != "undefined") clearTimeout(this.latest);
 //    this.latest = undefined;
 //}
+
+
+//from https://stackoverflow.com/questions/287903/what-is-the-preferred-syntax-for-defining-enums-in-javascript
+//TODO: convert to factory-style ctor
+class Enum
+{
+    constructor(enumObj)
+    {
+        const handler =
+        {
+            get(target, name)
+            {
+                if (target[name]) return target[name];
+                throw new Error(`No such enumerator: ${name}`);
+            },
+        };
+        return new Proxy(Object.freeze(enumObj), handler);
+    }
+}
+//usage: const roles = new Enum({ ADMIN: 'Admin', USER: 'User', });
 
 
 //function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); debugger; }
@@ -373,10 +416,16 @@ function plurales(ary) { return plural(ary, "es"); }
 
 function quit(msg, code)
 {
+//    if (typeof msg == "number" && )
     console.error(`${msg}  @${caller(+1)}`.red_lt);
     process.exit(isNaN(code)? 1: code);
 }
 
+function exc(msg)
+{
+    msg = util.format.apply(null, arguments);
+    throw msg.red_lt;
+}
 
 function extensions()
 {
@@ -400,10 +449,12 @@ function extensions()
 //
 
 //if (require.main === module)
-if (module.parent) quit("not a callable module; run it directly");
-if (!multi) quit(`worker_threads not found; did you add "--experiemtal-worker" to command line args?`);
-if (multi.isMainThread) step(main);
-else step(wker);
-debug(`${multi.isMainThread? "Main": "Wker"} fell thru - process exit.`.yellow_lt); //main() or wker() should probably not return; could end process prematurely
+if (module.parent) exc("not a callable module; run it directly");
+//if (!multi) exc(`worker_threads not found; did you add "--experiemtal-worker" to command line args?`);
+//if (multi.isMainThread) step(main);
+//if (cluster.isMaster) step(main);
+if (!process.env.wker_data) step(main);
+else step(wker); //, JSON.parse(process.env.wker_data));
+debug(`${/*multi.isMainThread cluster.isMaster*/ true? "Main": "Wker"} fell thru - process might exit.`.yellow_lt); //main() or wker() should probably not return; could end process prematurely
 
 //eof

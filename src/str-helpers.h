@@ -82,26 +82,6 @@ public: //methods
 };
 
 
-//from https://stackoverflow.com/questions/287903/what-is-the-preferred-syntax-for-defining-enums-in-javascript
-//TODO: convert to factory-style ctor
-class Enum
-{
-    constructor(enumObj)
-    {
-        const handler =
-        {
-            get(target, name)
-            {
-                if (target[name]) return target[name];
-                throw new Error(`No such enumerator: ${name}`);
-            },
-        };
-        return new Proxy(Object.freeze(enumObj), handler);
-    }
-}
-//usage: const roles = new Enum({ ADMIN: 'Admin', USER: 'User', });
-
-
 //return default string instead of null:
 //use function to avoid evaluating params > 1x
 //#define NVL(str, defval)  ((str)? (str): (defval)? (defval): "(null")

@@ -48,6 +48,7 @@
     "try-require": "^1.2.1"
   },
   "devDependencies": {
+    "cluster": "^0.7.7",
     "colors": "git+https://github.com/djulien/colors.js.git",
     "glob": "^7.1.3",
     "lame": "^1.2.4",

@@ -118,7 +118,7 @@ const SEQLEN = 10 * opts.fps; //10 sec total
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
     const more = (frnum < SEQLEN);
-    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo, null, 2).json_tidy}, want more? ${more}`);
+    debug(`req# ${++this.count || (this.count = 1)} for fr# ${frnum} from GPU port: ${arguments.length} args. nodes ${commas(nodes.length)}:${JSON.stringify(nodes).json_tidy.trunc()}, frinfo ${JSON.stringify(frinfo /*, null, 2*/).json_tidy}, want more? ${more}`);
     /*if (this.count == 1)*/ debug("this", `(${typeof this})`, this); //, `(${typeof THIS})`, THIS, 'retval', hex((THIS.count < SEQLEN)? 0xffffff: 0));
 //    return (++THIS.count < SEQLEN)? 0xffffff: 0;
 //    for (var i = 0; i < this.NUM_UNIV * this.UNIV_LEN; ++i) nodes[i] = PALETTE[(frnum + i) % PALETTE.length];
