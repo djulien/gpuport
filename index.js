@@ -234,7 +234,7 @@ function step(gen, async_cb)
 //    {
     try
     {
-        const {done, value} = step.gen.next(step.value);
+        const {done, value} = step.gen.next? step.gen.next(step.value): {done: true, value: step.gen}; //done if !generator
         if (step.debug) step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
 //    if (typeof value == "function") value = value(); //execute wakeup events
 //    step.value = value;

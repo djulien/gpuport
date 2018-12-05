@@ -49,19 +49,24 @@ const debug =
 module.exports.debug =
 function debug(args)
 {
+//no; allow it but handle it    if (debug.busy) return; //avoid recursion (via elapsed())
+    let was_busy = debug.busy;
+    debug.busy = true;
+    try
+    {
 //console.error("debug:" + JSON.stringify(arguments));
-    var detail = 0;
-    args = Array.from(arguments); //turn into real array
-    if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args[1].toString().indexOf("%") != -1)) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
+        var detail = 0;
+        args = Array.from(arguments); //turn into real array
+        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args[1].toString().indexOf("%") != -1)) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
-    const parent = caller(++debug.nested || 1);
-    debug.nested = 0; //reset for next time
+        const parent = caller(++debug.nested || 1);
+        debug.nested = 0; //reset for next time
 //    debug.wanted || (debug.wanted = {});
-    var want_detail = debug.wanted[parent.replace(/^@|:.*$/g, "")] || debug.wanted['*'] || -1;
+        var want_detail = debug.wanted[parent.replace(/^@|:.*$/g, "")] || debug.wanted['*'] || -1;
 //console.log("enabled: %j, parent %s", Object.keys(want_debug), my_parent.replace(/^@|:.*$/g, ""));
 //console.log("DEBUG '%s': want %d vs current %d, discard? %d, options %j", my_parent, want_detail, detail, detail >= want_detail, want_debug);
-    if (detail >= want_detail) return; //too much detail; caller doesn't want it
+        if (detail >= want_detail) return; //too much detail; caller doesn't want it
 
 //    if (typeof args[0] == "string")
 //    if (args[0].toString().indexOf("%") == -1)
@@ -70,38 +75,44 @@ function debug(args)
 //        var fmt = args[0];
 //    debugger;
 //    const {elapsed/*, milli*/} = require('./elapsed'); //CAUTION: recursive require(), so defer until debug() is called
-    var fmt = util.format.apply(util, args);
+        var fmt = util.format.apply(util, args);
 //    ColorCodes.lastIndex = -1; //clear previous search (persistent)
-    const ColorCodes = /\x1b\[\d+(;\d+)?m/g; //ANSI color escape codes; NOTE: need /g to get last match
-    var first_ofs, last_ofs;
-    for (;;)
-    {
-        var match = ColorCodes.exec(fmt);
-        if (!match) break;
+        const ColorCodes = /\x1b\[\d+(;\d+)?m/g; //ANSI color escape codes; NOTE: need /g to get last match
+        var first_ofs, last_ofs;
+        for (;;)
+        {
+            var match = ColorCodes.exec(fmt);
+            if (!match) break;
 //console.log("found last", match, ColorCodes);
 //        last_ofs = match[0].length; //(match && !match.index)? match[0].length: 0; //don't split leading color code
 //        if (!first_ofs) first_ofs = last_ofs;
 //console.log(match[0].length, match.index, ColorCodes.lastIndex, match);
-        if (isNaN(first_ofs)) first_ofs = !match.index? match[0].length: 0; //(match && !match.index)? match[0].length: 0; //don't split leading color code
-        last_ofs = (match.index + match[0].length == fmt.length)? match.index: fmt.length; //ColorCodes.lastIndex;
-    }
-    ColorCodes.lastIndex = 0; //reset for next time (regex state is persistent with /g or /y)
+            if (isNaN(first_ofs)) first_ofs = !match.index? match[0].length: 0; //(match && !match.index)? match[0].length: 0; //don't split leading color code
+            last_ofs = (match.index + match[0].length == fmt.length)? match.index: fmt.length; //ColorCodes.lastIndex;
+        }
+        ColorCodes.lastIndex = 0; //reset for next time (regex state is persistent with /g or /y)
 //    var svcolor = [];
 //    fmt = fmt.replace(ColorCodes, function(str) { svcolor.push(str); return ''; }); //strip color codes
 //    if (!svcolor.length) svcolor.push('');
 //    fmt = fmt.substr(0, ofs) + `[${parent.slice(1)} @${trunc(elapsed(), 1e3)}] ` + fmt.substr(ofs);
 //console.log(`${fmt.length}:'${fmt.replace(/\x1b/g, "\\x1b")}', first ofs ${first_ofs}, last ofs ${last_ofs}`);
-    if (isNaN(first_ofs)) { first_ofs = 0; last_ofs = fmt.length; }
+        if (isNaN(first_ofs)) { first_ofs = 0; last_ofs = fmt.length; }
 //TODO: sprintf %4.3f
-    var timestamp = elapsed().toString(); //util.format("[%f] ", elapsed() / 1e3)
-    if (timestamp.length < 4) timestamp = ("0000" + timestamp).slice(-4);
-    timestamp = `[${timestamp.slice(0, -3)}.${timestamp.slice(-3)}] `;
-    fmt = fmt.slice(0, first_ofs) + timestamp + fmt.slice(first_ofs, last_ofs) + `  @${parent}` + fmt.slice(last_ofs);
+//    debug.busy = true; //avoid recursion
+        var timestamp = was_busy? "????": elapsed().toString(); //util.format("[%f] ", elapsed() / 1e3)
+//    debug.busy = false;
+        if (timestamp.length < 4) timestamp = ("0000" + timestamp).slice(-4);
+        timestamp = `[${timestamp.slice(0, -3)}.${timestamp.slice(-3)}] `;
+        fmt = fmt.slice(0, first_ofs) + timestamp + fmt.slice(first_ofs, last_ofs) + `  @${parent}` + fmt.slice(last_ofs);
 //console.log("result", `${fmt.length}:'${fmt.replace(/\x1b/g, "\\x1b")}'`);
 //    }
 //    return console.error.apply(console, fmt); //args); //send to stderr in case stdout is piped
-    return console.error(fmt);
+        return console.error(fmt);
+    }
+    finally { debug.busy = false; }
 }
+debug.nested = 0;
+
 
 //debug.nested = 0; //allow caller to adjust stack level
 debug.wanted = {};
@@ -156,7 +167,7 @@ if (!module.parent)
 
 //    /*if (!process.env.DEBUG)*/ console.error(`use "DEBUG=${__file}" prefix for debug`.yellow_lt);
     debug("hello".green_lt);
-    setTimeout(() => { ++debug.nested; debug("good", "bye".red_lt); }, 1000);
+    setTimeout(() => { debug("nope"); ++debug.nested; debug("good", "bye".red_lt); }, 1000);
 }
 
 //eof

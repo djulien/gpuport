@@ -36,30 +36,22 @@ const util = require("util");
 //const buffer = require("buffer"); //needed for consts; only classes/methods are pre-included in global Node scope
 const {elapsed} = require("./elapsed");
 const {debug, caller} = require("./debug");
-//const tryRequire = require("try-require"); //https://github.com/rragan/try-require
+const tryRequire = require("try-require"); //https://github.com/rragan/try-require
 //const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
-const cluster = require("cluster"); //http://learnboost.github.com/cluster
 //const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
-const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
+const cluster = tryRequire("cluster") || {isMaster: true}; //https://nodejs.org/api/cluster.html; //http://learnboost.github.com/cluster
+const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = tryRequire('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
+cluster.proctype = cluster.isMaster? "Main": cluster.isWorker? "Wker": "?UNKN-TYPE?";
 //console.log("here1");
 //debug("here2");
 //console.log("here3");
-const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_LEN: 1136, FPS: 30};
+const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_MAXLEN: 1136, FPS: 30};
+const {/*limit, listen, nodebufq,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
 //console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
-const {limit, listen, /*nodebufq,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
 const QUELEN = 4;
 
-//const NO_PID = "?NO-PID?";
-show_env();
-extensions(); //hoist for use by in-line code
-
-//set up node bufs in shared memory:
-const nodes = make_nodes();
-
-
-//debug("env", process.env);
 
 //(A)RGB primary colors:
 //NOTE: consts below are processor-independent (hard-coded for ARGB msb..lsb)
@@ -79,14 +71,20 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 //const SALMON  0xFF8080
 //const LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //ARGB primary colors:
-
+debug("palette", BLACK, WHITE, hex(BLACK), hex(WHITE));
 const PALETTE = [BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0b001, green 0b010, blue 0b100
 //const PALETTEix = [0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111]; //red 0b001, green 0b010, blue 0b100
+
+show_env();
+extensions(); //hoist for use by in-line code
+
+//set up shm node bufs:
+const {frctl, nodes} = make_nodes();
 
 
 /////////////////////////////////////////////////////////////////////////////////
 ////
-/// Main thread:
+/// Main thread/process:
 //
 
 //step.debug = debug;
@@ -102,7 +100,9 @@ function* main()
 //        hello: 1,
 //    };
     debug(`main thread start`.cyan_lt);
-    const wker = start_wker();
+//    yield wait(10000); //check if wker epoch reset affects main
+
+    for (var w = 0; w < NUM_CPUs - 1; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
 //    for (let i = 1; i <= 10; ++i)
 //        setTimeout(() =>
 //        {
@@ -112,7 +112,7 @@ function* main()
     for (var i = 0; i < 10; ++i)
     {
         yield wait(0.5 * 1e3);
-        debug(`main loop[${i}/10]. qb[2] univ[3] node[4] = ${hex(nodebufq[2][3][4])}`);
+        debug(`main loop[${i}/10]. node234 = ${hex(nodes[2][3][4])}`);
     }
     debug("main idle".cyan_lt);
 }
@@ -121,30 +121,30 @@ function* main()
 function start_wker(filename, data, opts)
 {
 //    debug("env", process.env);
-    data = Object.assign({}, data, {ID: start_wker.count || 0}); //shallow copy + extend
-    const OPTS = //null;
-    {
+    data = Object.assign({}, data, {ID: ++start_wker.count || (start_wker.count = 1)}); //shallow copy + extend
+//    const OPTS = //null;
+//    {
 //        cwd: process.cwd(),
-        env: Object.assign({}, process.env, {wker_data: JSON.stringify(data)}), //shallow copy + extend
+    const env = Object.assign({}, process.env, {wker_data: JSON.stringify(data)}); //shallow copy + extend
 //        silent: false, //inherit from parent; //true, //stdin/out/err piped to parent
 //        eval: false, //whether first arg is javascript instead of filename
 //        workerData: data || {ID: start_wker.count || 0}, //cloned wker data
 //        stdin: false, //whether to give wker a process.stdin
 //        stdout: false, //whether to prevent wker process.stdout going to parent
 //        stderr: false, //whether to prevent wker process.stderr going to parent
-    };
+//    };
 //    const wker = new multi.Worker(filename || __filename, opts || OPTS)
 //    const wker = cluster.fork(data || {wker_data: {ID: start_wker.count || 0}})
-    opts = Object.assign({}, OPTS, opts || {});
-    const wker = cluster.fork(filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)
-        .on("online", () => debug(`wker ${wker/*.threadId .process || {})*/.pid || NO_PID} is on line`.cyan_lt, arguments))
+    const NO_PID = "?NO-PID?";
+//    opts = Object.assign({}, OPTS, opts || {});
+    const wker = cluster.fork(/*filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)*/ env)
+        .on("online", () => debug(`wker ${(wker/*.threadId*/ .process || {}).pid || NO_PID} is on-line`.cyan_lt)) //, arguments))
         .on('message', (data) => debug("msg from wker".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
         .on('error', (data) => debug("err from wker".red_lt, data, arguments))
         .on('exit', (code) => debug("wker exit".yellow_lt, code)) //, arguments)) //args: {}, require, module, filename, dirname
 //          if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
         .on('disconnect', () => debug(`wker disconnect`.cyan_lt)); //, arguments));
-    debug(`launched wker#${start_wker.count || 0} pid ${wker /*.process || {})*/.pid || NO_PID} ...`.cyan_lt)
-    ++start_wker.count || (start_wker.count = 1);
+    debug(`launched wker#${start_wker.count} pid ${(wker.process || {}).pid || NO_PID}, now have ${Object.keys(cluster.workers).length} wkers: ${Object.keys(cluster.workers).join(", ")} ...`.cyan_lt);
 //    if (wker.connected) wker.send()
     return wker;
 }
@@ -188,9 +188,9 @@ function start_wker(filename, data, opts)
 
 function* wker(wker_data)
 {
+//    debug("wker env", process.env);
     wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
-    debug("wker env", process.env);
-    debug(`wker thread start`.cyan_lt, "cloned data", process.env.wker_data); //multi.workerData);
+    debug(`wker thread start`.cyan_lt, "cloned data", /*process.env.*/wker_data, "id", cluster.worker.id); //multi.workerData);
 //    for (let i = 1; i <= 3; ++i)
 //        setTimeout(() => multi.parentPort.postMessage(`hello-from-wker#${multi.workerData.wker_which = i}`, {other: 123}), 6000 * i);
 //    multi.parentPort.on("message", (data) => debug("msg from main".blue_lt, data, /*arguments,*/ "his data".blue_lt, multi.workerData)); //args: {}, require, module, filename, dirname
@@ -199,7 +199,7 @@ function* wker(wker_data)
     {
         yield wait(0.6 * 1e3); //.6, 1.2, 1.8, 2.4 sec
         nodes[2][3][4] = PALETTE[fr + 1];
-        debug(`wker loop[${fr}/4]. set node to ${hex(PALETTE[fr + 1])}`);
+        debug(`wker loop[${fr}/4]. set node234 to ${hex(PALETTE[fr + 1])}`);
     }
 //    process.send({data}, (err) => {});
     debug("wker idle".cyan_lt);
@@ -208,7 +208,7 @@ function* wker(wker_data)
 
 /////////////////////////////////////////////////////////////////////////////////
 ////
-/// Helpers:
+/// Tests:
 //
 
 function frame_test()
@@ -216,11 +216,11 @@ function frame_test()
     debug("mem test");
     const outfs = fs.createWriteStream("dummy.yalp");
     outfs.write(`#single frame ${datestr()}\n`);
-    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_LEN: ${UNIV_LEN}\n`);
+    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}\n`);
     elapsed(0);
     for (var x = 0; x < NUM_UNIV; ++x)
     {
-        for (var y = 0; y < UNIV_LEN; ++y)
+        for (var y = 0; y < UNIV_MAXLEN; ++y)
 //        {
 //            nodes[x][y] = PALETTE[(x + y) % PALETTE.length];
             nodes[x][y] = ((x + y) & 1)? PALETTE[1 + x % (PALETTE.length - 1)]: BLACK;
@@ -249,7 +249,7 @@ function fill_test()
         for (var numfr = 0; numfr < SEQLEN; ++numfr)
     //        for (var c = 0; c < PALETTE.length; ++c)
                 for (var x = 0; x < NUM_UNIV; ++x)
-                    for (var y = 0; y < UNIV_LEN; ++y)
+                    for (var y = 0; y < UNIV_MAXLEN; ++y)
                         nodes[x][y] = PALETTE[numfr % PALETTE.length];
 //perf:
 //PC: [2.889] filler loop#99/100, avg time 0.008106 msec
@@ -264,7 +264,7 @@ function fwrite_test()
     const REPEATS = 3;
     const outfs = fs.createWriteStream("dummy.yalp");
     outfs.write(`#fill from palette frames ${datestr()}\n`);
-    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_LEN: ${UNIV_LEN}, #fr: ${SEQLEN}, repeats: ${REPEATS}\n`);
+    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}, #fr: ${SEQLEN}, repeats: ${REPEATS}\n`);
 
     elapsed(0);
     for (var loop = 0; loop < REPEATS; ++loop)
@@ -274,7 +274,7 @@ function fwrite_test()
 //            elapsed.pause();
     //        for (var c = 0; c < PALETTE.length; ++c)
                 for (var x = 0; x < NUM_UNIV; ++x)
-                    for (var y = 0; y < UNIV_LEN; ++y)
+                    for (var y = 0; y < UNIV_MAXLEN; ++y)
                         nodes[x][y] = PALETTE[numfr % PALETTE.length];
 //            elapsed.resume();
             outfs.write(JSON.stringify({frnum: numfr, nodes}).json_tidy + "\n");
@@ -293,27 +293,38 @@ function fwrite_test()
 /// Misc utility/helper functions:
 //
 
-function cache_pad64(val) { return ((val + 15) >>> 0) & ~15; }
+//function cache_pad64(val) { return ((val + 15) >>> 0) & ~15; }
 
 //set up 2D array of nodes in shared memory:
 //const NUM_UNIV = 24;
-//const UNIV_LEN = 1136; //max #nodes per univ
-//const UNIV_ROWSIZE = UNIV_LEN * Uint32Array.BYTES_PER_ELEMENT; //sizeof(Uin32) * univ_len
+//const UNIV_MAXLEN = 1136; //max #nodes per univ
+//const UNIV_ROWSIZE = UNIV_MAXLEN * Uint32Array.BYTES_PER_ELEMENT; //sizeof(Uin32) * univ_len
 //const shbuf = new SharedArrayBuffer(NUM_UNIV * UNIV_ROWSIZE); //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
 //const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
 //nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
 //debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
 function make_nodes()
 {
-    const UNIV_BYTELEN = cache_pad64(UNIV_LEN) * Uint32Array.BYTES_PER_ELEMENT;
-    const shbuf = sharedbuf.createSharedBuffer(0xfeed0000 | NNNN_hex(UNIV_LEN), QUELEN * NUM_UNIV * UNIV_BYTELEN, cluster.isMaster); //master creates new, slaves acquire existing
+    const shmkey = (0xfeed0000 | NNNN_hex(UNIV_MAXLEN)) >>> 0;
+    const UNIV_BYTELEN = /*cache_pad64*/(UNIV_MAXLEN) * Uint32Array.BYTES_PER_ELEMENT;
+    debug(`make_nodes: shmkey ${typeof shmkey}:`, hex(shmkey), "univ bytelen", commas(UNIV_BYTELEN), `"owner? ${cluster.isMaster}`);
+    const shbuf = sharedbuf.createSharedBuffer(shmkey, (QUELEN * NUM_UNIV + 1) * UNIV_BYTELEN, cluster.isMaster); //master creates new, slaves acquire existing; one extra univ for fr ctl
     const nodes = Array.from({length: QUELEN}, (undef, quent) =>
         Array.from({length: NUM_UNIV}, (undef, univ) =>
-            new Uint32Array(shbuf, (quent * NUM_UNIV + univ) * UNIV_BYTELEN, UNIV_LEN))); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
-    debug(`shm nodebuf queue ${nodes.length} x ${noded[0].length} x ${noded[0][0].length} created`.pink_lt);
-    if (cluster.isMaster) nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
+            new Uint32Array(shbuf, (quent * NUM_UNIV + univ) * UNIV_BYTELEN, UNIV_MAXLEN))); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
+    const FRNUM = 0, PREVFR = 1, FRTIME = 2, PREVTIME = 3, READY = 4; //frctl ofs for each nodebuf quent
+    const frctl = Array.from({length: QUELEN}, (undef, quent) =>
+    {
+        frnum: new Uint32Array(shbuf, QUELEN * NUM_UNIV * UNIV_BYTELEN, QUELEN * 4);
+    });
+    debug(`shm fr ctl ${commas(QUELEN * 4)}, nodebuf queue ${commas(nodes.length)} x ${commas(nodes[0].length)} x ${commas(nodes[0][0].length)} ${cluster.isMaster? "created": "acquired"}`.pink_lt);
+    if (cluster.isMaster)
+    {
+        nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
+        for (var q = 0; q < QUELEN; ++q) frctl[]
+    }
 //    if (cluster.isMaster) cluster.fork();
-    return nodes;
+    return {frctl, nodes};
 //??    detachSharedBuffer(sharedBuffer); 
 //    process.exit(0);
 }
@@ -329,10 +340,10 @@ function step(gen, async_cb)
     step.async_cb || (step.async_cb = async_cb);
 //    for (;;)
 //    {
-    try
+//    try //omit this for easier dev/debug
     {
         const {done, value} = step.gen.next? step.gen.next(step.value): {done: true, value: step.gen}; //done if !generator
-        !step.debug || step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
+        if (step.debug) step.debug(`done? ${done}, retval ${typeof(value)}: ${value}, async? ${!!step.async_cb}`); //, overdue ${arguments.back}`);
 //    if (typeof value == "function") value = value(); //execute wakeup events
 //    step.value = value;
         if (done)
@@ -344,7 +355,7 @@ function step(gen, async_cb)
         }
         return step.value = value;
     }
-    catch (exc) { console.error(`EXC: ${exc}  @${caller()}`.red_lt, __stack); }
+//    catch (exc) { console.error(`EXC: ${exc}  @${caller()}`.red_lt); } //, __stack); }
 }
 
 
@@ -416,11 +427,12 @@ function NN(val) { return ("00" + val.toString()).slice(-2); }
 function NNNN(val) { return ("0000" + val.toString()).slice(-2); }
 
 //express decimal as hex:
-function NNNN_hex(val) { return (((val / 1000) % 10) * 0x1000) | (((val / 100) % 10) * 0x100) | (((val / 10) % 10) * 0x10) | (val % 10); }
+function NNNN_hex(val) { return (Math.floor((val / 1000) % 10) * 0x1000) | (Math.floor((val / 100) % 10) * 0x100) | (Math.floor((val / 10) % 10) * 0x10) | (val % 10) >>> 0; }
 
 //show info about env:
 function show_env(more_details)
 {
+//debug("env", process.env);
     debug(`Module '${module.filename.split(/[\\\/]/g).back}', has parent? ${!!module.parent}`.pink_lt);
     debug(`Node v${process.versions.node}, V8 v${process.versions.v8}, N-API v${process.versions.napi}`.pink_lt);
     debug(`${(process.env.NODE_ENV == "production")? "Prod": "Dev"} mode, ${plural(NUM_CPUs)} CPU${plural.cached}`.pink_lt);
@@ -461,6 +473,17 @@ function exc(msg)
 
 function extensions()
 {
+//    String.prototype.toCamelCase = function()
+//    {
+//        return this.replace(/([a-z])((\w|-)+)/gi, (match, first, other) => `${first.toUpperCase()}${other.toLowerCase()}`);
+//    }
+//    Object.defineProperty(String.prototype, "extend_color", {get() { return extend_color(this); }, });
+//    Object.defineProperty(Array.prototype, "top",
+//    {
+//        get() { return this[this.length - 1]; },
+//        set(newval) { this.pop(); this.push(newval); },
+//    });
+//    Object.defineProperty(global, '__parent_line', { get: function() { return __stack[2].getLineNumber(); } });
 //    Array.prototype.unshift_fluent = function(args) { this.unshift.apply(this, arguments); return this; };
 //    String.prototype.grab = function(inx) { return grab(this, inx); }
     Object.defineProperties(String.prototype,
@@ -475,6 +498,38 @@ function extensions()
 }
 
 
+/*
+function traverse(node, cb, parent, childname)
+{
+    if (typeof node != "object") return;
+    cb(node, parent, childname); //visit parent node first
+    for (var i in node)
+        traverse(node[i], cb, node, i);
+}
+
+
+function ansi_color(code) { return `\\x1b\\[${code}m`; }
+
+
+function extend_color(str)
+{
+    const DelayColorEnd_xre = new XRegExp(`
+        ^
+        (?<leader> .* )
+        (?<terminator> ${ansi_color(0)} )
+        (?<trailer> .* )
+        $
+        `, "xi");
+    return (str || "").replace(DelayColorEnd_xre, "$1$3$2");
+}
+
+process.on("beforeExit", (xcode) => console.error(`${eof.remaining_files} remaining files`[eof.remaining_files? "red": "green"]));
+
+
+function btwn(val, min, max) { return (val >= min) && (val <= max); }
+*/
+
+
 /////////////////////////////////////////////////////////////////////////////////
 ////
 /// Unit test/CLI trailer:
@@ -484,9 +539,17 @@ function extensions()
 if (module.parent) exc("not a callable module; run it directly");
 //if (!multi) exc(`worker_threads not found; did you add "--experiemtal-worker" to command line args?`);
 //if (multi.isMainThread) step(main);
-//if (cluster.isMaster) step(main);
-if (!process.env.wker_data) step(main);
-else step(wker); //, JSON.parse(process.env.wker_data));
-debug(`${/*multi.isMainThread cluster.isMaster*/ true? "Main": "Wker"} fell thru - process might exit.`.yellow_lt); //main() or wker() should probably not return; could end process prematurely
+//if (!process.env.wker_data) step(main);
+if (cluster.isMaster) step(main);
+else if (cluster.isWorker) step(wker, () => process.disconnect()); //, JSON.parse(process.env.wker_data));
+else exc(`don't know what type process ${process.pid} is`);
+//debug(`${/*multi.isMainThread*/ /*cluster.isMaster? "Main": "Wker"*/ cluster.proctype} fell thru - process might exit.`.yellow_lt); //main() or wker() should probably not return; could end process prematurely
+//if (cluster.isWorker) process.disconnect();
+//show what's keeping proc alive:
+if (process._getActiveHandles().length)
+    debug(`${cluster.proctype} remaining handles`.yellow_lt, process._getActiveHandles().map((obj) => (obj.constructor || {}).name || obj));
+//    process._getActiveHandles().forEach((obj) => ((obj.constructor || {}).name == "Timer")? debug(obj): null);
+if (process._getActiveRequests().length)
+    debug(`${cluster.proctype} remaining requests`.yellow_lt, process._getActiveRequests());
 
 //eof

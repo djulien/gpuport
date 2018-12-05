@@ -1539,6 +1539,7 @@ public: //methods
 debug(9, BLUE_MSG "here20, env %p" ENDCOLOR, env);
         if (!env) return NULL; //Node cleanup mode?
         napi_thingy retval(env);
+#if 0 //BROKEN in slave
 //debug(9, BLUE_MSG "here21" << m_ref << ENDCOLOR);
         if (m_ref) !NAPI_OK(napi_get_reference_value(env, m_ref, &retval.value), "Get ret val failed");
 debug(9, BLUE_MSG "here22" ENDCOLOR);
@@ -1586,6 +1587,7 @@ debug(9, BLUE_MSG "here27" ENDCOLOR);
         const int REF_COUNT = 1;
 //debug(9, BLUE_MSG "here28" ENDCOLOR);
         !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_ref), "Cre ref failed"); //allow to be reused next time
+#endif
         return retval;
     }
 };
@@ -1928,6 +1930,7 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 }
 
 
+#if 0
 //return a js wrapper to node buf:
 napi_value GetNodes_NAPI(napi_env env, napi_callback_info info)
 {
@@ -1974,6 +1977,7 @@ napi_value GetNodes_NAPI(napi_env env, napi_callback_info info)
 //    !NAPI_OK(napi_create_reference(env, typary, REF_COUNT, &m_cached), "Cre ref failed"); //allow to be reused next time
     return typary;
 }
+#endif
 
 
 //convert results from wker thread to napi and pass to JavaScript callback:
@@ -2204,6 +2208,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         _.attributes = napi_default; //!writable, !enumerable
 //        _.data = aoptr;
     }(props.emplace_back()); //(*pptr++);
+#if 0 //broken in slave process
     [env, aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
     {
         _.utf8name = "nodebufq"; //"GetNodes";
@@ -2214,6 +2219,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         _.attributes = napi_default; //!writable, !enumerable
 //        _.data = aoptr;
     }(props.emplace_back()); //(*pptr++);
+#endif
     [/*env,*/ aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
     {
         _.utf8name = "listen";
