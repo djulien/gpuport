@@ -47,9 +47,19 @@ cluster.proctype = cluster.isMaster? "Main": cluster.isWorker? "Wker": "?UNKN-TY
 //console.log("here3");
 const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_MAXLEN: 1136, FPS: 30};
 const {/*limit, listen, nodebufq,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
+const ALL_READY = (1 << NUM_UNIV) - 1, SOME_READY = 1 >> (NUM_UNIV / 2) - 1, FIRST_READY = 1 << (NUM_UNIV - 1); //set half-ready to force sync first time
+debug(`all ready 0x${hex(ALL_READY)}, some ready 0x${hex(SOME_READY)}, first ready 0x${hex(FIRST_READY)}`);
+//const seq = tryRequire("./my-seq");
+const SEQLEN = 18;
 //console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
+const NUM_WKERS = NUM_CPUs - 1;
+//    NUM_WKERS: 0, //whole-house fg render
+//  NUM_WKERS: 1, //whole-house bg render
+//    NUM_WKERS: os.cpus().length, //1 bkg wker for each core (optimal)
+//    NUM_WKERS: 6, //hard-coded #bkg wkers
+const WKER_UNIV = NUM_UNIV / NUM_WKERS; //#univ each wker should render
 const QUELEN = 4;
 
 
@@ -78,8 +88,10 @@ const PALETTE = [BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0
 show_env();
 extensions(); //hoist for use by in-line code
 
-//set up shm node bufs:
-const {frctl, nodes} = make_nodes();
+//set up shm node bufs + fr ctl:
+const {frctl, nodes} = shmbufs();
+//debug("frctl", frctl);
+//debug(`frctl[3]: fr# ${frctl[3].frnum}, ready 0x${frctl[3].ready}`);
 
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -101,20 +113,35 @@ function* main()
 //    };
     debug(`main thread start`.cyan_lt);
 //    yield wait(10000); //check if wker epoch reset affects main
-
-    for (var w = 0; w < NUM_CPUs - 1; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
+//init shm frbuf que before starting wkers:
+    nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
+    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
+    debug(`frbuf quent initialized`.blue_lt);
+    debug(`launch ${plural(NUM_WKERS)} wker${plural.cached}`.blue_lt);
+    for (var w = 0; w < NUM_WKERS; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
 //    for (let i = 1; i <= 10; ++i)
 //        setTimeout(() =>
 //        {
 //            debug(`send wker req#${i}`.blue_lt)
 //            wker.postMessage("message", `req-from-main#${shdata.main_which = i}`);
 //        }, 1000 * i);
-    for (var i = 0; i < 10; ++i)
+    for (var fr = 0; fr < SEQNUM; ++fr)
     {
-        yield wait(0.5 * 1e3);
-        debug(`main loop[${i}/10]. node234 = ${hex(nodes[2][3][4])}`);
+        let qent = fr % frctl.length; //simple, circular queue
+        while (frctl[qent].ready != ALL_UNIV) //wait for wkers to render nodes
+        {
+            debug(`fr[${fr}/${SEQNUM}] not ready: 0x${hex(frctl[qent].ready)}, main waiting for wkers to render ...`);
+            yield wait(0.1 * 1e3); //timing is important; don't want to wait longer than needed
+        }
+//TODO: tweening for missing/!ready frames?
+//TODO: perf stats; wait time, xfr time
+        debug(`xfr fr[${fr}/${SEQNUM}] to gpu ...`);
+//TODO: pivot/update txtr, update screen (NON-BLOCKING)
+//make frbuf ready available a new frame:
+        frctl[qent].ready = 0;
+        frctl[qent].frnum += QUELEN; //NOTE: do this last (wkers look for this)
     }
-    debug("main idle".cyan_lt);
+    debug(`main: ${plural(SEQNUM)} frame${plural.cached} complete`.cyan_lt);
 }
 
 
@@ -141,6 +168,7 @@ function start_wker(filename, data, opts)
         .on("online", () => debug(`wker ${(wker/*.threadId*/ .process || {}).pid || NO_PID} is on-line`.cyan_lt)) //, arguments))
         .on('message', (data) => debug("msg from wker".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
         .on('error', (data) => debug("err from wker".red_lt, data, arguments))
+//TODO: add restart logic if needed
         .on('exit', (code) => debug("wker exit".yellow_lt, code)) //, arguments)) //args: {}, require, module, filename, dirname
 //          if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
         .on('disconnect', () => debug(`wker disconnect`.cyan_lt)); //, arguments));
@@ -186,105 +214,43 @@ function start_wker(filename, data, opts)
 //
 
 
-function* wker(wker_data)
+function* wker() //wker_data)
 {
 //    debug("wker env", process.env);
-    wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
-    debug(`wker thread start`.cyan_lt, "cloned data", /*process.env.*/wker_data, "id", cluster.worker.id); //multi.workerData);
+//    wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
+    cluster.worker.inx = cluster.worker.id - 1;
+    const [univ_begin, univ_end] = [cluster.worker.inx * WKER_UNIV, Math.min((cluster.worker.inx + 1) * WKER_UNIV, NUM_UNIV)];
+//univ ready bits:
+//begin  end   my
+// 0     1    0x800000
+// 0     4    0xF00000
+//20     21   0x000008
+//20     24   0x00000F
+    const my_ready = (ALL_READY >> univ_begin) & ~(ALL_READY >> univ_end);
+    debug(`wker thread id ${cluster.worker.id} start, responsible for rendering univ ${univ_begin}..${univ_end}, my ready bits ${my_ready}`.cyan_lt); //, "cloned data", /*process.env.*/wker_data); //multi.workerData);
 //    for (let i = 1; i <= 3; ++i)
 //        setTimeout(() => multi.parentPort.postMessage(`hello-from-wker#${multi.workerData.wker_which = i}`, {other: 123}), 6000 * i);
 //    multi.parentPort.on("message", (data) => debug("msg from main".blue_lt, data, /*arguments,*/ "his data".blue_lt, multi.workerData)); //args: {}, require, module, filename, dirname
 //    setTimeout(() => { debug("wker bye".red_lt); process.exit(123); }, 15000);
-    for (var fr = 0; fr < 4; ++fr)
+    for (var fr = 0; fr < SEQLEN; ++fr)
     {
-        yield wait(0.6 * 1e3); //.6, 1.2, 1.8, 2.4 sec
-        nodes[2][3][4] = PALETTE[fr + 1];
-        debug(`wker loop[${fr}/4]. set node234 to ${hex(PALETTE[fr + 1])}`);
+        let qent = fr % frctl.length; //simple, circular queue
+        while (frctl[qent].frnum != fr) //wait for nodebuf to become available
+        {
+            debug(`wker ${cluster.worker.id} waiting to render fr[${fr}/${SEQLEN}] into nodebuf quent# ${qent} ...`);
+            yield wait(0.1 * 1e3); //timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
+        }
+        debug(`wker ${cluster.worker.id} render fr[${fr}/${SEQLEN}] ready 0x${hex(frctl[qent].ready)} into nodebuf quent# ${qent} ...`);
+//TODO: render
+//        nodes[2][3][4] = PALETTE[fr + 1];
+        if (frctl[qent].ready & my_ready) exc(`fr[${fr}/${SEQLEN}] in quent ${qent} ready 0x${hex(frctl[qent].ready)} has my ready bits: 0x${hex(my_ready)}`);
+        for (var u = univ_begin; u < univ_end; ++u)
+            nodes[qent][u].forEach((oldval, inx) => nodes[qent][u][inx] = PALETTE[fr % PALETTE.length]);
+        frctl[qent].ready |= my_ready;
+        debug(`wker ${cluster.worker.id} rendered fr[${fr}/${SEQLEN}] into nodebuf quent# ${qent}, ready now 0x${hex(frctl[qent].ready)} ...`);
     }
 //    process.send({data}, (err) => {});
     debug("wker idle".cyan_lt);
-}
-
-
-/////////////////////////////////////////////////////////////////////////////////
-////
-/// Tests:
-//
-
-function frame_test()
-{
-    debug("mem test");
-    const outfs = fs.createWriteStream("dummy.yalp");
-    outfs.write(`#single frame ${datestr()}\n`);
-    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}\n`);
-    elapsed(0);
-    for (var x = 0; x < NUM_UNIV; ++x)
-    {
-        for (var y = 0; y < UNIV_MAXLEN; ++y)
-//        {
-//            nodes[x][y] = PALETTE[(x + y) % PALETTE.length];
-            nodes[x][y] = ((x + y) & 1)? PALETTE[1 + x % (PALETTE.length - 1)]: BLACK;
-//            debug(`n[${x}][${y}] <- ${PALETTEix[1 + x % (PALETTE.length - 1)]}`);
-//        }
-//        outfs.write(`${x}: ` + nodes[x].toString("hex") + "\n"); //~300K/frame
-//        outfs.write(`${x}: ` + nodes[x].toString("base64") + "\n"); //~300K/frame
-    }
-//    debug(JSON.stringify({frnum: -1, nodes}).json_tidy);
-//    outfs.write(JSON.stringify({frnum: -1, nodes}/*, null, 2*/).json_tidy + "\n"); //~460K/frame
-    outfs.write(`${x}: ` + util.inspect(nodes) + "\n"); //~300K/frame
-    outfs.end("#eof; elapsed ${prec(elapsed(), 1e6)} msec"); //close file
-}
-
-
-const SEQLEN = 120 * FPS; //total #fr in seq
-
-function fill_test()
-{
-    debug("fill test");
-    const REPEATS = 100;
-
-    elapsed(0);
-    for (var loop = 0; loop < REPEATS; ++loop)
-    {
-        for (var numfr = 0; numfr < SEQLEN; ++numfr)
-    //        for (var c = 0; c < PALETTE.length; ++c)
-                for (var x = 0; x < NUM_UNIV; ++x)
-                    for (var y = 0; y < UNIV_MAXLEN; ++y)
-                        nodes[x][y] = PALETTE[numfr % PALETTE.length];
-//perf:
-//PC: [2.889] filler loop#99/100, avg time 0.008106 msec
-//RPi2: [40.532] filler loop#99/100, avg time 0.113723 msec ~= 14x slow
-        debug(`filler loop#${loop}/${REPEATS}, avg time ${prec(elapsed() / numfr / loop, 1e6)} msec`);
-    }
-}
-
-function fwrite_test()
-{
-    debug("fwrite test");
-    const REPEATS = 3;
-    const outfs = fs.createWriteStream("dummy.yalp");
-    outfs.write(`#fill from palette frames ${datestr()}\n`);
-    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}, #fr: ${SEQLEN}, repeats: ${REPEATS}\n`);
-
-    elapsed(0);
-    for (var loop = 0; loop < REPEATS; ++loop)
-    {
-        for (var numfr = 0; numfr < SEQLEN; ++numfr)
-        {
-//            elapsed.pause();
-    //        for (var c = 0; c < PALETTE.length; ++c)
-                for (var x = 0; x < NUM_UNIV; ++x)
-                    for (var y = 0; y < UNIV_MAXLEN; ++y)
-                        nodes[x][y] = PALETTE[numfr % PALETTE.length];
-//            elapsed.resume();
-            outfs.write(JSON.stringify({frnum: numfr, nodes}).json_tidy + "\n");
-        }
-//perf:
-//RPi2: [40.532] filler loop#99/100, avg time 0.113723 msec
-//PC: [26.490] filler loop#2/3, avg time 2.452778 msec 
-        debug(`filler loop#${loop}/${REPEATS}, avg time ${prec(elapsed() / numfr / (loop + 1), 1e6)} msec`);
-    }
-    outfs.end("#eof; elapsed ${prec(elapsed(), 1e6)} msec"); //close file
 }
 
 
@@ -303,26 +269,43 @@ function fwrite_test()
 //const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
 //nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
 //debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
-function make_nodes()
+function shmbufs()
 {
-    const shmkey = (0xfeed0000 | NNNN_hex(UNIV_MAXLEN)) >>> 0;
+    const shmkey = (0xf00d0000 | NNNN_hex(UNIV_MAXLEN)) >>> 0;
     const UNIV_BYTELEN = /*cache_pad64*/(UNIV_MAXLEN) * Uint32Array.BYTES_PER_ELEMENT;
     debug(`make_nodes: shmkey ${typeof shmkey}:`, hex(shmkey), "univ bytelen", commas(UNIV_BYTELEN), `"owner? ${cluster.isMaster}`);
-    const shbuf = sharedbuf.createSharedBuffer(shmkey, (QUELEN * NUM_UNIV + 1) * UNIV_BYTELEN, cluster.isMaster); //master creates new, slaves acquire existing; one extra univ for fr ctl
+    const shbuf = sharedbuf.createSharedBuffer_retry(shmkey, (QUELEN * NUM_UNIV + 1) * UNIV_BYTELEN, cluster.isMaster); //master creates new, slaves acquire existing; one extra univ for fr ctl
+//set up 3D indexing (quent x univ x node) for simpler node addressing and fx logic:
     const nodes = Array.from({length: QUELEN}, (undef, quent) =>
         Array.from({length: NUM_UNIV}, (undef, univ) =>
             new Uint32Array(shbuf, (quent * NUM_UNIV + univ) * UNIV_BYTELEN, UNIV_MAXLEN))); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
-    const FRNUM = 0, PREVFR = 1, FRTIME = 2, PREVTIME = 3, READY = 4; //frctl ofs for each nodebuf quent
-    const frctl = Array.from({length: QUELEN}, (undef, quent) =>
+//create 1 extra (partial) univ to hold fr ctl info (rather than using a separate shm seg):
+//TODO: is getter/setter on typed array element faster/slower than data view?
+    const FRNUM = 0, PREVFR = 1, FRTIME = 2, PREVTIME = 3, READY = 4, FRCTL_SIZE = 5; //frctl ofs for each nodebuf quent
+    const FRCTL = new Uint32Array(shbuf, QUELEN * NUM_UNIV * UNIV_BYTELEN, QUELEN * FRCTL_SIZE);
+    const frctl = Array.from({length: QUELEN}, (undef, quent) => //quent);
     {
-        frnum: new Uint32Array(shbuf, QUELEN * NUM_UNIV * UNIV_BYTELEN, QUELEN * 4);
+        const retval =
+        {
+            get frnum() { return FRCTL[quent * FRCTL_SIZE + FRNUM]; },
+            set frnum(newval) { FRCTL[quent * FRCTL_SIZE + FRNUM] = newval; },
+            get prevfr() { return FRCTL[quent * FRCTL_SIZE + PREVFR]; },
+            set prevfr(newval) { FRCTL[quent * FRCTL_SIZE + PREVFR] = newval; },
+            get frtime() { return FRCTL[quent * FRCTL_SIZE + FRTIME]; },
+            set frtime(newval) { FRCTL[quent * FRCTL_SIZE + FRTIME] = newval; },
+            get prevtime() { return FRCTL[quent * FRCTL_SIZE + PREVTIME]; },
+            set prevtim(newval) { FRCTL[quent * FRCTL_SIZE + PREVTIME] = newval; },
+            get ready() { return FRCTL[quent * FRCTL_SIZE + READY]; },
+            set ready(newval) { FRCTL[quent * FRCTL_SIZE + READY] = newval; },
+        };
+        return retval;
     });
-    debug(`shm fr ctl ${commas(QUELEN * 4)}, nodebuf queue ${commas(nodes.length)} x ${commas(nodes[0].length)} x ${commas(nodes[0][0].length)} ${cluster.isMaster? "created": "acquired"}`.pink_lt);
-    if (cluster.isMaster)
-    {
-        nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
-        for (var q = 0; q < QUELEN; ++q) frctl[]
-    }
+    debug(`shm fr ctl ${commas(frctl.length)}, nodebuf queue ${commas(nodes.length)} x ${commas(nodes[0].length)} x ${commas(nodes[0][0].length)} ${cluster.isMaster? "created": "acquired"}`.pink_lt);
+//no; let main/wker caller decide    if (cluster.isMaster)
+//    {
+//        nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK)));
+//        frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
+//    }
 //    if (cluster.isMaster) cluster.fork();
     return {frctl, nodes};
 //??    detachSharedBuffer(sharedBuffer); 
@@ -495,6 +478,25 @@ function extensions()
         json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
     });
 //    Uint32Array.prototype.inspect = function() //not a good idea; custom inspect deprecated in Node 11.x
+
+//detect if shbuf is too small:
+//more data tends to be added during dev, so size mismatch is likely
+//if request is too small, error return is cryptic so test for it automatically here
+    sharedbuf.createSharedBuffer_retry = function(key, bytelen, create)
+    {
+        try { return sharedbuf.createSharedBuffer(key, bytelen, create); } //size is okay
+        catch (exc)
+        {
+//        if (exc == "invalid argument") //size is too small (probably)
+            var retval = (bytelen > 1)? sharedbuf.createSharedBuffer(key, 1, create): null; //retry with smaller size
+            if (retval)
+            {
+                debug(`shm buf 0x${hex(key)} is probably smaller than requested size ${commas(bytelen)}`.yellow_lt);
+                sharedbuf.detachSharedBuffer(retval);
+            }
+            throw exc; //rethrow original error so caller can deal with it
+        }
+    }
 }
 
 
@@ -528,6 +530,88 @@ process.on("beforeExit", (xcode) => console.error(`${eof.remaining_files} remain
 
 function btwn(val, min, max) { return (val >= min) && (val <= max); }
 */
+
+
+/////////////////////////////////////////////////////////////////////////////////
+////
+/// Tests:
+//
+
+function frame_test()
+{
+    debug("mem test");
+    const outfs = fs.createWriteStream("dummy.yalp");
+    outfs.write(`#single frame ${datestr()}\n`);
+    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}\n`);
+    elapsed(0);
+    for (var x = 0; x < NUM_UNIV; ++x)
+    {
+        for (var y = 0; y < UNIV_MAXLEN; ++y)
+//        {
+//            nodes[x][y] = PALETTE[(x + y) % PALETTE.length];
+            nodes[x][y] = ((x + y) & 1)? PALETTE[1 + x % (PALETTE.length - 1)]: BLACK;
+//            debug(`n[${x}][${y}] <- ${PALETTEix[1 + x % (PALETTE.length - 1)]}`);
+//        }
+//        outfs.write(`${x}: ` + nodes[x].toString("hex") + "\n"); //~300K/frame
+//        outfs.write(`${x}: ` + nodes[x].toString("base64") + "\n"); //~300K/frame
+    }
+//    debug(JSON.stringify({frnum: -1, nodes}).json_tidy);
+//    outfs.write(JSON.stringify({frnum: -1, nodes}/*, null, 2*/).json_tidy + "\n"); //~460K/frame
+    outfs.write(`${x}: ` + util.inspect(nodes) + "\n"); //~300K/frame
+    outfs.end("#eof; elapsed ${prec(elapsed(), 1e6)} msec"); //close file
+}
+
+
+const test_SEQLEN = 120 * FPS; //total #fr in seq
+
+function fill_test()
+{
+    debug("fill test");
+    const REPEATS = 100;
+
+    elapsed(0);
+    for (var loop = 0; loop < REPEATS; ++loop)
+    {
+        for (var numfr = 0; numfr < test_SEQLEN; ++numfr)
+    //        for (var c = 0; c < PALETTE.length; ++c)
+                for (var x = 0; x < NUM_UNIV; ++x)
+                    for (var y = 0; y < UNIV_MAXLEN; ++y)
+                        nodes[x][y] = PALETTE[numfr % PALETTE.length];
+//perf:
+//PC: [2.889] filler loop#99/100, avg time 0.008106 msec
+//RPi2: [40.532] filler loop#99/100, avg time 0.113723 msec ~= 14x slow
+        debug(`filler loop#${loop}/${REPEATS}, avg time ${prec(elapsed() / numfr / loop, 1e6)} msec`);
+    }
+}
+
+function fwrite_test()
+{
+    debug("fwrite test");
+    const REPEATS = 3;
+    const outfs = fs.createWriteStream("dummy.yalp");
+    outfs.write(`#fill from palette frames ${datestr()}\n`);
+    outfs.write(`#NUM_UNIV: ${NUM_UNIV}, UNIV_MAXLEN: ${UNIV_MAXLEN}, #fr: ${SEQLEN}, repeats: ${REPEATS}\n`);
+
+    elapsed(0);
+    for (var loop = 0; loop < REPEATS; ++loop)
+    {
+        for (var numfr = 0; numfr < SEQLEN; ++numfr)
+        {
+//            elapsed.pause();
+    //        for (var c = 0; c < PALETTE.length; ++c)
+                for (var x = 0; x < NUM_UNIV; ++x)
+                    for (var y = 0; y < UNIV_MAXLEN; ++y)
+                        nodes[x][y] = PALETTE[numfr % PALETTE.length];
+//            elapsed.resume();
+            outfs.write(JSON.stringify({frnum: numfr, nodes}).json_tidy + "\n");
+        }
+//perf:
+//RPi2: [40.532] filler loop#99/100, avg time 0.113723 msec
+//PC: [26.490] filler loop#2/3, avg time 2.452778 msec 
+        debug(`filler loop#${loop}/${REPEATS}, avg time ${prec(elapsed() / numfr / (loop + 1), 1e6)} msec`);
+    }
+    outfs.end("#eof; elapsed ${prec(elapsed(), 1e6)} msec"); //close file
+}
 
 
 /////////////////////////////////////////////////////////////////////////////////
