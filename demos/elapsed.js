@@ -104,7 +104,7 @@ const {debug} = require('./debug') || {debug: console.error}; //CAUTION: recursi
 
 //define shared memory for epoch so all procs are in sync:
 //TODO: combine this with other shm struct members?
-const shmkey = 0xbeef0001;
+const shmkey = 0xf00d0001;
 const shbuf = sharedbuf?
     sharedbuf.createSharedBuffer_retry(shmkey, 2 * Uint32Array.BYTES_PER_ELEMENT, cluster.isMaster): //master creates new, slaves acquire existing
     new ArrayBuffer(2 * Uint32Array.BYTES_PER_ELEMENT);

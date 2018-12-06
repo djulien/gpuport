@@ -99,10 +99,10 @@ function debug(args)
         if (isNaN(first_ofs)) { first_ofs = 0; last_ofs = fmt.length; }
 //TODO: sprintf %4.3f
 //    debug.busy = true; //avoid recursion
-        var timestamp = was_busy? "????": elapsed().toString(); //util.format("[%f] ", elapsed() / 1e3)
+        var timestamp = was_busy? "????": elapsed().toString(); //avoid recursion; //util.format("[%f] ", elapsed() / 1e3)
 //    debug.busy = false;
         if (timestamp.length < 4) timestamp = ("0000" + timestamp).slice(-4);
-        timestamp = `[${timestamp.slice(0, -3)}.${timestamp.slice(-3)}] `;
+        timestamp = `[[${timestamp.slice(0, -3)}.${timestamp.slice(-3)}]] `;
         fmt = fmt.slice(0, first_ofs) + timestamp + fmt.slice(first_ofs, last_ofs) + `  @${parent}` + fmt.slice(last_ofs);
 //console.log("result", `${fmt.length}:'${fmt.replace(/\x1b/g, "\\x1b")}'`);
 //    }
