@@ -96,6 +96,7 @@ struct ShmHdr //16 or 24 bytes (depending on processor architecture)
     int id;
     key_t key;
     size_t size;
+    size_t numents;
     uint32_t marker;
 }; //ShmHdr;
 
@@ -178,16 +179,11 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
         ptr->id = shmid;
         ptr->key = key;
         ptr->size = shminfo.shm_segsz - sizeof(ShmHdr);
+        ptr->numents = 0; //no type info; added by type-safe wrappers
         ptr->marker = existed? (SHM_MAGIC ^ 1): SHM_MAGIC;
     }
     err_ret(ptr + 1, 0);
 }
-template <typename TYPE> //= uint8_t>
-TYPE* shmalloc_typed(key_t key = 0, size_t numents = 1, SrcLine srcline = 0)
-{
-    return (TYPE*)shmalloc(sizeof(TYPE) * numents, key, srcline);
-}
-//#define shmalloc  shmallc_typesafe
 
 
 key_t shmkey(void* addr, SrcLine srcline = 0)
@@ -218,6 +214,11 @@ int shmnattch(const void* addr, SrcLine srcline = 0)
     if (get_shmhdr(addr, srcline)->key == SHM_LOCAL) return 1;
     return (shmctl(get_shmhdr(addr, srcline)->id, IPC_STAT, &shminfo) != -1)? shminfo.shm_nattch: 0;
 }
+
+//size_t shments(const void* addr, SrcLine srcline = 0)
+//{
+//    return get_shmhdr(addr, srcline)->numents;
+//}
 
 
 //void free(const void* ptr) { free((void*)ptr); }
@@ -275,6 +276,43 @@ int shmfree_debug(const void* addr, SrcLine srcline = 0)
 }
 #define shmfree  shmfree_debug
 #endif
+
+
+//type-safe shmalloc/shmfree:
+template <typename TYPE> //= uint8_t>
+TYPE* shmalloc_typesafe(key_t key = 0, size_t ENTS = 1, SrcLine srcline = 0)
+{
+    srcline = NVL(srcline, SRCLINE);
+    TYPE* ptr = (TYPE*)shmalloc(sizeof(TYPE) * ENTS, key, srcline);
+#if 1
+    if (shmnattch(ptr, srcline) > 1) return ptr; //already inited and dtors defered; nothing else to do here
+    for (int i = 0; i < ENTS; ++i)
+        new (&ptr[i]) TYPE(); //placement new; apply ctors so shm is really inited and has valid state (esp mutex)
+    ((ShmHdr*)get_shmhdr(ptr, srcline))->numents = ENTS; //remember #times to call dtor
+//    if (WANT_MUTEX) new (&m_ptr[ENTS]) std::mutex();
+#endif
+    return ptr;
+}
+
+template <typename TYPE> //= uint8_t>
+int shmfree_typesafe(TYPE* ptr, SrcLine srcline = 0)
+{
+    srcline = NVL(srcline, SRCLINE);
+#if 1
+    size_t ENTS = get_shmhdr(ptr, srcline)->numents; //get #times to call dtor
+    if (shmnattch(ptr, srcline) <= 1)
+        for (int i = 0; i < ENTS; ++i) //TODO: should this be reverse order?  atexit is in order of occurrence so it's probably okay here too
+//                {
+//                    debug(0, "delete @%p" ENDCOLOR, &m_ptr[i]);
+//                    delete &m_ptr[i]; //WRONG
+//TODO: should take into account m_count
+            ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
+#endif
+    return shmfree(ptr, srcline); //CAUTION: data members not valid after
+}
+//#define shmalloc  shmalloc_typesafe
+//#define shmfree  shmfree_typesafe
+
 
 #endif //ndef _SHMALLOC_H
 
@@ -404,6 +442,7 @@ private: //data members
 template <typename TYPE = uint8_t, size_t ENTS = 1, bool AUTO_INIT = true, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
 class AutoShmary: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
+//TODO: use shmalloc_typesafe<>, shmfree_typesafe<>
 public:
 //    const key_t KEY_NONE = -2;
 //TODO: use "new shmalloc()" to call ctor on shm directly
@@ -509,7 +548,7 @@ private: //data members
 
 //fixed len vector for use in shm:
 template <typename TYPE, size_t SIZE>
-class FixedVector
+class FixedShmVector
 {
 public:
     static const key_t KEY = 0xbeef0000 | NNNN_hex(SIZE); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
@@ -524,7 +563,7 @@ public:
         void push_back(/*const*/ TYPE& new_item)
         {
 //TODO: reserve(), capacity(), grow(), etc
-            if (count >= SIZEOF(list)) exc_hard("FixedVector<" << SIZE << "> no room");
+            if (count >= SIZEOF(list)) exc_hard("FixedSmhVector<" << SIZE << "> no room");
             list[count++] = new_item; //TODO: emplace?
         }
     };
@@ -647,7 +686,7 @@ void unit_test(ARGS& args)
 #endif
 
     const key_t KEY = 0; //SHM_LOCAL;
-    uint32_t* ptr = shmalloc_typed<uint32_t>(KEY, 4, SRCLINE);
+    uint32_t* ptr = shmalloc_typesafe<uint32_t>(KEY, 4, SRCLINE);
     ptr[0] = 0x12345678;
     debug(0, BLUE_MSG << "ptr " << ptr << ", *ptr " << std::hex << ptr[0] << std::dec << ENDCOLOR);
     shmfree(ptr);

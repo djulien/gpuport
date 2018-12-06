@@ -47,6 +47,19 @@
 //restart wifi:
 //sudo service network-manager restart
 
+#include <sstream> //std::ostringstream
+#include <utility> //std::forward<>
+#include <functional> //std::bind()
+#include <string> //std::string
+#include <map> //std::map<>
+
+#include "str-helpers.h" //unmap(), NNNN_hex()
+#include "thr-helpers.h" //thrnx()
+#include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
+#include "elapsed.h" //elapsed_msec(), timestamp(), now()
+#include "msgcolors.h"
+#include "debugexc.h"
+
 //which Node API to use?
 //V8 is older, requires more familiarity with V8
 //NAPI is C-style api and works ok
@@ -56,47 +69,20 @@
 //#define USE_NODE_ADDON_API //TODO: convert to newer API
 //#define USE_NAN
 //NAPI perf notes: https://github.com/nodejs/node/issues/14379
+#include "napi-helpers.h" //napi_thingy, NAPI_OK(), NAPI_exc, etc
+
+
+#if __cplusplus < 201103L
+ #pragma message("CAUTION: this file probably needs c++11 or later to compile correctly")
+#endif
+
 
 #define WANT_REAL_CODE
 //#define WANT_BROKEN_CODE
 //#define WANT_SIMPLE_EXAMPLE
 //#define WANT_CALLBACK_EXAMPLE
 
-
-#if defined(USE_NAPI)
- #define NAPI_EXPERIMENTAL //NOTE: need this to avoid compile errors; needs Node v10.6.0 or later
- #include <node_api.h> //C style api; https://nodejs.org/api/n-api.html
- #define NAPI_EXPORTS  NAPI_MODULE //kludge: make macro name consistent to reduce #ifs
- #ifndef SRC_NODE_API_H_
-  #define SRC_NODE_API_H_ //USE_NAPI; for "smart" text editors
- #endif
-#elif defined(USE_NODE_ADDON_API)
- #include "napi.h" //C++ style api; #includes node_api.h
- #define NAPI_EXPORTS  NODE_API_MODULE //kludge: make macro name consistent to reduce #ifs
-#elif defined(USE_NAN)
- #include <nan.h> //older V8 api
-#else
- #error Use which Node api?
-#endif
-
-#include <sstream> //std::ostringstream
-#include <utility> //std::forward<>
-#include <functional> //std::bind()
-#include <string> //std::string
-#include <map> //std::map<>
-
 #define MAX_DEBUG_LEVEL  99 //1
-
-#include "str-helpers.h" //unmap(), NNNN_hex()
-#include "thr-helpers.h" //thrnx()
-#include "elapsed.h" //elapsed_msec(), timestamp(), now()
-#include "msgcolors.h"
-#include "debugexc.h"
-
-#if __cplusplus < 201103L
- #pragma message("CAUTION: this file probably needs c++11 or later to compile correctly")
-#endif
-
 
 #define UNUSED(thing)  //(void)thing //avoid compiler warnings
 
@@ -117,428 +103,6 @@
 #endif
 
 
-////////////////////////////////////////////////////////////////////////////////
-////
-/// NAPI helpers, wrappers:
-//
-
-#ifdef SRC_NODE_API_H_ //USE_NAPI
-
-#define NO_HINT  NULL //const void* NO_HINT = NULL; //optional finalize_hint
-#define NO_FINALIZE  NULL //napi_finalize NO_FINALIZE = NULL;
-#define NO_FINAL_DATA  NULL //void* NO_FINAL_DATA = NULL;
-
-//define top of module init chain:
-#define module_exports(env, exports)  exports
-
-//important NOTEs about napi object lifespan:
-//https://nodejs.org/api/n-api.html#n_api_object_lifetime_management
-
-
-//remember last error (mainly for debug msgs):
-//CAUTION: shared between threads
-napi_status NAPI_LastStatus = napi_ok;
-//?? napi_get_and_clear_last_exception(napi_env env, napi_value* result);
-
-//get error message info for latest error:
-std::string NAPI_ErrorMessage(napi_env env)
-{
-    std::ostringstream ss;
-    const napi_extended_error_info* errinfo;
-    if (napi_get_last_error_info(env, &errinfo) != napi_ok) ss << "Can't get error " << NAPI_LastStatus << " info!";
-    else ss << errinfo->error_message << " (errcode " << errinfo->error_code << ", status " << NAPI_LastStatus << ", thr# " << thrinx() << ")";
-    return ss.str(); //NOTE: returns stack var by value, not by ref
-}
-
-//TODO: add SRCLINE
-#define DEF_ENV  env //assume env is named "env"
-#define NO_ERRCODE  NULL
-#define NAPI_exc_1ARG(msg)  NAPI_exc_2ARGS(DEF_ENV, msg)
-#define NAPI_exc_2ARGS(env, msg)  NAPI_exc_3ARGS(env, NO_ERRCODE, msg)
-#define NAPI_exc_3ARGS(env, errcode, msg)  NAPI_exc_4ARGS(env, errcode, msg, SRCLINE) //(napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
-#define NAPI_exc_4ARGS(env, errcode, msg, srcline)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR_ATLINE(srcline)), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
-//#define NAPI_exc_4ARGS(env, errcode, msg, retval)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), retval) //dummy "!okay" result to allow usage in conditional expr; throw() won't fall thru at run-time, though
-#define NAPI_exc(...)  UPTO_4ARGS(__VA_ARGS__, NAPI_exc_4ARGS, NAPI_exc_3ARGS, NAPI_exc_2ARGS, NAPI_exc_1ARG) (__VA_ARGS__)
-inline napi_status napi_throw_error(napi_env env, const char* errcode, std::/*ostringstream*/ostream& errmsg)
-{
-    return napi_throw_error(env, errcode, static_cast<std::ostringstream&>(errmsg).str().c_str());
-}
-//inline bool NAPI_OK(napi_status retval) { return ((NAPI_LastError = retval) == napi_ok); }
-#define NAPI_OK_1ARG(retval)  ((NAPI_LastStatus = (retval)) == napi_ok)
-#define NAPI_OK_2ARGS(retval, errmsg)  NAPI_OK_3ARGS(retval, DEF_ENV, errmsg)
-#define NAPI_OK_3ARGS(retval, env, errmsg)  NAPI_OK_4ARGS(retval, env, NO_ERRCODE, errmsg)
-#define NAPI_OK_4ARGS(retval, env, errcode, errmsg)  (NAPI_OK_1ARG(retval) || NAPI_exc(env, errcode, errmsg))
-#define NAPI_OK(...)  UPTO_4ARGS(__VA_ARGS__, NAPI_OK_4ARGS, NAPI_OK_3ARGS, NAPI_OK_2ARGS, NAPI_OK_1ARG) (__VA_ARGS__)
-//NO-use overloaded functions to allow usage in conditional stmts by caller (napi_throw_error doesn't return a bool)
-//inline bool NAPI_OK(napi_status retval)  { return ((NAPI_LastError = (retval)) == napi_ok); }
-//inline bool NAPI_OK(napi_status retval, const char* errmsg)  { if (NAPI_OK(retval)) , DEF_ENV, errmsg)
-//#define NAPI_OK_3ARGS(retval, env, errmsg)  NAPI_OK_4ARGS(retval, env, NO_ERRCODE, errmsg)
-//#define NAPI_OK_4ARGS(retval, env, errcode, errmsg)  if (!NAPI_OK_1ARG(retval)) NAPI_exc(env, errcode, errmsg)
-//allow napi_throw_error() to be used as bool (false) return value:
-//template <typename ... ARGS>
-//BROKEN; just use macros instead
-//inline bool napi_throw_error_false(ARGS&& ... args)
-//{
-//    napi_throw_error(std::forward<ARGS>(args) ...); //perfect fwd
-//    return false; //dummy "okay" result to satisfy compiler (throw() won't fall thru)
-//}
-
-//reduce verbosity by using a unique small int instead of ugly env id:
-//mainly for debug msgs
-int envinx(const napi_env env)
-{
-//TODO: move to shm?
-    static std::vector</*std::decay<decltype(thrid())>*/napi_env> envlist;
-    static std::mutex mtx;
-    std::unique_lock<decltype(mtx)> lock(mtx);
-
-    for (auto it = envlist.begin(); it != envlist.end(); ++it) //small list; hash/map overhead not justified so just use linear scan
-        if (*it == env) return it - envlist.begin();
-    int newinx = envlist.size();
-    envlist.push_back(env);
-    return newinx;
-}
-
-
-//napi value type convenience/helper functions:
-napi_valuetype valtype(napi_env env, napi_value value)
-{
-    napi_valuetype valtype = napi_undefined;
-//    std::string reason;
-//    std::exception_ptr excptr = nullptr; //init redundant (default init)
-//use try/catch in case value is bad:
-#if 0
-    try { !NAPI_OK(napi_typeof(env, value, &valtype), "Get value type failed"); }
-    catch (const std::exception& exc) { debug(RED_MSG " valtype exc: " << exc.what() << ENDCOLOR); } //reason = exc.what(); }
-    catch (...) { debug(RED_MSG "valtype exc: ??EXC??" ENDCOLOR); } //reason = "??EXC??"; }
-//    debug(RED_MSG "bkg wker exc: " << aoptr->exc_reason() << ENDCOLOR);
-#else
-    !NAPI_OK(napi_typeof(env, value, &valtype), "Get value type failed");
-#endif
-    return valtype;
-}
-static inline const char* TypeName(napi_valuetype key)
-{
-    static const std::map<napi_valuetype, const char*> names =
-    {
-        {napi_undefined, "undef"},
-        {napi_null, "null"},
-        {napi_boolean, "bool"},
-        {napi_number, "number"},
-        {napi_string, "string"},
-        {napi_symbol, "symb"},
-        {napi_object, "obj"},
-        {napi_function, "func"},
-        {napi_external, "extern"},
-        {napi_bigint, "bigint"},
-    };
-    return unmap(names, key); //names;
-}
-static inline const char* TypeName(napi_typedarray_type key)
-{
-    static const std::map<napi_typedarray_type, const char*> names =
-    {
-        {napi_int8_array, "int8"},
-        {napi_uint8_array, "uin8"},
-        {napi_uint8_clamped_array, "cluint8"},
-        {napi_int16_array, "int16"},
-        {napi_uint16_array, "uint16"},
-        {napi_int32_array, "int32"},
-        {napi_uint32_array, "uint32"}, //only one used below; others included for completeness
-        {napi_float32_array, "float32"},
-        {napi_float64_array, "float64"},
-        {napi_bigint64_array, "bigint64"},
-        {napi_biguint64_array, "biguint64"},
-    };
-    return unmap(names, key); //names;
-}
-
-
-//create thread-safe wrapper for caller's js callback function:
-//    napi_ref aoref; //ref to wrapped version of this object
-void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
-{
-    napi_value wker_name;
-    const napi_value NO_RESOURCE = NULL; //optional, for init hooks
-    const int QUE_NOMAX = 0; //no limit; TODO: should this be 1 to prevent running ahead? else requires multi-frame pixel bufs
-    const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
-//    void* NO_FINAL_DATA = NULL;
-//    napi_finalize NO_FINALIZE = NULL;
-    void* NO_CONTEXT = NULL;
-//    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
-    napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
-    if (valtype(env, jsfunc) != napi_function) NAPI_exc("expected js function arg");
-    !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &wker_name), "Cre wkitem desc str failed");
-    !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, NO_CONTEXT, napi_cb, fats), "Cre JS fats failed");
-}
-
-struct my_napi_property_descriptor: public napi_property_descriptor
-{
-//    using super = napi_property_descriptor;
-    static SrcLine srcline; //kludge: create a place for _.srcline; CAUTION: don't change size of prop descr (used in arrays)
-    my_napi_property_descriptor() //clear first so NULL members don't need to be explicitly set by caller
-    {
-        utf8name = NULL; name = NULL;
-        method = NULL; getter = NULL; setter = NULL; value = NULL;
-        attributes = napi_default; //default = read-only, !enumerable, !cfgable
-        data = NULL;
-    }
-};
-SrcLine /*GpuPortData::*/my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline in above code; can't use static function wrapper due to definition of SRCLINE
-
-//napi property convenience/helper functions:
-bool has_prop(napi_env env, napi_value obj, const char* name)
-{
-    bool has_prop;
-    !NAPI_OK(napi_has_named_property(env, obj, name, &has_prop), "Check for named prop failed");
-    return has_prop;
-}
-
-//template <typename napi_status (*getval)
-bool /*napi_status*/ get_prop(napi_env env, napi_value obj, const char* name, napi_value* valp)
-{
-//    bool has_prop;
-//    napi_value prop_val;
-//    if (!NAPI_OK(napi_has_named_property(env, obj, name, has_prop)) || !*has_prop) return NAPI_LastStatus;
-//    return napi_get_named_property(env, obj, name, valp);
-    if (!has_prop(env, obj, name)) return false;
-    !NAPI_OK(napi_get_named_property(env, obj, name, valp), "Get named prop failed");
-    return true;
-}
-
-//type-specific overloads:
-bool /*napi_status*/ get_prop(napi_env env, napi_value obj, const char* name, int32_t* valp)
-{
-    napi_value prop_val;
-    if (!get_prop(env, obj, name, &prop_val)) return false;
-//    if (valtype(env, obj) != )
-    return NAPI_OK(napi_get_value_int32(env, prop_val, valp), "Get int32 prop failed");
-}
-bool /*napi_status*/ get_prop(napi_env env, napi_value obj, const char* name, uint32_t* valp)
-{
-//    bool has_prop;
-    napi_value prop_val;
-    if (!get_prop(env, obj, name, &prop_val)) return false;
-    return NAPI_OK(napi_get_value_uint32(env, prop_val, valp), "Get uint32 prop failed");
-}
-
-
-//kludge: composite object for operator<< specialization:
-//CAUTION; do not store napi_values across high-level napi calls / on  heap
-struct napi_thingy
-{
-    struct Object {}; //ctor disambiguation tag
-    napi_env env; //CAUTION: doesn't remain valid across napi calls/events
-    napi_value value;
-public: //ctors/dtors
-//    explicit napi_thingy() {}
-    napi_thingy() = delete; //default ctor is useless without env
-    explicit inline napi_thingy(napi_env new_env): env(new_env) { cre_undef(); } //force env to be available
-    inline napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {} //TODO: inc ref count?
-    inline napi_thingy(napi_env new_env, Object) { cre_object(new_env); }
-    inline napi_thingy(napi_env new_env, int32_t new_val) { cre_int32(new_env, new_val); }
-    inline napi_thingy(napi_env new_env, uint32_t new_val) { cre_uint32(new_env, new_val); }
-    inline napi_thingy(napi_env new_env, double new_val) { cre_double(new_env, new_val); }
-    inline napi_thingy(napi_env new_env, std::string str) { cre_string(new_env, str); }
-    inline napi_thingy(napi_env new_env, void* data, size_t len) { cre_ext_arybuf(new_env, data, len); }
-    inline napi_thingy(napi_env new_env, napi_typedarray_type arytype, size_t count, napi_value arybuf, size_t bofs = 0) { cre_typed_ary(new_env, arytype, count, arybuf, bofs); }
-//    inline napi_thingy(const napi_thingy)
-    inline ~napi_thingy() { cre_undef(); } //reset in case caller added refs to other objects; probably not needed
-public: //operators
-    inline napi_thingy& operator=(const napi_thingy& that) { env = that.env; value = that.value; return *this; }
-    inline napi_thingy& operator=(napi_value that) { value = that; return *this; }
-    inline operator napi_env() const { return env; }
-    inline operator napi_value() const { return value; }
-    inline bool isarybuf() const
-    {
-        bool is_ary;
-        if (type() != napi_object) return false;
-        !NAPI_OK(napi_is_arraybuffer(env, value, &is_ary), "Check if array buffer failed");
-        return is_ary;
-    }
-    inline bool istypary() const
-    {
-        bool is_typary;
-        if (type() != napi_object) return false;
-        !NAPI_OK(napi_is_typedarray(env, value, &is_typary), "Check if typed array failed");
-        return is_typary;
-    }
-//    inline napi_valuetype type(napi_valuetype type)
-//    {
-//        if (type() != type) NAPI_exc(opts.env, "Expected object as first arg"); //TODO: allow other types?
-//    }
-    inline napi_valuetype type() const { return valtype(env, value); }
-    napi_typedarray_type arytype() const
-    {
-        void* data;
-        napi_value arybuf;
-        size_t arylen, bofs;
-        napi_typedarray_type arytype;
-        if (!istypary()) return static_cast<napi_typedarray_type>(-1);
-        !NAPI_OK(napi_get_typedarray_info(env, value, &arytype, &arylen, &data, &arybuf, &bofs), "Get typed array info failed");
-        return arytype;
-    }
-//    napi_status napi_get_dataview_info(napi_env env, napi_value dataview, size_t* byte_length, void** data, napi_value* arraybuffer, size_t* byte_offset)
-//for debug or error msgs:
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const napi_thingy& that) CONST
-    {
-        bool bool_val;
-        size_t str_len;
-        char str_val[200];
-        double float_val;
-        ostrm << "napi-";
-//        if (napval.istypary())
-//        {
-//            ostrm << NVL(TypeName(napval.arytype()), "??ARYTYPE??");
-//            ostrm << "(" << napval.type() << ":" << napval.arytype() << ")";
-//        }
-//        else
-//        {
-        ostrm << NVL(TypeName(that.type()), "??TYPE??");
-        ostrm << "(" << that.type() << ")";
-//        }
-//        if (napval.type() == napi_object) 
-        ostrm << " env#" << envinx(that.env); //" env 0x" << std::hex << napval.env << std::dec;
-        switch (that.type())
-        {
-//            case napi_null:
-//            case napi_undefined:
-//TODO:
-//napi_symbol,
-//napi_function,
-//napi_bigint,
-//napi_object,
-//                ostrm << "napi " << NVL(TypeName(napval.type()), "??TYPE??");
-//                break;
-//show value for scalar types:
-            case napi_boolean:
-                !NAPI_OK(napi_get_value_bool(that.env, that.value, &bool_val), that.env, "Get bool value failed");
-                ostrm << " " << bool_val;
-                break;
-            case napi_string:
-                !NAPI_OK(napi_get_value_string_utf8(that.env, that.value, str_val, sizeof(str_val) - 1, &str_len), that.env, "Get string value failed");
-                if (str_len >= sizeof(str_val) - 1) strcpy(str_val + sizeof(str_val) - 5, " ...");
-                else str_val[str_len] = '\0';
-                ostrm << " " << str_len << ":'" << str_val << "'";
-                break;
-            case napi_number:
-                !NAPI_OK(napi_get_value_double(that.env, that.value, &float_val), that.env, "Get number value failed");
-                ostrm << " " << float_val;
-                break;
-//show into for array types:
-            case napi_object:
-                if (that.isarybuf())
-                {
-                    void* data;
-                    size_t datalen;
-                    !NAPI_OK(napi_get_arraybuffer_info(that.env, that.value, &data, &datalen), that.env, "Get arybuf info failed");
-                    ostrm << " ARYBUF " << commas(datalen) << ":0x" << std::hex << data << std::dec;
-                    break;
-                }
-                if (that.istypary())
-                {
-                    void* data;
-                    size_t count, bytofs;
-                    napi_thingy arybuf(that.env);
-                    napi_typedarray_type arytype;
-//            ostrm << NVL(TypeName(napval.arytype()), "??ARYTYPE??");
-//            ostrm << "(" << napval.type() << ":" << napval.arytype() << ")";
-                    !NAPI_OK(napi_get_typedarray_info(that.env, that.value, &arytype, &count, &data, &arybuf.value, &bytofs), that.env, "Get typed array info failed");
-                    ostrm << " TYPARY " << TypeName(arytype) << "[" << commas(count) << "] on " << arybuf; //CAUTION: 1 level of recursion
-                    if (bytofs) ostrm << "+0x" << std::hex << bytofs << "=" << data << std::dec; 
-                    break;
-                }
-//napi_external,
-//            default: ostrm << "napi: type " << napval.type(); break;
-        }
-        return ostrm;
-    }
-public: //methods
-//get value:
-    inline bool has_prop(const char* name) { return ::has_prop(env, value, name); }
-    inline bool get_prop(const char* name, napi_value* valp) { return ::get_prop(env, value, name, valp); }
-    inline bool get_prop(const char* name, uint32_t* valp) { return ::get_prop(env, value, name, valp); }
-    inline bool get_prop(const char* name, int32_t* valp) { return ::get_prop(env, value, name, valp); }
-//set new value:
-    inline void cre_null(napi_env new_env) { env = new_env; cre_null(); }
-    inline void cre_undef(napi_env new_env) { env = new_env; cre_undef(); }
-    inline void cre_object(napi_env new_env) { env = new_env; cre_object(); }
-    inline void cre_string(napi_env new_env, std::string str) { env = new_env; cre_string(str); }
-    inline void cre_string(napi_env new_env, const char* buf, size_t len) { env = new_env; cre_string(buf, len); }
-    inline void cre_ext_arybuf(napi_env new_env, void* buf, size_t len) { env = new_env; cre_ext_arybuf(buf, len); }
-    inline void cre_typed_ary(napi_env new_env, napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { env = new_env; cre_typed_ary(type, count, arybuf, bofs); }
-//n/a    inline void cre_bool(napi_env new_env, bool new_val) { env = new_env; cre_bool(new_val); }
-    inline void cre_int32(napi_env new_env, int32_t new_val) { env = new_env; cre_int32(new_val); }
-    inline void cre_uint32(napi_env new_env, uint32_t new_val) { env = new_env; cre_uint32(new_val); }
-    inline void cre_double(napi_env new_env, double new_val) { env = new_env; cre_double(new_val); }
-
-    inline void cre_null() { !NAPI_OK(napi_get_null(env, &value), "Cre null failed"); verify(napi_null); }
-    inline void cre_undef() { !NAPI_OK(napi_get_undefined(env, &value), "Cre undef failed"); verify(napi_undefined); }
-    inline void cre_object() { !NAPI_OK(napi_create_object(env, &value), "Cre obj failed"); verify(napi_object); }
-    inline void cre_string(std::string str) { !NAPI_OK(napi_create_string_utf8(env, str.c_str(), str.length(), &value), "Cre str failed"); verify(napi_string); }
-    inline void cre_string(const char* buf, size_t strlen) { !NAPI_OK(napi_create_string_utf8(env, buf, strlen, &value), "Cre str failed"); verify(napi_string); }
-    inline void cre_ext_arybuf(void* buf, size_t len) { !NAPI_OK(napi_create_external_arraybuffer(env, buf, len, NO_FINALIZE, NO_HINT, &value), "Cre arraybuf failed"); verify(napi_object, isarybuf()); }
-    inline void cre_typed_ary(napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { !NAPI_OK(napi_create_typedarray(env, type, count, arybuf, bofs, &value), "Cre typed array failed"); verify(napi_object, istypary()); }
-//n/a    inline void cre_bool(bool new_val) { !NAPI_OK(napi_create_bool(env, new_val, &value), "Cre bool failed"); show(); }
-    inline void cre_int32(int32_t new_val) { !NAPI_OK(napi_create_int32(env, new_val, &value), "Cre int32 failed"); verify(napi_number); }
-    inline void cre_uint32(uint32_t new_val) { !NAPI_OK(napi_create_uint32(env, new_val, &value), "Cre uint32 failed"); verify(napi_number); }
-    inline void cre_double(double new_val) { !NAPI_OK(napi_create_double(env, new_val, &value), "Cre float failed"); verify(napi_number); }
-    int32_t operator=(const int32_t& new_val) { cre_int32(new_val); return new_val; }
-    uint32_t operator=(const uint32_t& new_val) { cre_uint32(new_val); return new_val; }
-    void verify(napi_valuetype chk_type, bool subtypeok = true) //napi_typedarray_type arytype = 0)
-    {
-        if ((type() != chk_type) || !subtypeok) debug(22, RED_MSG << "failed to create " << TypeName(chk_type) << ENDCOLOR);
-//        else debug(BLUE_MSG << TypeName(chk_type) << " created ok" << ENDCOLOR);
-    }
-};
-//napi_thingy;
-#endif //def SRC_NODE_API_H_ //USE_NAPI
-
-
-#if 0
-//NOTE about napi object lifespan, refs: https://nodejs.org/api/n-api.html#n_api_references_to_objects_with_a_lifespan_longer_than_that_of_the_native_method
-struct napi_autoref //: public napi_ref
-{
-    napi_env env;
-    napi_ref ref;
-//    using super = napi_ref;
-public: //ctors/dtors
-    inline napi_autoref(): ref(nullptr) {}
-//    inline autoref(napi_env new_env, napi_value new_value): autoref(), obj(new_env, new_value)
-    ~napi_autoref() { reset(); }
-public: //operators
-//    inline operator napi_ref() const { return ref; }
-//    operator napi_value() const { return value(); }
-    inline napi_value operator=(const napi_thingy& that) { reset(that); return that.value; }
-public: //methods
-//    napi_thingy value() { return napi_thingy(env, value()); }
-    napi_value value() const
-    {
-        napi_value val;
-        if (!ref) exc_hard("no object ref");
-        if (thrinx()) debug(YELLOW_MSG "wrong thread" ENDCOLOR);
-        !NAPI_OK(napi_get_reference_value(env, ref, &val), "Get ref val failed");
-        return val;
-    }
-    void reset()
-    {
-        if (ref) debug(YELLOW_MSG "del ref to " << value() << ENDCOLOR);
-        if (thrinx()) debug(YELLOW_MSG "wrong thread" ENDCOLOR);
-        if (ref) !NAPI_OK(napi_delete_reference(env, ref), "Del ref failed");
-        ref = nullptr;
-    }
-    void reset(const napi_thingy& that) { reset(that.env, that.value); }
-    void reset(napi_env new_env, napi_value new_value)
-    {
-        reset();
-        env = new_env;
-        if (thrinx()) debug(YELLOW_MSG "wrong thread" ENDCOLOR);
-        !NAPI_OK(napi_create_reference(env, new_value, 1, &ref), "Cre ref failed");
-    }
-};
-#endif
-
-
 //polyfill c++17 methods:
 template <typename TYPE>
 class my_vector: public std::vector<TYPE>
@@ -554,6 +118,34 @@ public:
 };
 
 
+//fixed-content/len vector:
+template <typename TYPE, size_t SIZE>
+class FixedVector
+{
+//public:
+//    static const key_t KEY = 0xbeef0000 | NNNN_hex(SIZE); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
+//    struct shdata
+//    {
+//    int count = 0;
+    TYPE m_list[SIZE];
+//    std::mutex mutex;
+public: //ctors/dtors
+//    str_map(KEYTYPE key, VALTYPE val) {}
+//initializer list example: https://en.cppreference.com/w/cpp/utility/initializer_list
+    FixedVector(std::initializer_list<TYPE> initl): m_list(initl) {}
+public: //methods:
+    inline auto begin() /*const*/ { return &m_list[0]; }
+    inline auto end() /*const*/ { return &m_list[SIZE]; }
+    inline size_t size() /*const*/ { return SIZE; }
+//    void push_back(/*const*/ TYPE& new_item)
+//    {
+////TODO: reserve(), capacity(), grow(), etc
+//        if (count >= SIZEOF(list)) exc_hard("FixedSmhVector<" << SIZE << "> no room");
+//        list[count++] = new_item; //TODO: emplace?
+//    }
+};
+
+
 ////////////////////////////////////////////////////////////////////////////////
 ////
 /// Gpu Port main code:
@@ -561,8 +153,6 @@ public:
 
 #ifdef WANT_REAL_CODE
  #ifdef SRC_NODE_API_H_ //USE_NAPI
-
-#include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
 
 //timing constraints:
 //hres / clock (MHz) = node time (usec):
@@ -603,6 +193,257 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 #define cache_pad  cache_pad_typed //kludge; override macro
 
 
+typedef uint32_t elapsed_msec_t; //20 bits is enough for 5-minute timing using msec
+
+
+//shm struct shared by bkg gpu thread and main/wker render threads:
+struct ShmData
+{
+//    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
+//probably a little too much compile-time init, but here goes ...
+    using NODEVAL = Uint32; //data type for node colors (ARGB)
+    static const napi_typedarray_type GPU_NODE_type = napi_uint32_array; //NOTE: must match NODEVAL type
+    using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
+    using TXTR = SDL_AutoTexture<XFRTYPE>;
+    static const int CACHELEN = 64; //RPi 2/3 reportedly have 32/64 byte cache rows; use larger size to accomodate both
+//settings that must match h/w:
+//TODO: move some of this to run-time or extern #include
+    static const int IOPINS = 24; //total #I/O pins available (h/w dependent); also determined by device overlay
+    static const int HWMUX = 0; //#I/O pins (0..23) to use for external h/w mux
+//derived settings:
+    static const int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX); //max #univ with/out external h/w mux
+//settings that must match (cannot exceed) video config:
+//put 3 most important constraints first, 4th will be dependent on other 3
+//default values are for my layout
+    static const int CLOCK = 52 MHz; //pixel clock speed (constrained by GPU)
+    static const int HTOTAL = 1536; //total x res including blank/sync (might be contrained by GPU); 
+    static const int FPS = 30; //target #frames/sec
+//derived settings:
+    static const int UNIV_MAXLEN_raw = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ; above values give ~1128
+    static const int UNIV_MAXLEN_pad = cache_pad<NODEVAL>(UNIV_MAXLEN_raw); //1132 for above values; padded for better memory cache performance
+//    static const SDL_Size max_wh(NUM_UNIV, UNIV_MAXLEN_pad);
+    typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
+//    using MASK_TYPE = uint32_t; //using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
+//settings determined by s/w:
+    static const int NODEBITS = 24; //# bits to send for each WS281X node (protocol dependent)
+    static const int BIT_SLICES = NODEBITS * 3; //divide each node data bit into 1/3s (last 1/3 of last node bit will overlap hsync)
+    static const unsigned int NODEVAL_MSB = 1 << (NODEBITS - 1);
+    static const int BRIGHTEST = pct(50/60);
+//    static const unsigned int NODEVAL_MASK = 1 << NODEBITS - 1;
+    static const MASK_TYPE UNIV_MASK = (1 << NUM_UNIV) - 1;
+    static const MASK_TYPE ALL_UNIV = UNIV_MASK; //NODEVAL_MASK;
+    static const MASK_TYPE NOT_READY = ALL_UNIV >> (NUM_UNIV / 2); //turn off half the universes to use as intermediate value
+//    std::unique_ptr<NODEVAL> m_nodes; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
+//    using SYNCTYPE = BkgSync<MASK_TYPE, true>;
+    static const int QUELEN = 4; //#render queue entries (circular)
+    static const int SPARELEN = 64;
+    static const int VALIDCHK = 0xf00d1234;
+    static const int VERSION = 0x001812; //0.18.12
+    static const key_t KEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
+//protected: //data members
+public: //data members
+    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1};
+//CAUTION: don't store ptrs; they won't be valid in other procs
+//RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
+    const int m_hdr = VALIDCHK;
+    const int m_ver = VERSION;
+    struct
+    {
+//provide manifest info so other procs can find data of interest within shm seg:
+        const size_t info_ofs = offsetof(ShmData, m_info), info_len = sizeof(m_info);
+        const size_t spare_ofs = offsetof(ShmData, m_spare), spare_len = sizeof(m_spare);
+        const size_t fbque_ofs = offsetof(ShmData, m_fbque), fbque_len = sizeof(m_fbque);
+    } m_manifest;
+    /*alignas(CACHELEN)*/ struct ShmInfo
+    {
+        const int screen;
+        const SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
+        const double frame_time; //kludge: set value here to match txtr; used in FrameInfo
+        Protocol protocol = Protocol::NONE; //WS281X;
+        Protocol prev_protocol = Protocol::CANCEL; //track protocol changes so all nodes can be updated
+//TODO: use alignof here instead of cache_pad
+//    static const napi_typedarray_type perf_stats_type = napi_uint32_array; //NOTE: must match elapsed_t
+        int numfr; //divisor for avg timing stats
+        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+        const elapsed_msec_t started = elapsed_msec();
+//put nodes last in case caller overruns boundary:
+//TODO: use alignof() for node rows
+        explicit ShmInfo(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {}
+    } m_info;
+    const int m_flag1 = VALIDCHK;
+    alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg
+    const int m_flag2 = VALIDCHK;
+    alignas(CACHELEN) struct FramebufQuent
+    {
+        /*alignas(CACHELEN)*/ struct
+        {
+            std::atomic<int32_t> frnum, prevfr;
+            std::atomic<elapsed_msec_t> frtime, prevtime;
+            std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
+        } frinfo; //per-frame state info
+//        uint8_t pad[];
+        /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+    };
+    FixedVector<FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
+    const int m_tlr = VALIDCHK;
+//    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
+public: //ctors/dtors
+//    explicit ShmData(int new_screen, const SDL_Size& new_wh, double new_frame_time): info(new_screen, new_wh, new_frame_time) {}
+    explicit ShmData(): m_info(-1, SDL_Size(0, 0), 0) {} //set junk values until bkg wker starts
+    ~ShmData() {}
+public: //methods:
+    bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
+    void init_fbque()
+    {
+        for (auto it: fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
+        {
+            it->ready = 0;
+            it->frinfo.frnum = i;
+            it->frinfo.prevfr = -1;
+//            fbque[i].frtime = fbque[i].prevtime = 0;
+//NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
+            for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+        }
+//init stats also:
+        m_info.numfr = 0;
+        memset(&m_info.perf_stats[0], 0, sizeof(m_info.perf_stats));
+    }
+//start bkg gpu wker; this "opens" the gpu port
+//NOTE: this should be run on a separate thread so it doesn't block the Node event loop
+//NOTE also: SDL is not thread-safe, so it needs to be a dedicated thread
+    void gpu_wker(int NUMFR = -1, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, int vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
+    {
+//nodes: #univ x univ_len, txtr: 3 * 24 x univ len, view (clipped): 3 * 24 - 1 x univ len
+//debug("here50" ENDCOLOR);
+        SDL_Size view;
+        info.wh.w = NUM_UNIV; //nodes
+        view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
+        view.h = wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), static_cast<int>(SIZEOF(fbque[0].node[0]))); //univ len == display height
+
+        const ScreenConfig* const m_cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
+        if (!m_cfg) exc_hard("can't get screen %d config");
+        frame_time = m_cfg->frame_time();
+        if (!frame_time /*|| !m_cfg->dot_clock || !m_cfg->htotal || !m_cfg->vtotal*/) frame_time = 1.0 / FPS_CONSTRAINT(NVL(m_cfg->dot_clock * 1000, CLOCK), NVL(m_cfg->htotal, HTOTAL), NVL(m_cfg->vtotal, UNIV_MAXLEN_raw)); //estimate from known info
+        debug(CYAN_MSG "start bkg gpu wker: screen %d " << *m_cfg << ", wh " << *wh << ENDCOLOR_ATLINE(srcline), screen);
+//        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
+//        m_debug3(m_view.h),
+//TODO: don't recreate if already exists with correct size
+//debug("here51" ENDCOLOR);
+//{ DebugInOut("assgn new txtr", SRCLINE);
+        SDL_Size txtr_wh(BIT_SLICES, wh.h);
+//        ShmData::TXTR txtr(ShmData::TXTR::NullOkay{}); //leave empty until bkg thread starts
+//        m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
+        TXTR txtr = TXTR::create(NAMED{ _.wh = &txtr_wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
+//        m_txtr = newtxtr; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
+        xfr(std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE)), //protocol bit-banger shim
+        txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
+//}
+        debug(19, BLUE_MSG "txtr after reset " << m_txtr << ENDCOLOR);
+        init_fbque();
+//debug("here52" ENDCOLOR);
+//        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
+//done by main:        dirty.store(0); //first sync with client thread(s)
+//debug("here53" ENDCOLOR);
+//TODO?        wrap(env);
+//debug("here54" ENDCOLOR);
+//        if (UNIV_LEN > UNIV_MAX) exc_soft(RED_MSG "video settings " << *m_cfg << ", vgroup " << vgroup << " require univ len " << UNIV_LEN << " exceeding max " << UNIV_MAX << " allowed by compiled node buf" << ENDCOLOR_ATLINE(srcline));
+//        size_t len = new_wh.w * new_wh.h;
+//        m_nodes.reset(new NODEVAL[len]);
+
+//        std::thread bkg([/*env,*/ aoptr]() //env, screen, vgroup, init_color]()
+//        napi_status status;
+//        ExecuteWork(env, addon_data);
+//        WorkComplete(env, status, addon_data);
+        debug(12, PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, this, isvalid());
+//        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
+//        !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
+//        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
+//        aoptr->islistening(true);
+//        aoptr->start(); //env);
+//no; let it die (for dev/debug)        try
+//        {
+//        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
+        for (int frnum = 0; frnum < NUMFR; m_info.numfr = ++frnum) //int i = 0; i < 5; ++i)
+//        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
+        {
+//        let qent = frnum % frctl.length; //simple, circular queue
+            FramebufQuent* it = m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
+            if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum, frnum); //main is only writer; this shouldn't happen!
+            while (it->ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
+            {
+                debug(YELLOW_MSG "fr[%d/%d] not ready: ${hex(frctl[qent].ready)}, main waiting for wkers to render ..." ENDCOLOR, frnum, NUMFR);
+                SDL_wait(2 msec); //timing is important; don't wait longer than needed
+            }
+//            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
+//TODO: tweening for missing/!ready frames?
+//        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
+//        const decltype(m_frinfo.elapsed_msec()) /*elapsed_t*/ overdue = m_opts.frtime_msec? m_frinfo.elapsed_msec() - numfr.load() * m_opts.frtime_msec: 0, delay = (overdue < -TIMING_SLOP/2)? -overdue: 0;
+//        const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
+//        debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
+//        if (delay) SDL_Delay(delay); //delay if early
+            debug(BLUE_MSG "xfr fr[%d/%d] to gpu, protocol " << m_info.protocol << " ... " ENDCOLOR, rnum, NUMFR);
+            if (m_info.protocol == CANCEL) break;
+            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &perf_stats[1]; _.xfr = m_xfr; _.refill = refill; SRCLINE; });
+//            m_info.numfr = frnum + 1;
+//TODO: pivot/update txtr, update screen (NON-BLOCKING)
+//make frbuf ready available a new frame:
+            it->ready = 0;
+            it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
+//        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
+//        perf[0].numfr = frnum + 1;
+//        perf[0].update(true);
+//                DebugInOut("call fats for fr# " << commas(aoptr->/*m_frinfo.*/numfr.load()) << ", wait for 0x" << std::hex << Nodebuf::ALL_UNIV << std::dec << " (blocking)", SRCLINE);
+//                !NAPI_OK(napi_call_threadsafe_function(aoptr->fats, aoptr, napi_tsfn_blocking), "Can't call JS fats");
+//            while (aoptr->islistening()) //break; //allow cb to break out of playback loop
+//    typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+//                aoptr->dirty.wait(Nodebuf::ALL_UNIV, [aoptr](){ return !aoptr->islistening(); }, true, SRCLINE); //CAUTION: blocks until al univ ready or caller cancelled
+//                const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE};
+//                for (int i = 0; i < SIZEOF(aoptr->m_nodebuf.nodes); ++i) aoptr->m_nodebuf.nodes[0][i] = palette[aoptr->numfr.load() % SIZEOF(palette)];
+//                if (aoptr->numfr.load() >= 10) break;
+//                debug(12, BLUE_MSG "bkg woke from fr# %s with ready 0x%x, caller listening? %d" ENDCOLOR, commas(aoptr->numfr.load()), aoptr->dirty.load(), aoptr->islistening());
+//                if (!aoptr->islistening()) break;
+//                SDL_Delay(1 sec);
+//                aoptr->update(); //env);
+//            }
+//            SDL_Delay(1 sec);
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+        }
+//        catch (...)
+//        {
+//            aoptr->excptr = std::current_exception(); //allow main thread to rethrow
+//            debug(12, RED_MSG "bkg wker exc: %s" ENDCOLOR, aoptr->exc_reason().c_str());
+//            aoptr->islistening(false); //listener.busy = true; //(void*)1;
+//        }
+//        aoptr->stop(); //env);
+//        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
+//        aoptr->fats = NULL;
+//        aodata->listener.busy = false; //work = 0;
+        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(aoptr->/*m_frinfo.*/numfr.load()));
+//    bkg.detach();
+    }
+};
+
+
+//addon state/context data:
+//using structs to allow inline member init
+//#define GpuPortData  GpuPortData_new
+struct GpuPortData
+{
+//    AutoShmary<ShmData> m_shdata;
+    ShmData* m_shdata = 0;
+    const elapsed_msec_t m_started = now_msec();
+    const SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+public: //ctors/dtors
+    GpuPortData(SrcLine srcline = 0): m_shdata(ShmData::KEY, NVL(srcline, SRCLINE)) {}
+    {
+
+    }
+public: //methods:
+};
+
+
+#if 1
+#define GpuPortData  GpuPortData_old
 struct Nodebuf
 {
 //    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
@@ -1903,6 +1744,8 @@ public:
 protected: //private data members
     const int valid2 = VALID; //put one at start and one at end
 };
+#undef GpuPortData  //GpuPortData_old
+#endif
 
 
 //limit brightness:
@@ -1913,7 +1756,7 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
     if (!env) return NULL; //Node cleanup mode?
     DebugInOut("Limit_napi", SRCLINE);
 
-    GpuPortData* aoptr;
+    GpuPortData_old* aoptr;
     napi_value argv[1+1], This; //allow 1 extra arg to check for extras
     size_t argc = SIZEOF(argv);
 //    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
@@ -2001,7 +1844,7 @@ static void Listen_cb(napi_env env, napi_value jsfunc, void* context, void* data
 
   // Retrieve the prime from the item created by the worker thread.
 //    int the_prime = *(int*)data;
-    GpuPortData* aoptr = static_cast<GpuPortData*>(data);
+    GpuPortData_old* aoptr = static_cast<GpuPortData_old*>(data);
     debug(17, BLUE_MSG "listen js cb func: aodata %p, valid? %d, listening? %d, context %p, clup mode? %d" ENDCOLOR, aoptr, aoptr->isvalid(), aoptr->isvalid()? aoptr->islistening(): false, context, !env);
     aoptr->isvalid(env, SRCLINE);
 //no; allow one last time    if (!aoptr->islistening()) return;
@@ -2087,7 +1930,7 @@ napi_value Listen_NAPI(napi_env env, napi_callback_info info)
     if (!env) return NULL; //Node cleanup mode?
     DebugInOut("Listen_napi", SRCLINE);
 
-    GpuPortData* aoptr;
+    GpuPortData_old* aoptr;
     napi_value argv[2+1], This; //allow 1 extra arg to check for extras
     size_t argc = SIZEOF(argv);
 //    if (!env) return NULL; //Node cleanup mode
@@ -2200,8 +2043,8 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     debug(9, BLUE_MSG "using Node v" << ver->major << "." << ver->minor << "." << ver->patch << " (" << ver->release << "), N-API v" << napi_ver << ENDCOLOR);
     exports = module_exports(env, exports); //include previous exports
 
-    std::unique_ptr<GpuPortData> aodata(new GpuPortData(/*env,*/ SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
-    GpuPortData* aoptr = aodata.get();
+    std::unique_ptr<GpuPortData_old> aodata(new GpuPortData_old(/*env,*/ SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
+    GpuPortData_old* aoptr = aodata.get();
     debug(11, BLUE_MSG "aodata %p, &node[0][0[0] %p" ENDCOLOR, aoptr, &aoptr->m_nodebq[0].nodes[0][0]);
     inout.checkpt("cre data");
 //    aoptr->isvalid(env);
@@ -2304,7 +2147,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     napi_finalize /*std::function<void(napi_env, void*, void*)>*/ addon_final = [](napi_env env, void* data, void* hint)
     {
         UNUSED(hint);
-        GpuPortData* aoptr = static_cast<GpuPortData*>(data); //(GpuPortData*)data;
+        GpuPortData_old* aoptr = static_cast<GpuPortData_old*>(data); //(GpuPortData*)data;
 //    if (!env) return; //Node cleanup mode
         debug(9, RED_MSG "addon final: aodata %p, valid? %d, hint %p" ENDCOLOR, aoptr, aoptr->isvalid(), hint);
         aoptr->isvalid(env);
