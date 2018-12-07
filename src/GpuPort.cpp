@@ -123,6 +123,7 @@ public:
 //#include <vector>
 #include <algorithm>
 #include <iterator>
+#include <initializer_list>
 //#include <cassert>
 
 //fixed-content/len vector:
@@ -144,7 +145,7 @@ public: //ctors/dtors
     explicit PreallocVector(std::initializer_list<TYPE> initl): m_list(initl) {}
 public: //operators:
     inline TYPE& operator[](int inx) { return m_list[inx]; } //TODO: bounds checking?
-    inline const TYPE& operator[](int index) const { return m_list[inx]; }
+    inline const TYPE& operator[](int inx) const { return m_list[inx]; }
 public: //iterators
 //no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
 //no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
@@ -191,16 +192,40 @@ public: //iterators
         TYPE* m_ptr;
     };
 #else
-http://cpp-tip-of-the-day.blogspot.com/2014/05/building-custom-iterators.html
+//http://cpp-tip-of-the-day.blogspot.com/2014/05/building-custom-iterators.html
+//custom iterators need to implement:
+//ctors, copy ctor, assignment op, inc, dec, deref
+//complete list is at: http://www.cplusplus.com/reference/iterator/iterator/
+    template<typename ITER_TYPE = TYPE>
+    class my_iter
+    {
+    public: //ctors/dtors
+        explicit inline my_iter(PreallocVector& vec, size_t inx = 0): m_ptr(&vec[inx]) {}
+        inline my_iter(const my_iter& that): m_ptr(that.m_ptr) {} //copy ctor
+        inline my_iter(ITER_TYPE* that): m_ptr(that) {} //custom copy ctor for post++ op
+    public: //operators
+//        inline my_iter& operator=(const my_iter& that) { m_ptr = that.m_ptr; return *this; }
+//        inline size_t operator-(const TYPE* that) const { return m_ptr - that.m_ptr; }
+        friend size_t operator-(/*const*/ my_iter& lhs, const my_iter& rhs) { return lhs.m_ptr - rhs.m_ptr; }
+        inline bool operator==(const my_iter& that) const { return (that.m_ptr == m_ptr); } //*this == that
+        inline bool operator!=(const my_iter& that) const { return !(that.m_ptr == m_ptr); } //!(*this == that)
+//        inline my_iter& operator=(TYPE* that) { m_ptr = that; return *this; }
+        inline my_iter& operator++() { ++m_ptr; return *this; } //pre-inc; TODO: bounds check?
+        inline my_iter operator++(int) { my_iter pre_inc(m_ptr++); return pre_inc; } //post-inc
+        inline ITER_TYPE& operator*() { return *m_ptr; } //deref op; eg: (*it).member
+        inline ITER_TYPE* operator->() { return m_ptr; } //deref op; eg: it->member
+    private: //data members
+        ITER_TYPE* m_ptr;
+    };
 #endif
 public: //methods:
 //no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
 //no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
-    inline /*auto*/ /*TYPE* */ my_iter begin() const { return my_iter(&m_list[0]); }
-    inline /*auto*/ /*TYPE* */ my_const_iter cbegin() const { return my_const_iter(&m_list[0]); }
+    inline /*auto*/ /*TYPE* */ my_iter<TYPE> begin() /*const*/ { return my_iter<TYPE>(&m_list[0]); }
+    inline /*auto*/ /*TYPE* */ my_iter<const TYPE> cbegin() const { return my_iter<const TYPE>(&m_list[0]); }
 //    vector<string>::iterator iter;
-    inline /*auto*/ /*TYPE* */ my_iter end() const { return my_iter(&m_list[SIZE]); }
-    inline /*auto*/ /*TYPE* */ my_const_iter cend() const { return my_const_iter(&m_list[SIZE]); }
+    inline /*auto*/ /*TYPE* */ my_iter<TYPE> end() /*const*/ { return my_iter<TYPE>(&m_list[SIZE]); }
+    inline /*auto*/ /*TYPE* */ my_iter<const TYPE> cend() const { return my_iter<const TYPE>(&m_list[SIZE]); }
     inline size_t size() const { return SIZE; }
 //    void push_back(/*const*/ TYPE& new_item)
 //    {
@@ -355,6 +380,7 @@ public: //data members
         int numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) + 1> perf_stats;
+        char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
         const elapsed_t started = now(); //elapsed();
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
@@ -375,9 +401,11 @@ public: //data members
             ostrm << ", #fr " << commas(that.numfr);
             ostrm << ", perf [";
 //            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
-            for (const auto it: that.perf_stats)
-                ostrm << ", "[(it == that.perf_stats.begin())? 0: 2] << (*it / std::max(that.numfr, 1));
+//broken            for (const auto it: that.perf_stats)
+            for (/*const*/ auto it = that.perf_stats.cbegin(); it != that.perf_stats.cend(); ++it)
+                ostrm << ", "[(it == that.perf_stats.cbegin())? 0: 2] << (*it / std::max(that.numfr, 1));
             ostrm << " avg msec]";
+            if (that.exc_reason[0]) ostrm << ", exc '" << that.exc_reason << "'";
             ostrm << ", age " << commas(elapsed(that.started)) << " msec";
             return ostrm << "}";
         }
@@ -396,7 +424,7 @@ public: //data members
 //        uint8_t pad[];
         /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
     public: //ctors/dtors
-//        FramebufQuent()
+//        FramebufQuent() //: frnum(0), prevfr(0), frtime(0), prevtime(0), ready(0) //need to init to avoid "deleted function" errors
 //        {
 //            frnum.store(0); prevfr.store(0);
 //            frtime.store(0); prevtime.store(0;
@@ -437,8 +465,9 @@ public: //operators
         ostrm << ", manifest " << that.m_manifest;
         ostrm << ", info " << that.m_info;
         ostrm << ", que [";
-        for (auto it: that.m_fbque)
-            ostrm << ", "[(it == that.m_fbque.begin())? 0: 2] << *it;
+//broken        for (const auto it: that.m_fbque)
+        for (/*const*/ auto it = that.m_fbque.cbegin(); it != that.m_fbque.cend(); ++it)
+            ostrm << ", "[(it == that.m_fbque.cbegin())? 0: 2] << *it;
         return ostrm << "}";
     }
 public: //methods:
@@ -446,14 +475,15 @@ public: //methods:
     void init_fbque()
     {
 //set up first round of framebufs to be processed by wker threads:
-        for (auto it: m_fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
+//broken        for (auto it: m_fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
+        for (auto it = m_fbque.begin(); it != m_fbque.end(); ++it)
         {
             it->ready = 0;
             it->frnum = it - m_fbque.begin(); //initially set to 0, 1, 2, ...
             it->prevfr = -1; //no previous frame
 //            fbque[i].frtime = fbque[i].prevtime = 0;
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
-            for (int i = 0; i < SIZEOF_2D((*it).nodes); ++i) (*it).nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+            for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
         }
 //also init gpu wker stats:
         m_info.numfr = 0;
@@ -464,34 +494,38 @@ public: //methods:
 //NOTE also: SDL is not thread-safe, so it needs to be a dedicated thread
     void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
     {
+        std::string exc_msg;
+//        strcpy(m_info.exc_reason, "");
+        try //TODO: let it die (for dev/debug)?
+        {
 //nodes: #univ x univ_len, txtr: 3 * 24 x univ len, view (clipped): 3 * 24 - 1 x univ len
 //debug("here50" ENDCOLOR);
-        SDL_Size view;
-        m_info.wh.w = NUM_UNIV; //nodes
-        view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
-        view.h = m_info.wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), /*static_cast<int>*/SIZEOF(m_fbque[0].nodes[0])); //univ len == display height
-        const ScreenConfig* const cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
-        if (!cfg) exc_hard("can't get screen %d config");
-        m_info.screen = cfg->screen;
+            SDL_Size view;
+            m_info.wh.w = NUM_UNIV; //nodes
+            view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
+            view.h = m_info.wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), /*static_cast<int>*/SIZEOF(m_fbque[0].nodes[0])); //univ len == display height
+            const ScreenConfig* const cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
+            if (!cfg) exc_hard("can't get screen %d config");
+            m_info.screen = cfg->screen;
 //        /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ m_info.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
         /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ (m_info.frame_time = cfg->frame_time()) || (m_info.frame_time = 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-        debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ENDCOLOR_ATLINE(srcline), screen);
+           debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ENDCOLOR_ATLINE(srcline), screen);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size
 //debug("here51" ENDCOLOR);
 //{ DebugInOut("assgn new txtr", SRCLINE);
-        SDL_Size txtr_wh(BIT_SLICES, m_info.wh.h);
+            SDL_Size txtr_wh(BIT_SLICES, m_info.wh.h);
 //        ShmData::TXTR txtr(ShmData::TXTR::NullOkay{}); //leave empty until bkg thread starts
 //        m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
-        TXTR txtr = TXTR::create(NAMED{ _.wh = &txtr_wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
+            TXTR txtr = TXTR::create(NAMED{ _.wh = &txtr_wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
 //        m_txtr = newtxtr; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
-        TXTR::XFR xfr = std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE); //protocol bit-banger shim
+            TXTR::XFR xfr = std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE); //protocol bit-banger shim
 //TODO: refill not needed?
-        txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
+            txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
-        debug(19, BLUE_MSG "txtr after reset " << txtr << ENDCOLOR);
-        init_fbque();
+            debug(19, BLUE_MSG "txtr after reset " << txtr << ENDCOLOR);
+            init_fbque();
 //debug("here52" ENDCOLOR);
 //        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
 //done by main:        dirty.store(0); //first sync with client thread(s)
@@ -506,26 +540,25 @@ public: //methods:
 //        napi_status status;
 //        ExecuteWork(env, addon_data);
 //        WorkComplete(env, status, addon_data);
-        debug(12, PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, this, isvalid());
+            debug(12, PINK_MSG "bkg: aodata %p, valid? %d" ENDCOLOR, this, isvalid());
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
 //        !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
 //        aoptr->islistening(true);
 //        aoptr->start(); //env);
-//no; let it die (for dev/debug)        try
-//        {
+//        try{
 //        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
-        for (int frnum = 0; frnum < NUMFR; m_info.numfr = ++frnum) //int i = 0; i < 5; ++i)
+            for (int frnum = 0; frnum < NUMFR; m_info.numfr = ++frnum) //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
-        {
-//        let qent = frnum % frctl.length; //simple, circular queue
-            FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
-            if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
-            while (it->ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
             {
-                debug(15, YELLOW_MSG "fr[%d/%d] not ready: 0x%x, main waiting for wkers to render ..." ENDCOLOR, frnum, NUMFR, it->ready.load());
-                SDL_Delay(2 msec); //timing is important; don't wait longer than needed
-            }
+//        let qent = frnum % frctl.length; //simple, circular queue
+                FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
+                if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
+                while (it->ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
+                {
+                    debug(15, YELLOW_MSG "fr[%d/%d] not ready: 0x%x, main waiting for wkers to render ..." ENDCOLOR, frnum, NUMFR, it->ready.load());
+                    SDL_Delay(2 msec); //timing is important; don't wait longer than needed
+                }
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -533,15 +566,15 @@ public: //methods:
 //        const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
 //        debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
 //        if (delay) SDL_Delay(delay); //delay if early
-            m_info.perf_stats[0] += txtr.perftime(); //measure caller's time (presumably for rendering); //1000); //ipc wait time (msec)
-            debug(15, BLUE_MSG "xfr fr[%d/%d] to gpu, protocol " << m_info.protocol << " ... " ENDCOLOR, frnum, NUMFR);
-            if (m_info.protocol == Protocol::CANCEL) break;
-            VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_info.perf_stats[1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
+                m_info.perf_stats[0] += txtr.perftime(); //measure caller's time (presumably for rendering); //1000); //ipc wait time (msec)
+                debug(15, BLUE_MSG "xfr fr[%d/%d] to gpu, protocol " << m_info.protocol << " ... " ENDCOLOR, frnum, NUMFR);
+                if (m_info.protocol == Protocol::CANCEL) break;
+                VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_info.perf_stats[1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
 //            m_info.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)
 //make frbuf ready available a new frame:
-            it->ready = 0;
-            it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
+                it->ready = 0;
+                it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
 //        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
 //        perf[0].numfr = frnum + 1;
 //        perf[0].update(true);
@@ -560,18 +593,22 @@ public: //methods:
 //            }
 //            SDL_Delay(1 sec);
 //https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+            }
+//            debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(m_info.numfr));
         }
-//        catch (...)
-//        {
-//            aoptr->excptr = std::current_exception(); //allow main thread to rethrow
-//            debug(12, RED_MSG "bkg wker exc: %s" ENDCOLOR, aoptr->exc_reason().c_str());
+        catch (const std::exception& exc) { exc_msg = exc.what(); }
+        catch (...) { exc_msg = "??EXC??"; }
+//            std::exception_ptr excptr; //= nullptr; //init redundant (default init)
+//            excptr = std::current_exception(); //allow main thread to rethrow
+        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames" ENDCOLOR, exc_msg.c_str(), commas(m_info.numfr));
+        else debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(m_info.numfr));
+        strncpy(m_info.exc_reason, exc_msg.c_str(), sizeof(m_info.exc_reason));
+        m_info.protocol = Protocol::CANCEL;
 //            aoptr->islistening(false); //listener.busy = true; //(void*)1;
-//        }
 //        aoptr->stop(); //env);
 //        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
 //        aoptr->fats = NULL;
 //        aodata->listener.busy = false; //work = 0;
-        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(m_info.numfr));
 //    bkg.detach();
     }
 public: //named arg variants
