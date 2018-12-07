@@ -44,7 +44,7 @@
 //https://github.com/master-atul/blog-addons-example
 
 
-//restart wifi:
+//to restart wifi on ununtu:
 //sudo service network-manager restart
 
 #include <sstream> //std::ostringstream
@@ -52,13 +52,14 @@
 #include <functional> //std::bind()
 #include <string> //std::string
 #include <map> //std::map<>
+#include <limits.h> //INT_MAX
 
 #include "str-helpers.h" //unmap(), NNNN_hex()
 #include "thr-helpers.h" //thrnx()
 #include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
-#include "elapsed.h" //elapsed_msec(), timestamp(), now()
+//#include "elapsed.h" //elapsed_msec(), timestamp(), now()
 #include "msgcolors.h"
-#include "debugexc.h"
+#include "debugexc.h" //debug(), exc(), INSPECT()
 
 //which Node API to use?
 //V8 is older, requires more familiarity with V8
@@ -104,10 +105,10 @@
 
 
 //polyfill c++17 methods:
-template <typename TYPE>
-class my_vector: public std::vector<TYPE>
+template <typename TYPE, typename super = std::vector<TYPE>> //2nd arg to help stay DRY
+class my_vector: public super //std::vector<TYPE>
 {
-    using super = std::vector<TYPE>;
+//    using super = std::vector<TYPE>;
 public:
     template <typename ... ARGS>
     TYPE& emplace_back(ARGS&& ... args)
@@ -118,9 +119,16 @@ public:
 };
 
 
+//#include <iostream>
+//#include <vector>
+#include <algorithm>
+#include <iterator>
+//#include <cassert>
+
 //fixed-content/len vector:
+//NOTE: don't store any member data except the list of values
 template <typename TYPE, size_t SIZE>
-class FixedVector
+class PreallocVector
 {
 //public:
 //    static const key_t KEY = 0xbeef0000 | NNNN_hex(SIZE); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
@@ -131,12 +139,69 @@ class FixedVector
 //    std::mutex mutex;
 public: //ctors/dtors
 //    str_map(KEYTYPE key, VALTYPE val) {}
+    explicit PreallocVector() {}
 //initializer list example: https://en.cppreference.com/w/cpp/utility/initializer_list
-    FixedVector(std::initializer_list<TYPE> initl): m_list(initl) {}
+    explicit PreallocVector(std::initializer_list<TYPE> initl): m_list(initl) {}
+public: //operators:
+    inline TYPE& operator[](int inx) { return m_list[inx]; } //TODO: bounds checking?
+    inline const TYPE& operator[](int index) const { return m_list[inx]; }
+public: //iterators
+//no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
+//no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
+#if 0
+//see example at https://gist.github.com/jeetsukumaran/307264
+    template <typename ITER_TYPE> //keep it DRY; use templ param to select "const"
+    class iter
+    {
+    public:
+        typedef std::iterator self_type;
+//        typedef const_iterator self_type;
+        typedef ITER_TYPE value_type;
+        typedef ITER_TYPE& reference;
+        typedef ITER_TYPE* pointer;
+        typedef std::forward_iterator_tag iterator_category;
+        typedef int difference_type;
+        inline std::iterator(pointer ptr): ptr_(ptr) {}
+//        const_iterator(pointer ptr) : ptr_(ptr) { }
+        inline self_type operator++() { self_type i = *this; ++ptr_; return i; }
+        inline self_type operator++(int junk) { ++ptr_; return *this; }
+        inline reference operator*() { return *ptr_; }
+//        const reference operator*() { return *ptr_; }
+        inline pointer operator->() { return ptr_; }
+//        const pointer operator->() { return ptr_; }
+        inline bool operator==(const self_type& rhs) { return (ptr_ == rhs.ptr_); }
+        inline bool operator!=(const self_type& rhs) { return (ptr_ != rhs.ptr_); }
+    private:
+        pointer ptr_;
+    };
+    using my_iter = iter<TYPE>;
+    using my_const_iter = iter<const TYPE>;
+#elif 0
+//https://lorenzotoso.wordpress.com/2016/01/13/defining-a-custom-iterator-in-c/
+    class my_iter: public std::iterator</*Category*/ std::output_iterator_tag, /*class T*/ TYPE> //, class Distance = ptrdiff_t, class Pointer = T*, class Reference = T&
+    {
+    public:
+        explicit inline my_iter(PreallocVector& Container, size_t index = 0): m_ptr(&Container[index]) {}
+        inline TYPE operator*() const { return *m_ptr; }
+        inline iterator& operator++() { return *m_ptr++; }
+        inline iterator operator++(int junk) { return *++m_ptr; }
+    private:
+//        size_t nIndex = 0;
+//        CustomContainer& Container;
+        TYPE* m_ptr;
+    };
+#else
+http://cpp-tip-of-the-day.blogspot.com/2014/05/building-custom-iterators.html
+#endif
 public: //methods:
-    inline auto begin() /*const*/ { return &m_list[0]; }
-    inline auto end() /*const*/ { return &m_list[SIZE]; }
-    inline size_t size() /*const*/ { return SIZE; }
+//no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
+//no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
+    inline /*auto*/ /*TYPE* */ my_iter begin() const { return my_iter(&m_list[0]); }
+    inline /*auto*/ /*TYPE* */ my_const_iter cbegin() const { return my_const_iter(&m_list[0]); }
+//    vector<string>::iterator iter;
+    inline /*auto*/ /*TYPE* */ my_iter end() const { return my_iter(&m_list[SIZE]); }
+    inline /*auto*/ /*TYPE* */ my_const_iter cend() const { return my_const_iter(&m_list[SIZE]); }
+    inline size_t size() const { return SIZE; }
 //    void push_back(/*const*/ TYPE& new_item)
 //    {
 ////TODO: reserve(), capacity(), grow(), etc
@@ -193,10 +258,11 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 #define cache_pad  cache_pad_typed //kludge; override macro
 
 
-typedef uint32_t elapsed_msec_t; //20 bits is enough for 5-minute timing using msec
+//typedef uint32_t elapsed_t; //20 bits is enough for 5-minute timing using msec; 32 bits is plenty
 
 
-//shm struct shared by bkg gpu thread and main/wker render threads:
+//shm struct shared by bkg gpu wker thread and main/renderer threads:
+//CAUTION: don't store ptrs; they won't be valid in other procs
 struct ShmData
 {
 //    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
@@ -242,103 +308,189 @@ struct ShmData
     static const key_t KEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
 //protected: //data members
 public: //data members
-    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1};
-//CAUTION: don't store ptrs; they won't be valid in other procs
+    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Protocol& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    {
+        static const std::map<Protocol, const char*> names =
+        {
+            {Protocol::NONE, "NONE"},
+            {Protocol::DEV_MODE, "DEV MODE"},
+            {Protocol::WS281X, "WS281X"},
+            {Protocol::CANCEL, "CANCELLED"},
+        };
+        return ostrm << NVL(unmap(names, that), "??PROTOCOL??");
+    }
+//bkg gpu wker stores private data on stack or heap
 //RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
     const int m_hdr = VALIDCHK;
     const int m_ver = VERSION;
-    struct
+    struct ManifestType
     {
 //provide manifest info so other procs can find data of interest within shm seg:
         const size_t info_ofs = offsetof(ShmData, m_info), info_len = sizeof(m_info);
         const size_t spare_ofs = offsetof(ShmData, m_spare), spare_len = sizeof(m_spare);
         const size_t fbque_ofs = offsetof(ShmData, m_fbque), fbque_len = sizeof(m_fbque);
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ManifestType& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        { 
+//            ostrm << "manifest"; //<< my_templargs();
+//            ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+//        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+            ostrm << "{info " << commas(that.info_len) << ":+" << commas(that.info_ofs);
+            ostrm << ", spare " << commas(that.spare_len) << ":+" << commas(that.spare_ofs);
+            ostrm << ", fbque " << commas(that.fbque_len) << ":+" << commas(that.fbque_ofs);
+            return ostrm << "}";
+        }
     } m_manifest;
     /*alignas(CACHELEN)*/ struct ShmInfo
     {
-        const int screen;
-        const SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
-        const double frame_time; //kludge: set value here to match txtr; used in FrameInfo
+        CONST int screen;
+        CONST SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
+        CONST double frame_time; //kludge: set value here to match txtr; used in FrameInfo
         Protocol protocol = Protocol::NONE; //WS281X;
         Protocol prev_protocol = Protocol::CANCEL; //track protocol changes so all nodes can be updated
 //TODO: use alignof here instead of cache_pad
 //    static const napi_typedarray_type perf_stats_type = napi_uint32_array; //NOTE: must match elapsed_t
         int numfr; //divisor for avg timing stats
-        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
-        const elapsed_msec_t started = elapsed_msec();
+//        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
+        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) + 1> perf_stats;
+        const elapsed_t started = now(); //elapsed();
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
+    public: //ctors/dtors
         explicit ShmInfo(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {}
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ShmInfo& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        { 
+//            ostrm << "manifest"; //<< my_templargs();
+//            ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+//        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+            ostrm << "{screen " << that.screen;
+            ostrm << ", wh " << that.wh << " nodes";
+            ostrm << ", frame_time " << that.frame_time << " msec";
+            ostrm << ", protocol " << that.protocol; //NVL(unmap(names, that.protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
+            ostrm << ", previous " << that.prev_protocol; //NVL(unmap(names, that.prev_protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
+            ostrm << ", #fr " << commas(that.numfr);
+            ostrm << ", perf [";
+//            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
+            for (const auto it: that.perf_stats)
+                ostrm << ", "[(it == that.perf_stats.begin())? 0: 2] << (*it / std::max(that.numfr, 1));
+            ostrm << " avg msec]";
+            ostrm << ", age " << commas(elapsed(that.started)) << " msec";
+            return ostrm << "}";
+        }
     } m_info;
     const int m_flag1 = VALIDCHK;
     alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg
     const int m_flag2 = VALIDCHK;
     alignas(CACHELEN) struct FramebufQuent
     {
-        /*alignas(CACHELEN)*/ struct
-        {
-            std::atomic<int32_t> frnum, prevfr;
-            std::atomic<elapsed_msec_t> frtime, prevtime;
-            std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
-        } frinfo; //per-frame state info
+//        /*alignas(CACHELEN)*/ struct
+//        {
+        std::atomic<int32_t> frnum, prevfr;
+        std::atomic<elapsed_t> frtime, prevtime;
+        std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
+//        } frinfo; //per-frame state info
 //        uint8_t pad[];
         /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+    public: //ctors/dtors
+//        FramebufQuent()
+//        {
+//            frnum.store(0); prevfr.store(0);
+//            frtime.store(0); prevtime.store(0;
+//            ready.store(0);
+//        }
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FramebufQuent& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        { 
+            ostrm << "{fr# " << commas(that.frnum) << ", prev " << commas(that.prevfr);
+            ostrm << ", fr time " << commas(that.frtime) << ", prev " << commas(that.prevtime) << " msec";
+            ostrm << ", ready 0x " << std::hex << that.ready << std::dec;
+            SDL_Size wh(SIZEOF(nodes), SIZEOF(nodes[0]));
+            ostrm << ", nodes " << wh;
+            return ostrm << "}";
+        }
     };
-    FixedVector<FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
+    PreallocVector<FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
     const int m_tlr = VALIDCHK;
 //    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
 public: //ctors/dtors
 //    explicit ShmData(int new_screen, const SDL_Size& new_wh, double new_frame_time): info(new_screen, new_wh, new_frame_time) {}
-    explicit ShmData(): m_info(-1, SDL_Size(0, 0), 0) {} //set junk values until bkg wker starts
-    ~ShmData() {}
+    explicit ShmData(): m_info(-1, SDL_Size(0, 0), 0) { INSPECT(GREEN_MSG "ctor " << *this << ENDCOLOR); } //set junk values until bkg wker starts
+    ~ShmData() { INSPECT(RED_MSG "dtor " << *this << ENDCOLOR); }
+public: //operators
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ShmData& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    { 
+//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+//        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
+//        SDL_version ver;
+//        SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
+//        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+//    %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+        ostrm << "ShmData"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        if (!that.isvalid()) return ostrm << " INVALID}";
+        ostrm << ", ver 0x" << std::hex << that.m_ver << std::dec;
+        ostrm << ", manifest " << that.m_manifest;
+        ostrm << ", info " << that.m_info;
+        ostrm << ", que [";
+        for (auto it: that.m_fbque)
+            ostrm << ", "[(it == that.m_fbque.begin())? 0: 2] << *it;
+        return ostrm << "}";
+    }
 public: //methods:
     bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
     void init_fbque()
     {
-        for (auto it: fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
+//set up first round of framebufs to be processed by wker threads:
+        for (auto it: m_fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
         {
             it->ready = 0;
-            it->frinfo.frnum = i;
-            it->frinfo.prevfr = -1;
+            it->frnum = it - m_fbque.begin(); //initially set to 0, 1, 2, ...
+            it->prevfr = -1; //no previous frame
 //            fbque[i].frtime = fbque[i].prevtime = 0;
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
-            for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+            for (int i = 0; i < SIZEOF_2D((*it).nodes); ++i) (*it).nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
         }
-//init stats also:
+//also init gpu wker stats:
         m_info.numfr = 0;
         memset(&m_info.perf_stats[0], 0, sizeof(m_info.perf_stats));
     }
-//start bkg gpu wker; this "opens" the gpu port
+//start bkg gpu wker; the gpu "port" is "open" while this is running
 //NOTE: this should be run on a separate thread so it doesn't block the Node event loop
 //NOTE also: SDL is not thread-safe, so it needs to be a dedicated thread
-    void gpu_wker(int NUMFR = -1, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, int vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
+    void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
     {
 //nodes: #univ x univ_len, txtr: 3 * 24 x univ len, view (clipped): 3 * 24 - 1 x univ len
 //debug("here50" ENDCOLOR);
         SDL_Size view;
-        info.wh.w = NUM_UNIV; //nodes
+        m_info.wh.w = NUM_UNIV; //nodes
         view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
-        view.h = wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), static_cast<int>(SIZEOF(fbque[0].node[0]))); //univ len == display height
-
-        const ScreenConfig* const m_cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
-        if (!m_cfg) exc_hard("can't get screen %d config");
-        frame_time = m_cfg->frame_time();
-        if (!frame_time /*|| !m_cfg->dot_clock || !m_cfg->htotal || !m_cfg->vtotal*/) frame_time = 1.0 / FPS_CONSTRAINT(NVL(m_cfg->dot_clock * 1000, CLOCK), NVL(m_cfg->htotal, HTOTAL), NVL(m_cfg->vtotal, UNIV_MAXLEN_raw)); //estimate from known info
-        debug(CYAN_MSG "start bkg gpu wker: screen %d " << *m_cfg << ", wh " << *wh << ENDCOLOR_ATLINE(srcline), screen);
+        view.h = m_info.wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), /*static_cast<int>*/SIZEOF(m_fbque[0].nodes[0])); //univ len == display height
+        const ScreenConfig* const cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
+        if (!cfg) exc_hard("can't get screen %d config");
+        m_info.screen = cfg->screen;
+//        /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ m_info.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
+        /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ (m_info.frame_time = cfg->frame_time()) || (m_info.frame_time = 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
+        debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ENDCOLOR_ATLINE(srcline), screen);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size
 //debug("here51" ENDCOLOR);
 //{ DebugInOut("assgn new txtr", SRCLINE);
-        SDL_Size txtr_wh(BIT_SLICES, wh.h);
+        SDL_Size txtr_wh(BIT_SLICES, m_info.wh.h);
 //        ShmData::TXTR txtr(ShmData::TXTR::NullOkay{}); //leave empty until bkg thread starts
 //        m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
         TXTR txtr = TXTR::create(NAMED{ _.wh = &txtr_wh; _.view_wh = &view, _.screen = screen; _.init_color = init_color; SRCLINE; });
 //        m_txtr = newtxtr; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
-        xfr(std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE)), //protocol bit-banger shim
+        TXTR::XFR xfr = std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE); //protocol bit-banger shim
+//TODO: refill not needed?
         txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
-        debug(19, BLUE_MSG "txtr after reset " << m_txtr << ENDCOLOR);
+        debug(19, BLUE_MSG "txtr after reset " << txtr << ENDCOLOR);
         init_fbque();
 //debug("here52" ENDCOLOR);
 //        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
@@ -367,12 +519,12 @@ public: //methods:
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
         {
 //        let qent = frnum % frctl.length; //simple, circular queue
-            FramebufQuent* it = m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
-            if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum, frnum); //main is only writer; this shouldn't happen!
+            FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
+            if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
             while (it->ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
             {
-                debug(YELLOW_MSG "fr[%d/%d] not ready: ${hex(frctl[qent].ready)}, main waiting for wkers to render ..." ENDCOLOR, frnum, NUMFR);
-                SDL_wait(2 msec); //timing is important; don't wait longer than needed
+                debug(15, YELLOW_MSG "fr[%d/%d] not ready: 0x%x, main waiting for wkers to render ..." ENDCOLOR, frnum, NUMFR, it->ready.load());
+                SDL_Delay(2 msec); //timing is important; don't wait longer than needed
             }
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
@@ -381,9 +533,10 @@ public: //methods:
 //        const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
 //        debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
 //        if (delay) SDL_Delay(delay); //delay if early
-            debug(BLUE_MSG "xfr fr[%d/%d] to gpu, protocol " << m_info.protocol << " ... " ENDCOLOR, rnum, NUMFR);
-            if (m_info.protocol == CANCEL) break;
-            VOID m_txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &perf_stats[1]; _.xfr = m_xfr; _.refill = refill; SRCLINE; });
+            m_info.perf_stats[0] += txtr.perftime(); //measure caller's time (presumably for rendering); //1000); //ipc wait time (msec)
+            debug(15, BLUE_MSG "xfr fr[%d/%d] to gpu, protocol " << m_info.protocol << " ... " ENDCOLOR, frnum, NUMFR);
+            if (m_info.protocol == Protocol::CANCEL) break;
+            VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_info.perf_stats[1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
 //            m_info.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)
 //make frbuf ready available a new frame:
@@ -418,8 +571,157 @@ public: //methods:
 //        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
 //        aoptr->fats = NULL;
 //        aodata->listener.busy = false; //work = 0;
-        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(aoptr->/*m_frinfo.*/numfr.load()));
+        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(m_info.numfr));
 //    bkg.detach();
+    }
+public: //named arg variants
+    template <typename CALLBACK>
+    inline static auto gpu_wker(CALLBACK&& named_params)
+    {
+//        struct CreateParams params;
+//        return create(unpack(create_params, named_params), Unpacked{});
+        struct //CreateParams
+        {
+            int NUMFR = INT_MAX;
+            int screen = FIRST_SCREEN;
+            SDL_Size* wh = NO_SIZE;
+            size_t vgroup = 1;
+            NODEVAL init_color = BLACK;
+            SrcLine srcline = 0;
+        } params;
+        unpack(params, named_params);
+        VOID gpu_wker(params.NUMFR, params.screen, params.wh, params.vgroup, params.init_color, params.srcline);
+    }
+private: //helpers
+//xfr node (color) values to txtr, bit-bang into currently selected protocol format:
+//CAUTION: this needed to run fast because it blocks Node fg thread
+    static void xfr_bb(ShmData& shdata, void* txtrbuf, const void* nodes, size_t xfrlen, SrcLine srcline) // = 0) //, SrcLine srcline2 = 0) //h * pitch(NUM_UNIV)
+    {
+        FramebufQuent& fbquent = shdata.m_fbque[shdata.m_info.numfr % SIZEOF(shdata.m_fbque)]; //CAUTION: circular queue
+        XFRTYPE bbdata/*[UNIV_MAX]*/[BIT_SLICES]; //3 * NODEBITS]; //bit-bang buf; enough for *1 row* only; dcl in heap so it doesn't need to be fully re-initialized every time
+//        SrcLine srcline2 = 0; //TODO: bind from caller?
+//printf("here7\n"); fflush(stdout);.wh.h
+//            VOID memcpy(pxbuf, pixels, xfrlen);
+//            SDL_Size wh(NUM_UNIV, m_cached.wh.h); //use univ len from txtr; nodebuf is oversized (due to H cache padding, vgroup, and compile-time guess on max univ len)
+//            int wh = xfrlen; //TODO
+//        SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
+
+        if (/*!shdata.m_info.wh.w || !shdata.m_info.wh.h ||*/ !xfrlen || (shdata.m_info.wh.w != NUM_UNIV /*SIZEOF(bbdata)*/) || (xfrlen != shdata.m_info.wh.h * sizeof(bbdata) /*gp.m_wh./-*datalen<XFRTYPE>()*-/ w * sizeof(XFRTYPE)*/)) exc_hard(RED_MSG "xfr size mismatch: nodebuf " << shdata.m_info.wh << " vs. " << SDL_Size(NUM_UNIV, UNIV_MAXLEN_pad) << ", byte count " << commas(xfrlen) << " vs, " << commas(shdata.m_info.wh.h * sizeof(bbdata)) << ENDCOLOR);
+        if (nodes != &fbquent.nodes[0][0]) exc_hard(RED_MSG "&nodes[0][0] " << nodes << " != &fbquent.nodes[0][0] " << &fbquent.nodes[0][0] << ENDCOLOR);
+//        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW/*_PADDED*/, xfrlen / XFRW/*_PADDED*/ / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
+//        if (!(count++ % 100))
+//        static int count = 0;
+//        if (!count++)
+//            debug(BLUE_MSG "bit bang xfr: " << nodes_wh << " node buf => " << gp.m_wh << ENDCOLOR_ATLINE(srcline));
+//NOTE: txtrbuf = in-memory texture, nodebuf = just a ptr of my *unformatted* nodes
+//this won't work: different sizes        VOID memcpy(txtrbuf, nodebuf, xfrlen);
+//        using TXTRBUF = XFRTYPE[gp.m_wh.h][XFRW];
+//        TXTRBUF& txtrptr = txtrbuf;y
+        XFRTYPE* ptr = static_cast<XFRTYPE*>(txtrbuf);
+//allow caller to turn formatting on/off at run-time (only useful for dev/debug, since h/w doesn't change):
+//adds no extra run-time overhead if protocol is checked outside the loops
+//3x as many x accesses as y accesses are needed, so pixels (horizontally adjacent) are favored over nodes (vertically adjacent) to get better memory cache performance
+        static const bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
+        /*auto*/ MASK_TYPE dirty = fbquent.ready.load() | (255 * Ashift); //use dirty/ready bits as start bits
+        if (shdata.m_info.protocol != shdata.m_info.prev_protocol) dirty = ALL_UNIV; //protocol/fmt changed; force all nodes to be updated (for dev/debug); wouldn't happen in prod
+        debug(19, BLUE_MSG "xfr " << xfrlen << " *3, protocol " << shdata.m_info.protocol << ENDCOLOR); //static_cast<int>(nodebuf.protocol) << ENDCOLOR);
+        switch (shdata.m_info.protocol)
+        {
+            default: //NONE (raw)
+                for (int y = 0; y < shdata.m_info.wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, /*xofs = 0,*/ xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, /*xofs += nodebuf.wh.h,*/ xmask >>= 1) //inner loop = universe#
+                    {
+                        NODEVAL color_out = limit<BRIGHTEST>(fbquent.nodes[x][/*xofs +*/ y]); //limit() is marginally useful in this mode, but use it in case view wants accuracy
+                        if (!A(color_out) || !(dirty & xmask)) continue; //no change to node; since is portraying nodes so leave old value on screen
+                        *ptr++ = *ptr++ = *ptr++ = /*(dirty & xmask)?*/ rbswap? ARGB2ABGR(color_out): color_out; //: BLACK; //copy as-is (3x width)
+                    }
+//                for (int xy = 0; xy < nodebuf.wh.w * nodebuf.wh.h; ++xy)
+//                    *ptr++ = *ptr++ = *ptr++ = (dirty & xmask)? rbswap? ARGB2ABGR(nodebuf.nodes[0][xy]): nodebuf.nodes[0][xy]: BLACK; //copy as-is (3x width)
+                break;
+            case Protocol::DEV_MODE: //partially formatted
+                for (int y = 0; y < shdata.m_info.wh.h; ++y) //outer loop = node# within each universe
+                    for (uint32_t x = 0, /*xofs = 0,*/ xmask = NODEVAL_MSB; x < NUM_UNIV; ++x, /*xofs += nodebuf.wh.h,*/ xmask >>= 1) //inner loop = universe#
+                    {
+                        static const Uint32 ByteColors[] {RED, GREEN, BLUE}; //only for dev/debug
+                        NODEVAL color_out = limit<BRIGHTEST>(fbquent.nodes[x][/*xofs +*/ y]); //limit() is marginally useful in this mode, but use it in case view wants accuracy
+//show start + stop bits around unpivoted data:
+//NOTE: start/stop bits portray formatted protocol, middle node section *does not*
+                        *ptr++ = ByteColors[x / 8] & xmask; //show byte (color) indicator (easier dev/debug); //dirty; //WHITE;
+                        if (!A(color_out) || !(dirty & xmask)) ++ptr; //no change; leave old value
+                        else *ptr++ = /*(dirty & xmask)?*/ rbswap? ARGB2ABGR(color_out): color_out; //: BLACK; //unpivoted node values
+                        *ptr++ = BLACK;
+                    }
+                break;
+            case Protocol::WS281X: //fully formatted (24-bit pivot)
+                for (int y = 0, yofs = 0; y < shdata.m_info.wh.h; ++y, yofs += BIT_SLICES) //TXR_WIDTH) //outer loop = node# within each universe
+                {
+//initialize 3x signal for this row of 24 WS281X pixels:
+//            for (int x3 = 0; x3 < TXR_WIDTH; x3 += 3) //inner; locality of reference favors destination
+//            {
+//                pxbuf32[yofs + x3 + 0] = leading_edges; //WHITE;
+//                pxbuf32[yofs + x3 + 1] = BLACK; //data bit body (will be overwritten with pivoted color bits)
+////                if (x3) pxbuf32[yofs + x3 - 1] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//                pxbuf32[yofs + x3 + 2] = BLACK; //trailing edge of data bits (right-most overlaps H-blank)
+//            }
+                    memset(&ptr[yofs], 0, sizeof(bbdata)); //begin with all bits off and then turn bits on again as needed
+                    for (int bit3x = 0; bit3x < BIT_SLICES; bit3x += 3) ptr[yofs + bit3x] = dirty; //WHITE; //leading edge = high; turn on for all universes
+//pivot pixel data onto 24 parallel GPIO pins:
+//  WS281X = 1, PLAIN_SSR = 2, CHPLEX_SSR = 3,TYPEBITS = 0xF,
+// RGSWAP = 0x20, CHECKSUM = 0x40, POLARITY = 0x80};
+//NOTE: xmask loop assumes ARGB or ABGR fmt (A in upper byte)
+                    for (uint32_t x = 0, xofs = 0, xmask = NODEVAL_MSB /*1 << (NUM_UNIV - 1)*/; x < NUM_UNIV; ++x, xofs += shdata.m_info.wh.h, xmask >>= 1) //inner loop = universe#
+                    {
+                        XFRTYPE color_out = limit<BRIGHTEST>(fbquent.nodes[x][y]); //[0][xofs + y]; //pixels? pixels[xofs + y]: fill;
+//                            if (!A(color) || (!R(color) && !G(color) && !B(color))) continue; //no data to pivot
+//                        if (rbswap) color_out = ARGB2ABGR(color_out); //user-requested explicit R <-> G swap
+//no                            color = ARGB2ABGR(color); //R <-> G swap doesn't need to be automatic for RPi; user can swap GPIO pins
+//                        if (MAXBRIGHT && (MAXBRIGHT < 100)) color_out = limit(color_out); //limit brightness/power
+//WS281X encoding: 1/3 white, 1/3 data, 1/3 black
+//3x as many x accesses as y accesses, so favor pixels over nodes in memory cache
+//                        /*bbdata[y][xofs + 0]*/ *ptr++ = WHITE;
+//                        /*bbdata[y][xofs + 1]*/ *ptr++ = gp.nodes[x][y];
+//                        /*if (u) bbdata[y][xofs - 1]*/ *ptr++ = BLACK; //CAUTION: last 1/3 (hsync) missing from last column
+//24 WS281X data bits spread across 72 screen pixels = 3 pixels per WS281X data bit:
+#if 1
+//TODO: try 8x loop with r_yofs/r_msb, g_yofs/g_msb, b_yofs/b_msb
+                        for (int bit3x = 0+1; bit3x < BIT_SLICES; bit3x += 3, color_out <<= 1)
+//                        {
+//                            ptr[yofs + bit3 + 0] |= xmask; //leading edge = high
+                            if (color_out & NODEVAL_MSB) ptr[yofs + bit3x] |= xmask; //set this data bit for current node
+//                                pxbuf32[yofs + bit3 + 2] &= ~xmask; //trailing edge = low
+//                        }
+#else
+//set data bits for current node:
+                    if (color_out & 0x800000) ptr[yofs + 3*0 + 1] |= xmask;
+                    if (color_out & 0x400000) ptr[yofs + 3*1 + 1] |= xmask;
+                    if (color_out & 0x200000) ptr[yofs + 3*2 + 1] |= xmask;
+                    if (color_out & 0x100000) ptr[yofs + 3*3 + 1] |= xmask;
+                    if (color_out & 0x080000) ptr[yofs + 3*4 + 1] |= xmask;
+                    if (color_out & 0x040000) ptr[yofs + 3*5 + 1] |= xmask;
+                    if (color_out & 0x020000) ptr[yofs + 3*6 + 1] |= xmask;
+                    if (color_out & 0x010000) ptr[yofs + 3*7 + 1] |= xmask;
+                    if (color_out & 0x008000) ptr[yofs + 3*8 + 1] |= xmask;
+                    if (color_out & 0x004000) ptr[yofs + 3*9 + 1] |= xmask;
+                    if (color_out & 0x002000) ptr[yofs + 3*10 + 1] |= xmask;
+                    if (color_out & 0x001000) ptr[yofs + 3*11 + 1] |= xmask;
+                    if (color_out & 0x000800) ptr[yofs + 3*12 + 1] |= xmask;
+                    if (color_out & 0x000400) ptr[yofs + 3*13 + 1] |= xmask;
+                    if (color_out & 0x000200) ptr[yofs + 3*14 + 1] |= xmask;
+                    if (color_out & 0x000100) ptr[yofs + 3*15 + 1] |= xmask;
+                    if (color_out & 0x000080) ptr[yofs + 3*16 + 1] |= xmask;
+                    if (color_out & 0x000040) ptr[yofs + 3*17 + 1] |= xmask;
+                    if (color_out & 0x000020) ptr[yofs + 3*18 + 1] |= xmask;
+                    if (color_out & 0x000010) ptr[yofs + 3*19 + 1] |= xmask;
+                    if (color_out & 0x000008) ptr[yofs + 3*20 + 1] |= xmask;
+                    if (color_out & 0x000004) ptr[yofs + 3*21 + 1] |= xmask;
+                    if (color_out & 0x000002) ptr[yofs + 3*22 + 1] |= xmask;
+                    if (color_out & 0x000001) ptr[yofs + 3*23 + 1] |= xmask;
+#endif
+                    }
+                }
+                break;
+        }
+        shdata.m_info.prev_protocol = shdata.m_info.protocol;
     }
 };
 
@@ -431,14 +733,39 @@ struct GpuPortData
 {
 //    AutoShmary<ShmData> m_shdata;
     ShmData* m_shdata = 0;
-    const elapsed_msec_t m_started = now_msec();
+    const elapsed_t m_started = now_msec();
     const SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 public: //ctors/dtors
-    GpuPortData(SrcLine srcline = 0): m_shdata(ShmData::KEY, NVL(srcline, SRCLINE)) {}
-    {
-
+    GpuPortData(SrcLine srcline = 0): m_srcline(NVL(srcline, SRCLINE)) {}
+public: //operators
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const GpuPortData& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    { 
+//        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
+//        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
+//        SDL_version ver;
+//        SDL_GetVersion(&ver); //TODO: maybe derive SDL_AutoLib from SDL_version?
+//        ostrm << "SDL_Lib {version %d.%d.%d, platform: '%s', #cores %d, ram %s MB, likely isRPi? %d}", ver.major, ver.minor, ver.patch, SDL_GetPlatform(), SDL_GetCPUCount() /*std::thread::hardware_concurrency()*/, commas(SDL_GetSystemRAM()), isRPi());
+//    %p, valid? %d" ENDCOLOR, aodata.get(), aodata.get()->isvalid());
+        ostrm << "GpuPortData"; //<< my_templargs();
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+//        if (!that.isvalid()) return ostrm << " INVALID}";
+        ostrm << ", shdata " << *that.m_shdata;
+        ostrm << ", age " << /*elapsed(that.started)*/ commas(elapsed(that.m_started)) << " msec";
+        return ostrm << "}";
     }
 public: //methods:
+    void open()
+//    void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
+    {
+//        std::thread bkg();
+//      try {} catch {}
+//        bkg.detach();
+    }
+    void close()
+    {
+//        protocol = CANCEL;
+    }
 };
 
 
@@ -552,6 +879,7 @@ public: //operators
 //        ostrm << ", cached node wrapper " << that.m_cached;
         ostrm << ", txtr " << that.m_txtr;
 //        ostrm << ", age " << /*elapsed(that.started)*/ that.elapsed() << " sec";
+        return ostrm << "}";
     }
 //    static inline const char* ProtocolName(Protocol key)
 //        return unmap(names, key); //names;
@@ -879,7 +1207,7 @@ public: //ctors/dtors
 public: //operators
 //    bool ismine() const { if (owner != thrid()) debug(YELLOW_MSG "not mine: owner " << owner << " vs. me " << thrid() << ENDCOLOR); return (owner == thrid()); } //std::thread::get_id(); }
 //    bool isvalid() const { return (sentinel == FRINFO_VALID); }
-    inline /*double*/ decltype(now_msec()) elapsed_msec() const { return now_msec() - started_msec; } //msec; //rdiv(now_msec() - started, 1000); } //.0; }
+    inline /*double*/ decltype(now_msec()) elapsed() const { return now_msec() - started_msec; } //msec; //rdiv(now_msec() - started, 1000); } //.0; }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameInfo& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
 //        SrcLine srcline = NVL(that.m_srcline, SRCLINE);
@@ -904,7 +1232,8 @@ public: //operators
 //        ostrm << ", nodes@ " << &that.nodes[0][0] << "..+" << commas(sizeof(that.nodes)) << " (" << wh << ")";
 //                ostrm << ", time " << that.nexttime.load();
 //        ostrm << ", cached napi wrapper " << that.m_cached;
-        ostrm << ", age " << /*elapsed(that.started)*/ commas(that.elapsed_msec()) << " msec";
+        ostrm << ", age " << /*elapsed(that.started)*/ commas(that.elapsed()) << " msec";
+        return ostrm << "}";
     }
 public: //methods
 //called by GpuPortData dtor in fg thread:
@@ -1181,7 +1510,7 @@ public: //playback methods
 //                if (aodata != static_cast<void*>(this)) NAPI_exc("aodata mismatch: " << aodata << " vs. " << this);
 //                return napi_thingy(env); //, frdata->elapsed_msec()); //ambiguous
                 napi_thingy retval(env);
-                retval.cre_int32(frdata->elapsed_msec());
+                retval.cre_int32(frdata->elapsed());
                 return retval;
             };
             _.attributes = napi_enumerable; //read-only; //napi_default;
@@ -1711,8 +2040,8 @@ public:
     {
         if (!islistening()) return;
 //TODO: move this to frinfo, reconcile with frinfo.frame_time
-        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
-        const decltype(m_frinfo.elapsed_msec()) /*elapsed_t*/ overdue = m_opts.frtime_msec? m_frinfo.elapsed_msec() - numfr.load() * m_opts.frtime_msec: 0, delay = (overdue < -TIMING_SLOP/2)? -overdue: 0;
+        static const decltype(m_frinfo.elapsed()) TIMING_SLOP = 5; //allow +/-5 msec
+        const decltype(m_frinfo.elapsed()) /*elapsed_t*/ overdue = m_opts.frtime_msec? m_frinfo.elapsed() - numfr.load() * m_opts.frtime_msec: 0, delay = (overdue < -TIMING_SLOP/2)? -overdue: 0;
         const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
         debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
         if (delay) SDL_Delay(delay); //delay if early
@@ -1733,7 +2062,7 @@ public:
         if (!NAPI_OK(napi_release_threadsafe_function(m_opts.fats, napi_tsfn_release))) exc_hard("Can't release JS fats");
         m_opts.fats = NULL;
 //debug("here68" ENDCOLOR);
-        debug(15, PINK_MSG "stop playback after %s frames, %s msec" ENDCOLOR, commas(numfr.load()), commas(m_frinfo.elapsed_msec()));
+        debug(15, PINK_MSG "stop playback after %s frames, %s msec" ENDCOLOR, commas(numfr.load()), commas(m_frinfo.elapsed()));
     }
 //    void make_thread(napi_env env)
 //    {

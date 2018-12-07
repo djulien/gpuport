@@ -252,6 +252,8 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 #define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
 #define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
 typedef /*uint64_t*/ uint32_t  elapsed_t; //don't need > 32 bits for perf measurement; 20 bits will hold 5 minutes of msec, or 29 bits will hold 5 minutes of usec
+//typedef uint32_t elapsed_t; //20 bits is enough for 5-minute timing using msec; 32 bits is plenty
+#if 0
 inline double elapsed(elapsed_t& started, int scaled = 1) //Freq = #ticks/second
 {
     elapsed_t delta = now() - started; //nsec
@@ -264,6 +266,28 @@ inline double elapsed(const elapsed_t& started, int scaled = 1) //Freq = #ticks/
 //    started += delta; //reset to now() each time called
     return scaled? (double)delta * scaled / SDL_TickFreq(): delta; //return actual time vs. #ticks
 }
+#else
+inline elapsed_t elapsed(elapsed_t& started) //, int scaled = 1) //Freq = #ticks/second
+{
+    elapsed_t delta = now() - started; //nsec
+    started += delta; //reset to now() each time called
+    return /*scaled? (double)delta * scaled / SDL_TickFreq():*/ delta; //return actual time vs. #ticks
+}
+inline elapsed_t elapsed(const elapsed_t& started) //, int scaled = 1) //Freq = #ticks/second
+{
+    elapsed_t delta = now() - started; //nsec
+//    started += delta; //reset to now() each time called
+    return /*scaled? (double)delta * scaled / SDL_TickFreq():*/ delta; //return actual time vs. #ticks
+}
+inline double elapsed(elapsed_t& started, int scale)
+{
+    return (double)elapsed(started) / scale;
+}
+inline double elapsed(const elapsed_t& started, int scale)
+{
+    return (double)elapsed(started) / scale;
+}
+#endif
 //inline double elapsed_usec(uint64_t started)
 //{
 ////    static uint64_t tick_per_usec = SDL_TickFreq() / 1000000;
@@ -853,7 +877,7 @@ public: //ctor/dtor
                     all().push_back(this); //cleanup() must be a static member, so make a list and do it all once at the time
                 }
     }
-    /*virtual*/ ~mySDL_AutoLib() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //debug(RED_MSG "mySDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
+    /*virtual*/ ~mySDL_AutoLib() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started, 1000) << " sec", m_srcline); } //debug(RED_MSG "mySDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 public: //operators
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_AutoLib& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     { 
@@ -1077,7 +1101,7 @@ public: //ctors/dtors
         reset(wnd, NVL(srcline, SRCLINE)); //take ownership of window after checking
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
     }
-    /*virtual*/ ~mySDL_AutoWindow() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); } //debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
+    /*virtual*/ ~mySDL_AutoWindow() { INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << elapsed(m_started, 1000) << " sec", m_srcline); } //debug(RED_MSG "SDL_AutoWindow(%p) dtor %p" ENDCOLOR_ATLINE(m_srcline), this, get()); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
     inline mySDL_AutoWindow(const mySDL_AutoWindow& that, SrcLine srcline = 0): mySDL_AutoWindow(((mySDL_AutoWindow)that).release(), srcline) {} //reset(((mySDL_AutoWindow)that).release()); } //kludge: wants rval, but value could change; //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -1782,7 +1806,7 @@ public: //ctors/dtors
         INSPECT(GREEN_MSG << "ctor " << *this, srcline);
 //        VOID clear(BLACK, NVL(srcline, SRCLINE)); //TODO: find out why first update !visible; related to SDL double buffering?
     }
-    /*virtual*/ ~mySDL_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << elapsed(m_started) << " sec", m_srcline); }
+    /*virtual*/ ~mySDL_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << elapsed(m_started, 1000) << " sec", m_srcline); }
 //for deleted function explanation see: https://www.ibm.com/developerworks/community/blogs/5894415f-be62-4bc0-81c5-3956e82276f3/entry/deleted_functions_in_c_11?lang=en
 //NOTE: need to explicitly define this to avoid "use of deleted function" errors
 //    SDL_AutoTexture(const SDL_AutoTexture& that) { *this = that; } //operator=(that.get()); } //copy ctor; //= delete; //deleted copy constructor
@@ -2198,9 +2222,9 @@ private: //member vars
 
 
 const elapsed_t m_started1 = now(); //use const to not reset after each read
-inline double perftime1(int scaled = 1) { return elapsed(m_started1, scaled); }
+inline double perftime1(int scaled = 1) { return elapsed(m_started1) / scaled; }
 elapsed_t m_started2 = now(); //resets each time
-inline double perftime2(int scaled = 1) { return elapsed(m_started2, scaled); }
+inline double perftime2(int scaled = 1) { return elapsed(m_started2) / scaled; }
 
 void timer_test()
 {

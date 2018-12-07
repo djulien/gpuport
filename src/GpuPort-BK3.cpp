@@ -1064,6 +1064,7 @@ public: //operators
 //                ostrm << ", time " << that.nexttime.load();
 //        ostrm << ", cached napi wrapper " << that.m_cached;
         ostrm << ", age " << /*elapsed(that.started)*/ commas(that.elapsed_msec()) << " msec";
+        retujrn ostrm << "}";
     }
 public: //methods
 //called by GpuPortData dtor in fg thread:
