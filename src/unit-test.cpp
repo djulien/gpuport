@@ -36,7 +36,7 @@ echo -e $CYAN; g++ -D__SRCFILE__="\"${BASH_SOURCE##*/}\"" -D__TEST_FILE__="\"${T
 
 using ARGS = std::vector<std::string>; //const char*>;
 
-#include __TEST_FILE__ //include first time without unit test
+//NO: #include __TEST_FILE__ //include first time without unit test
 #define WANT_UNIT_TEST
 #include __TEST_FILE__ //include unit test second time
 

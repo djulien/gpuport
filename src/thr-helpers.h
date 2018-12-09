@@ -1,7 +1,8 @@
 /// IPC/thread stuff:
 
-#ifndef _THREAD_HELPERS_H
-#define _THREAD_HELPERS_H
+#if !defined(_THREAD_HELPERS_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _THREAD_HELPERS_H //CAUTION: put this before defs to prevent loop on cyclic #includes
+//#pragma message("#include " __FILE__)
 
 #include <thread> //std::thread::get_id(), std::thread()
 #include <utility> //std::forward<>
@@ -83,7 +84,7 @@ template <typename VALTYPE = uint32_t, bool WANT_DEBUG = false>
 class BkgSync
 {
     static const int SYNC_LEVEL = 55;
-#define DEBUG(desc, srcline)  debug(SYNC_LEVEL, GREEN_MSG << desc << ENDCOLOR_ATLINE(srcline))
+#define DEBUG(desc, srcline)  debug(SYNC_LEVEL, GREEN_MSG << desc << /*ENDCOLOR_*/ ATLINE(srcline))
     std::atomic<VALTYPE> m_val; //avoid mutex locks except when waiting; //= 0; //init to !busy
     std::mutex m_mtx;
 //    std::atomic<std::condition_variable> m_cv; //avoid mutex locks except when waiting
@@ -135,7 +136,7 @@ public: //methods
     typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
     bool wait(VALTYPE want_value = 0, CANCEL cancel = NULL, bool blocking = true, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << " (" << &"non-blocking"[blocking? 4: 0] << "): thr# " << thrinx() << ", cur val 0x" << std::hex << load() << " or 0x" << m_val << std::dec << ", match? " << (load() == want_value), srcline);
+        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << " (" << &"non-blocking"[blocking? 4: 0] << "): thr# " << thrinx() << ", cur val 0x" << std::hex << load() << " or 0x" << m_val << std::dec << ", match? " << (load() == want_value) << ATLINE(srcline));
         if (load() == want_value) return true; //no need to wait, already has desired value
         if (blocking)
         {
@@ -217,18 +218,18 @@ void fg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int which)
 //void fg(/*BkgSync<>*/ /*auto*/ XSYNCTYPE& xbs, int which)
 {
 //    SYNCTYPE& bs = *shmalloc_typed<SYNCTYPE>(xbs, 1, SRCLINE);
-    DebugInOut(PINK_MSG "FG thr#" << thrinx() << ", bits " << which, SRCLINE);
+    DebugInOut(PINK_MSG "FG thr#" << thrinx() << ", bits " << which);
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
-        debug(0, CYAN_MSG << info() << "FG " << status << "set %d" ENDCOLOR, which);
+        debug(0, CYAN_MSG << info() << "FG " << status << "set %d", which);
         for (int bit = 1; which & ~(bit - 1); bit <<= 1)
             if (which & bit)
             {
                 SDL_Delay(bit * 0.25 sec);
                 bs.fetch_or(bit, SRCLINE); // |= bit;
             }
-        debug(0, CYAN_MSG << info() << "FG now wait for 0" ENDCOLOR);
+        debug(0, CYAN_MSG << info() << "FG now wait for 0");
         bs.wait(0, NULL, true, SRCLINE);
         status = "got 0, now ";
     }
@@ -239,13 +240,13 @@ void bg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
 //void bg(/*BkgSync<>*/ /*auto*/ XSYNCTYPE& xbs, int want)
 {
 //    SYNCTYPE& bs = *shmalloc_typed<SYNCTYPE>(xbs, 1, SRCLINE);
-    DebugInOut(PINK_MSG "bkg thr#" << thrinx(), SRCLINE);
+    DebugInOut(PINK_MSG "bkg thr#" << thrinx());
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
-        debug(0, CYAN_MSG << info() << "BKG wait for %d" ENDCOLOR, want);
+        debug(0, CYAN_MSG << info() << "BKG wait for %d", want);
         bs.wait(want, NULL, true, SRCLINE);
-        debug(0, CYAN_MSG << info() << "BKG got %d, now reset to 0" ENDCOLOR, want);
+        debug(0, CYAN_MSG << info() << "BKG got %d, now reset to 0", want);
         SDL_Delay(0.5 sec);
         bs.store(0, SRCLINE);
     }
@@ -300,7 +301,7 @@ void sync_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, BLUE_MSG << "my thrid " << thrid() << ", my inx " << thrinx() << ENDCOLOR);
+    debug(0, "my thrid " << thrid() << ", my inx " << thrinx());
     sync_test();
 }
 

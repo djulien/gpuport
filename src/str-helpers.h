@@ -3,8 +3,8 @@
 /// String helpers:
 //
 
-#ifndef _STR_HELPERS_H
-#define _STR_HELPERS_H
+#if !defined(_STR_HELPERS_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _STR_HELPERS_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
 //NOTE from https://stackoverflow.com/questions/1277627/overhead-of-pthread-mutexes
 //about atomic: In practice, you can assume that int and other integer types no longer than int are atomic. You can also assume that pointer types are atomic
@@ -20,9 +20,33 @@
 #include <utility> //std::pair<>
 
 
-#ifndef SIZE
- #define SIZE(thing)  int(sizeof(thing) / sizeof((thing)[0]))
+#ifndef SIZEOF
+ #define SIZEOF(thing)  int(sizeof(thing) / sizeof((thing)[0]))
 #endif
+
+
+#ifndef TOSTR
+ #define TOSTR(str)  TOSTR_NESTED(str)
+ #define TOSTR_NESTED(str)  #str
+#endif
+
+
+//get end of string:
+//use inline function instead of macro to avoid side effects if str is dynamic
+inline const char* strend(const char* str)
+{
+    return str? str + strlen(str): NULL;
+}
+
+
+const char* strnstr(const char* str, const char* substr, size_t cmplen)
+{
+    for (;;)
+    {
+        const char* found = strchr(str++, *substr);
+        if (!found || !strncmp(found, substr, cmplen)) return found; //return no or full match
+    }
+}
 
 
 //lookup table (typically int -> string):
@@ -112,7 +136,7 @@ constexpr uint32_t NNNN_hex(uint32_t val)
 inline const char* plural(int count, const char* suffix = "s", const char* singular = 0)
 {
 //    return "(s)";
-    return (count != 1)? suffix: "";
+    return (count != 1)? suffix: singular? singular: "";
 }
 
 
@@ -127,6 +151,15 @@ inline const char* skip_prefix(const char* str, const char* prefix)
 }
 
 
+int numlines(const char* str)
+{
+    if (!str) return -1;
+    int count = *str? 1: 0;
+    while (str = strchr(str, '\n')) { ++str; ++count; }
+    return count;
+}
+
+
 //insert commas into a numeric string (for readability):
 //CAUTION: uses static data to preserve data after return; semaphore arbitrates a pool of 12 ret values
 const char* commas(int64_t val)
@@ -137,7 +170,7 @@ const char* commas(int64_t val)
 //    static auto_ptr<SDL_sem> acquire(SDL_CreateSemaphore(SIZE(buf)));
 //    auto_ptr<SDL_LockedSemaphore> lock_HERE(acquire.cast); //SDL_LOCK(acquire));
 
-    char* bufp = buf[++ff % SIZE(buf)] + LIMIT; //alloc ret val from pool; don't overwrite other values within same printf, allow space for commas
+    char* bufp = buf[++ff % SIZEOF(buf)] + LIMIT; //alloc ret val from pool; don't overwrite other values within same printf, allow space for commas
     for (int grplen = std::min(sprintf(bufp, "%ld", val), LIMIT * 3) - 3; grplen > 0; grplen -= 3)
     {
         memmove(bufp - 1, bufp, grplen);
@@ -146,6 +179,80 @@ const char* commas(int64_t val)
     return bufp;
 }
 
+
+//#include <regex>
+#include <vector>
+
+#define TEMPL_ARGS  templ_args(__PRETTY_FUNCTION__)
+//https://bytes.com/topic/c/answers/878171-any-way-print-out-template-typename-value
+//typeid(TYPE).name() can't use with -fno-rtti compiler flag
+
+//get template arg types from __PRETTY_FUNC__
+//example: AutoShmary<TYPE, WANT_MUTEX>::AutoShmary(size_t, key_t, SrcLine) [with TYPE = unsigned int; bool WANT_MUTEX = false; size_t = unsigned int; key_t = int; SrcLine = const char*] 
+/*const char* */std::string/*&*/ templ_args(const char* str)
+{
+    const char* svstr = str;
+//printf("get args from: %s\n", str);
+    if (!(str = strchr(str, '<'))) return "????"; //svstr;
+//    const char* name_start = strchr(str, '<');
+//    if (!name_start++) return str;
+//    const char* name_end = strchr(name_start, '>');
+//    if (!name_end) return str;
+//string split examples: https://stackoverflow.com/questions/1894886/parsing-a-comma-delimited-stdstring
+//or http://www.partow.net/programming/strtk/index.html
+    std::vector<std::pair<const char*, int>> arg_names;
+//if (strstr(str, "anonymous")) { printf("templ args in: %s\n", str); fflush(stdout); }
+    for (const char* sep = ++str; /*sep != end*/; ++sep)
+        if ((*sep == ',') || (*sep == '>'))
+        {
+//printf("arg#%d: '%.*s'\n", arg_names.size(), sep - str, str);
+//            if (!strncmp(str, "<anonymous", sep - str)) ++str; //unnamed args; skip extra "<"
+            arg_names.push_back(std::pair<const char*, int>(str, sep - str)); //std::string(start, sep - start));
+            if (*sep == '>') break;
+            str = sep + 1;
+            if (*str == ' ') ++str;
+        }
+//printf("found %d templ arg names in %s\n", arg_names.size(), svstr);
+//get type string for each arg:
+//    std::ostringstream argtypes;
+//    int numfound = 0;
+    std::string arg_types;
+    for (auto it = arg_names.begin(); it != arg_names.end(); ++it)
+    {
+        char buf[64];
+        arg_types.push_back(arg_types.length()? ',': '<');
+        bool hasname = strncmp(it->first, "<anonymous", it->second); //kludge: unnamed args; NOTE: extra "<" present from above
+        if (!hasname) { strcpy(buf, " = "); ++it->first; it->second -= 6; } 
+        else snprintf(buf, sizeof(buf), " %.*s = ", it->second, it->first);
+        const char* bp1 = strstr(str, buf);
+//printf("templ args[%d]: found '%s' in '%s'? %d\n", it - arg_names.begin(), buf, str, bp1? (bp1 - str): -1);
+        if (!hasname && bp1) //try to find real name
+            for (const char* bp0 = bp1; bp0 > str; --bp0)
+                if (bp0[-1] == ' ') { it->second = bp1 - (it->first = bp0); break; } //found start of name
+        arg_types.append(it->first, it->second);
+        if (!bp1) continue; //just give arg name if can't find type
+        bp1 += strlen(buf);
+        const char* bp2 = strchr(bp1, ';'); if (!bp2) bp2 = strrchr(bp1, ']'); //strpbrk(bp1, ";]");
+//printf("templ args: then found ;] ? %d\n", bp2? (bp2 - str): -1);
+        if (!bp2) continue;
+//        ++numfound;
+        arg_types.push_back('=');
+        arg_types.append(bp1, bp2 - bp1);
+//        if (arg_types.length() != 1) continue;
+//        sprintf(buf, "%d args: ", arg_names.size());
+//        arg_types.insert(0, buf);
+    }
+    if (arg_types.length()) arg_types.push_back('>');
+//printf("found %d templ arg names, %d types in %s\n", arg_names.size(), numfound, svstr);
+//if (strstr(arg_types.c_str(), "anonymous")) { printf("templ args in: %s\n", arg_types.c_str()); fflush(stdout); }
+    return arg_types;
+//    std::regex args_re ("<([^>]*)>");
+//    std::smatch m;
+//    if (!std::regex_search(str, m, re)) return str;
+//    for (auto x:m) std::cout << x << " ";
+//    std::cout << std::endl;
+//    s = m.suffix().str();
+}
 
 #endif //ndef _STR_HELPERS_H
 
@@ -166,23 +273,23 @@ const char* commas(int64_t val)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, BLUE_MSG "0x%d = 0x%x" ENDCOLOR, 1234, NNNN_hex(1234));
+    debug(0, "0x%d = 0x%x", 1234, NNNN_hex(1234));
 
-    debug(0, BLUE_MSG "1K = %s" ENDCOLOR, commas(1024));
-    debug(0, BLUE_MSG "1M = %s" ENDCOLOR, commas(1024 * 1024));
+    debug(0, "1K = %s", commas(1024));
+    debug(0, "1M = %s", commas(1024 * 1024));
     int count0 = 0, count1 = 1, count2 = 2;
-    debug(0, BLUE_MSG << count0 << " thing" << plural(count0) << ENDCOLOR);
-    debug(0, BLUE_MSG << count1 << " thing" << plural(count1) << ENDCOLOR);
-    debug(0, BLUE_MSG << count2 << " thing" << plural(count2, "ies") << ENDCOLOR);
+    debug(0, count0 << " thing" << plural(count0));
+    debug(0, count1 << " thing" << plural(count1));
+    debug(0, count2 << " thing" << plural(count2, "ies"));
     int x1 = 0, x2 = 1;
 //    debug(BLUE_MSG << NVL(x1, -1) << ENDCOLOR);
 //    debug(BLUE_MSG << NVL(x2, -1) << ENDCOLOR);
     const char* str = "hello";
     const char* null = 0;
-    debug(0, BLUE_MSG << NVL(null, "(null)") << ENDCOLOR);
-    debug(0, BLUE_MSG << NVL(str, "(null)") << ENDCOLOR);
-    debug(0, BLUE_MSG << NVL(123, -1) << ENDCOLOR);
-    debug(0, BLUE_MSG << NVL(0, -1) << ENDCOLOR);
+    debug(0, NVL(null, "(null)"));
+    debug(0, NVL(str, "(null)"));
+    debug(0, NVL(123, -1));
+    debug(0, NVL(0, -1));
 
 #if 0
 //    static const std::map<int, const char*> SDL_RendererFlagNames =
@@ -210,9 +317,9 @@ void unit_test(ARGS& args)
         {"fifth", 5},
     };
 //printf("here2\n"); fflush(stdout);
-    debug(0, BLUE_MSG "find third: %p = %d" ENDCOLOR, opts.find("third"), opts.find("third", 0)->second);
+    debug(0, "find third: %p = %d", opts.find("third"), opts.find("third", 0)->second);
 //printf("here3\n"); fflush(stdout);
-    debug(0, BLUE_MSG "find sixth: %p = %d" ENDCOLOR, opts.find("sixth"), opts.find("sixth", 0)->second);
+    debug(0, "find sixth: %p = %d", opts.find("sixth"), opts.find("sixth", 0)->second);
 
 //    return 0;
 }

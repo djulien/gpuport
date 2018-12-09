@@ -1,7 +1,7 @@
 //printf-like formatter for c++ ostreams
 
-#ifndef _OSTRMFMT_H
-#define _OSTRMFMT_H
+#if !defined(_OSTRMFMT_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _OSTRMFMT_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
 //custom stream manipulator for printf-style formating:
 //idea from https://stackoverflow.com/questions/535444/custom-manipulator-for-c-iostream

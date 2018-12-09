@@ -14,6 +14,7 @@ const GpuPort = require('./build/Release/gpuport'); //.node');
 const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 //console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
+debug("gpu port imports", JSON.stringify(GpuPort).json_tidy);
 
 //module.exports = gpuport;
 
@@ -140,7 +141,7 @@ const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 //    return retval;
 });
 //}catch(exc){}
-debug("gpu listen:", `(${typeof gp})`, JSON.stringify(gp, null, 2).json_tidy);
+if (listen) debug("gpu listen:", `(${typeof gp})`, JSON.stringify(gp, null, 2).json_tidy);
 //setTimeout(() => debug("gpu +1 sec:", `(${typeof gp})`, JSON.stringify(gp, null, 2).json_tidy), 1000);
 //const prevInstance = new testAddon.ClassExample(4.3);
 //console.log('Initial value : ', prevInstance.getValue());

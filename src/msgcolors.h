@@ -5,10 +5,11 @@
 
 //console colors
 
-#ifndef _COLORS_H
-#define _COLORS_H
+#if !defined(_MSGCOLORS_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _MSGCOLORS_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
-#include "srcline.h" //SrcLine, shortsrc()
+#include "srcline.h" //SrcLine, SRCLINE //shortsrc()
+#include "str-helpers.h" //NVL()
 
 //accept variable # up to 1 -2 macro args:
 #ifndef UPTO_2ARGS
@@ -31,19 +32,24 @@
 #define ENDCOLOR_NOLINE  ANSI_COLOR("0")
 
 //append the src line# to make debug easier:
-#if 1
+#if 0
 //#define ENDCOLOR_ATLINE(srcline)  " &" TOSTR(srcline) ANSI_COLOR("0") "\n"
 //#define ENDCOLOR_ATLINE(srcline)  "  &" << static_cast<const char*>(shortsrc(srcline, SRCLINE)) << ENDCOLOR_NOLINE "\n"
 #define ENDCOLOR_ATLINE(srcline)  "  &" << shortsrc(srcline, SRCLINE) << ENDCOLOR_NOLINE //"\n"
 //#define ENDCOLOR_MYLINE  ENDCOLOR_ATLINE(%s) //%d) //NOTE: requires extra param
 #define ENDCOLOR  ENDCOLOR_ATLINE(SRCLINE) //__LINE__)
 //#define ENDCOLOR_LINE(line)  FMT(ENDCOLOR_MYLINE) << (line? line: __LINE__) //show caller line# if available
-#else /TODO
- #define ENDCOLOR_1ARG(blend, val1, val2)  ((int)((val1) * (blend) + (val2) * (1 - (blend)))) //uses floating point
- #define ENDCOLOR_2ARGS(num, den, val1, val2)  (((val1) * (num) + (val2) * (den - num)) / (den)) //use fractions to avoid floating point at compile time
- #define ENDCOLOR(...)  UPTO_2ARGS(__VA_ARGS__, ENDCOLOR_2ARGS, ENDCOLOR_1ARG) (__VA_ARGS__)
+#else
+//TODO:
+// #define ENDCOLOR_1ARG(blend, val1, val2)  ((int)((val1) * (blend) + (val2) * (1 - (blend)))) //uses floating point
+// #define ENDCOLOR_2ARGS(num, den, val1, val2)  (((val1) * (num) + (val2) * (den - num)) / (den)) //use fractions to avoid floating point at compile time
+// #define ENDCOLOR(...)  UPTO_2ARGS(__VA_ARGS__, ENDCOLOR_2ARGS, ENDCOLOR_1ARG) (__VA_ARGS__)
+//#define ENDCOLOR_ATLINE(srcline)  "  &" << NVL(srcline, SRCLINE) << ENDCOLOR_NOLINE //"\n"
+// #define ENDCOLOR_ATLINE(srcline)  NVL(srcline, SRCLINE) << ENDCOLOR_NEWLINE //"\n" //NOTE: special formatting likely not for debug(), so include newline
+// #define ENDCOLOR  "  &" SRCLINE ENDCOLOR_NOLINE //use const char* if possible; don't call shortsrc()
+////////////////////// #define ENDCOLOR  "  &" SRCLINE ENDCOLOR_NOLINE //use const char* if possible; don't call shortsrc()
 #endif
-#define ENDCOLOR_NEWLINE  ENDCOLOR "\n"
+#define ENDCOLOR_NEWLINE  ENDCOLOR_NOLINE "\n"
 
 
 #endif //ndef _COLORS_H
@@ -63,8 +69,8 @@
 
 void func(int a, SrcLine srcline = 0)
 {
-    std::cout << BLUE_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR "\n";
-    std::cout << CYAN_MSG /*<<*/ "hello " << a << " from" /*<<*/ ENDCOLOR_ATLINE(srcline) << std::endl;
+    std::cout << BLUE_MSG /*<<*/ "hello " << a << " from" /*<<*/ SRCLINE ENDCOLOR_NOLINE "\n";
+    std::cout << CYAN_MSG /*<<*/ "hello " << a << " from" /*<<*/ << ATLINE(srcline) << ENDCOLOR_NEWLINE;
 }
 
 

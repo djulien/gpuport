@@ -3,8 +3,8 @@
 /// RPi helpers (runnable on non-RPi machines):
 //
 
-#ifndef _RPI_HELPERS_H
-#define _RPI_HELPERS_H
+#if !defined(_RPI_HELPERS_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _RPI_HELPERS_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
 //NOTE from https://stackoverflow.com/questions/1277627/overhead-of-pthread-mutexes
 //about atomic: In practice, you can assume that int and other integer types no longer than int are atomic. You can also assume that pointer types are atomic
@@ -114,7 +114,7 @@ bool isRPi()
     double frame_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
     double fps(SrcLine srcline = 0) const { return (double)1 / frame_time(srcline); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
 //check for null ptr (can happen with dynamically allocated memory):
-    void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard(RED_MSG "can't get screen config" ENDCOLOR_ATLINE(srcline)); }
+    void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard("can't get screen config" << ATLINE(srcline)); }
 //operators:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that) CONST
     {
@@ -170,7 +170,7 @@ bool isRPi()
  bool read_config(int which, ScreenConfig* cfg, SrcLine srcline = 0)
  {
 //    cfg->screen = -1;
-    if (which) { exc_soft(RED_MSG "TODO: get screen#%d config" ENDCOLOR_ATLINE(srcline), which); return false; }
+    if (which) { exc_soft("TODO: get screen#%d config" << ATLINE(srcline), which); return false; }
     int lines = 0;
     std::string str; 
     std::ifstream file("/boot/config.txt"); //TODO: read from memory; config file could have multiple (conditional) entries
@@ -332,7 +332,7 @@ static void deleter(SDL_Window* ptr)
     std::unique_ptr<XDisplay, std::function<void(XDisplay*)>> display(XOpenDisplay(NULL), XCloseDisplay);
 //    cfg->screen = -1;
     int num_screens = display.get()? ScreenCount(display.get()/*.cast*/): 0;
-    debug(CFG_LEVEL, BLUE_MSG << FMT("got disp %p") << display.get() << ", #screens: " << num_screens << ENDCOLOR_ATLINE(srcline));
+    debug(CFG_LEVEL, FMT("got disp %p") << display.get() << ", #screens: " << num_screens << ATLINE(srcline));
     int first = (screen != -1)? screen: 0, last = (screen != -1)? screen + 1: num_screens;
     for (int i = first; i < last; ++i)
     {
@@ -414,7 +414,7 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
     if (!read_config(which, &cached, srcline))
     {
         cached.screen = -1; //invalidate cache
-        exc(RED_MSG "video[%d] config not found" ENDCOLOR_ATLINE(srcline), which);
+        exc("video[%d] config not found" << ATLINE(srcline), which);
 //        cached.dot_clock = 0;
         return NULL;
     }
@@ -422,7 +422,7 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
     int vblank = cached.vlead + cached.vsync + cached.vtrail, vtotal = vblank + cached.vdisplay;
 //    double rowtime = (double)htotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) / vinfo.pixclock; //must be ~ 30 usec for WS281X
 //    double frametime = (double)htotal * vtotal / cached.dot_clock / 1000; //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
-    debug(CFG_LEVEL, BLUE_MSG "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" ENDCOLOR_ATLINE(srcline),
+    debug(CFG_LEVEL, "hdmi timing[%d]: %d x %d vis (aspect %f vs. %d), pxclk %2.1f MHz, hblank %d+%d+%d = %d (%2.1f%%), vblank = %d+%d+%d = %d (%2.1f%%), row %2.1f usec (%2.1f%% target), frame %2.1f msec (fps %2.1f vs. %d)" << ATLINE(srcline),
 //            cached.mode_line.hdisplay, cached.mode_line.vdisplay, (double)cached.dot_clock / 1000, //vinfo.xres, vinfo.yres, vinfo.bits_per_pixel, vinfo.pixclock,
 //            cached.mode_line.hsyncstart - cached.mode_line.hdisplay, cached.mode_line.hsyncend - cached.mode_line.hsyncstart, cached.mode_line.htotal - cached.mode_line.hsyncend, cached.mode_line.htotal - cached.mode_line.hdisplay, (double)100 * (cached.mode_line.htotal - cached.mode_line.hdisplay) / cached.mode_line.htotal, //vinfo.left_margin, vinfo.right_margin, vinfo.hsync_len, 
 //            cached.mode_line.vsyncstart - cached.mode_line.vdisplay, cached.mode_line.vsyncend - cached.mode_line.vsyncstart, cached.mode_line.vtotal - cached.mode_line.vsyncend, cached.mode_line.vtotal - cached.mode_line.vdisplay, (double)100 * (cached.mode_line.vtotal - cached.mode_line.vdisplay) / cached.mode_line.vtotal, //vinfo.upper_margin, vinfo.lower_margin, vinfo.vsync_len,
@@ -482,7 +482,7 @@ WH ScreenInfo()
 //set reasonable values if can't get info:
     if (!wh.w || !wh.h)
     {
-        /*throw std::runtime_error*/ exc(RED_MSG "Can't get screen size" ENDCOLOR);Screenshot at 2018-11-05 08:28:23
+        /*throw std::runtime_error*/ exc("Can't get screen size" ENDCOLOR);Screenshot at 2018-11-05 08:28:23
         wh.w = 1536;
         wh.h = wh.w * 3 / 4; //4:3 aspect ratio
         myprintf(22, YELLOW_MSG "Using dummy display mode %dx%d" ENDCOLOR, wh.w, wh.h);
@@ -512,7 +512,7 @@ public: //operators:
 };
 
 
-#define ERR_2ARGS(msg, srcline)  exc(RED_MSG << msg << ": %s (error %d)" ENDCOLOR_ATLINE(srcline), strerror(errno), errno)
+#define ERR_2ARGS(msg, srcline)  exc(msg << ": %s (error %d)" ENDCOLOR_ATLINE(srcline), strerror(errno), errno)
 #define ERR_1ARG(msg)  ERR_2ARGS(msg, 0)
 #define ERR(...)  UPTO_2ARGS(__VA_ARGS__, ERR_2ARGS, ERR_1ARG) (__VA_ARGS__)
 
@@ -595,12 +595,15 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfi
 #include "debugexc.h"
 #include "srcline.h"
 
+#include "rpi-helpers.h"
+
+
 #define SDL_GetNumVideoDisplays()  1 //TODO
 
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, CYAN_MSG "is RPi? %d" ENDCOLOR, isRPi());
+    debug(0, CYAN_MSG "is RPi? %d", isRPi());
 //    return 0;
 //    for (int screen = 0;; ++screen)
 //    SDL_AutoLib sdl(SDL_INIT_VIDEO, SRCLINE);

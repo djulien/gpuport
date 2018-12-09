@@ -1,7 +1,21 @@
-#ifndef _SRCLINE_H
-#define _SRCLINE_H
+#if !defined(_SRCLINE_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _SRCLINE_H //CAUTION: put this before defs to prevent loop on cyclic #includes
+//#pragma message("#include " __FILE__)
 
 
+#if 1 //simpler, less overhead
+ #include "str-helpers.h"
+
+ #define SRCLINE  "  @" __FILE__ ":" TOSTR(__LINE__)
+ #define ATLINE(srcline)  NVL(srcline, SRCLINE) //<< ENDCOLOR_NOLINE //"\n"
+
+ typedef const char* SrcLine; //allow compiler to distinguish param types, catch implicit conv
+//struct SrcLine
+//{
+//    const char* _;
+//    SrcLine(const char* srcline = 0): _(NVL(srcline, SRCLINE))
+//};
+#else
 //check for ambiguous base file name:
 #include <string.h>
 #include <algorithm> //std::min()
@@ -149,81 +163,6 @@ SrcLine shortsrc(SrcLine srcline, SrcLine defline) //int line = 0)
 }
 
 
-//#include <regex>
-#include <vector>
-
-#define TEMPL_ARGS  templ_args(__PRETTY_FUNCTION__)
-//https://bytes.com/topic/c/answers/878171-any-way-print-out-template-typename-value
-//typeid(TYPE).name() can't use with -fno-rtti compiler flag
-
-//get template arg types from __PRETTY_FUNC__
-//example: AutoShmary<TYPE, WANT_MUTEX>::AutoShmary(size_t, key_t, SrcLine) [with TYPE = unsigned int; bool WANT_MUTEX = false; size_t = unsigned int; key_t = int; SrcLine = const char*] 
-/*const char* */std::string/*&*/ templ_args(const char* str)
-{
-    const char* svstr = str;
-//printf("get args from: %s\n", str);
-    if (!(str = strchr(str, '<'))) return "????"; //svstr;
-//    const char* name_start = strchr(str, '<');
-//    if (!name_start++) return str;
-//    const char* name_end = strchr(name_start, '>');
-//    if (!name_end) return str;
-//string split examples: https://stackoverflow.com/questions/1894886/parsing-a-comma-delimited-stdstring
-//or http://www.partow.net/programming/strtk/index.html
-    std::vector<std::pair<const char*, int>> arg_names;
-//if (strstr(str, "anonymous")) { printf("templ args in: %s\n", str); fflush(stdout); }
-    for (const char* sep = ++str; /*sep != end*/; ++sep)
-        if ((*sep == ',') || (*sep == '>'))
-        {
-//printf("arg#%d: '%.*s'\n", arg_names.size(), sep - str, str);
-//            if (!strncmp(str, "<anonymous", sep - str)) ++str; //unnamed args; skip extra "<"
-            arg_names.push_back(std::pair<const char*, int>(str, sep - str)); //std::string(start, sep - start));
-            if (*sep == '>') break;
-            str = sep + 1;
-            if (*str == ' ') ++str;
-        }
-//printf("found %d templ arg names in %s\n", arg_names.size(), svstr);
-//get type string for each arg:
-//    std::ostringstream argtypes;
-//    int numfound = 0;
-    std::string arg_types;
-    for (auto it = arg_names.begin(); it != arg_names.end(); ++it)
-    {
-        char buf[64];
-        arg_types.push_back(arg_types.length()? ',': '<');
-        bool hasname = strncmp(it->first, "<anonymous", it->second); //kludge: unnamed args; NOTE: extra "<" present from above
-        if (!hasname) { strcpy(buf, " = "); ++it->first; it->second -= 6; } 
-        else snprintf(buf, sizeof(buf), " %.*s = ", it->second, it->first);
-        const char* bp1 = strstr(str, buf);
-//printf("templ args[%d]: found '%s' in '%s'? %d\n", it - arg_names.begin(), buf, str, bp1? (bp1 - str): -1);
-        if (!hasname && bp1) //try to find real name
-            for (const char* bp0 = bp1; bp0 > str; --bp0)
-                if (bp0[-1] == ' ') { it->second = bp1 - (it->first = bp0); break; } //found start of name
-        arg_types.append(it->first, it->second);
-        if (!bp1) continue; //just give arg name if can't find type
-        bp1 += strlen(buf);
-        const char* bp2 = strchr(bp1, ';'); if (!bp2) bp2 = strrchr(bp1, ']'); //strpbrk(bp1, ";]");
-//printf("templ args: then found ;] ? %d\n", bp2? (bp2 - str): -1);
-        if (!bp2) continue;
-//        ++numfound;
-        arg_types.push_back('=');
-        arg_types.append(bp1, bp2 - bp1);
-//        if (arg_types.length() != 1) continue;
-//        sprintf(buf, "%d args: ", arg_names.size());
-//        arg_types.insert(0, buf);
-    }
-    if (arg_types.length()) arg_types.push_back('>');
-//printf("found %d templ arg names, %d types in %s\n", arg_names.size(), numfound, svstr);
-//if (strstr(arg_types.c_str(), "anonymous")) { printf("templ args in: %s\n", arg_types.c_str()); fflush(stdout); }
-    return arg_types;
-//    std::regex args_re ("<([^>]*)>");
-//    std::smatch m;
-//    if (!std::regex_search(str, m, re)) return str;
-//    for (auto x:m) std::cout << x << " ";
-//    std::cout << std::endl;
-//    s = m.suffix().str();
-}
-
-
 #if 0
 class SRCLINE
 {
@@ -240,6 +179,7 @@ public: //opeartors
 //    }
 };
 #endif
+#endif
 
 #endif //ndef _SRCLINE_H
 
@@ -253,15 +193,17 @@ public: //opeartors
 #undef WANT_UNIT_TEST //prevent recursion
 
 #include <iostream>
+
 #include "msgcolors.h"
+#include "str-helpers.h"
 #include "srcline.h"
 
 void func(int a, SrcLine srcline = 0)
 {
-    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR "\n";
-    std::cout << PINK_MSG "hello " << a << " from" ENDCOLOR "\n";
-    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline) << std::endl;
-    std::cout << RED_MSG "hello " << a << " from" ENDCOLOR_ATLINE(srcline) << std::endl;
+//    std::cout << PINK_MSG << "hello " << a << " from" << ENDCOLOR "\n";
+//    std::cout << PINK_MSG "hello " << a << " from" ENDCOLOR "\n";
+//    std::cout << RED_MSG << "hello " << a << " from" << ENDCOLOR_ATLINE(srcline); //<< std::endl;
+    std::cout << RED_MSG "hello " << a << " from" << ATLINE(srcline) << ENDCOLOR_NEWLINE; //std::endl; //ENDCOLOR_ATLINE(srcline) << std::endl;
 }
 
 
@@ -269,7 +211,7 @@ template<typename ARG1, typename ARG2>
 class X
 {
 public:
-    X(SrcLine srcline = 0) { std::cout << BLUE_MSG "hello from X<" << TEMPL_ARGS << ">" ENDCOLOR_ATLINE(srcline) "\n"; }
+    X(SrcLine srcline = 0) { std::cout << BLUE_MSG "hello from X<" << TEMPL_ARGS << ">" << ATLINE(srcline) << ENDCOLOR_NEWLINE; }
     ~X() {}
 };
 
@@ -277,7 +219,7 @@ public:
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    std::cout << BLUE_MSG "start" ENDCOLOR "\n";
+    std::cout << BLUE_MSG "start" ENDCOLOR_NOLINE "\n";
     func(1);
     func(2, SRCLINE);
     X<int, const char*> aa(SRCLINE);

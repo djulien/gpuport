@@ -1,12 +1,13 @@
 //elapsed timer:
 
-#ifndef _ELAPSED_H
-#define _ELAPSED_H
+#if !defined(_ELAPSED_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
+#define _ELAPSED_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
  //std::chrono::duration<double> elapsed()
 #include <chrono> //now(), duration<>
 #include <sstream> //std::stringstream
 #include <unistd.h> //getpid()
+
 #include "ostrfmt.h" //FMT()
 
 
@@ -120,6 +121,7 @@ std::string timestamp(bool undecorated = false)
 //#include <iostream> //std::cout, std::flush
 #include "debugexc.h" //debug()
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
+
 #include "elapsed.h"
 
 //#ifndef MSG
@@ -129,9 +131,9 @@ std::string timestamp(bool undecorated = false)
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, BLUE_MSG << timestamp() << "start" << ENDCOLOR);
+    debug(0, BLUE_MSG << timestamp() << "start");
     sleep(2); //give parent head start
-    debug(0, GREEN_MSG << timestamp() << "finish" << ENDCOLOR);
+    debug(0, GREEN_MSG << timestamp() << "finish");
 //    return 0;
 }
 #endif //def WANT_UNIT_TEST

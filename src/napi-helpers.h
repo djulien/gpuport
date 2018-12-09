@@ -72,7 +72,7 @@ std::string NAPI_ErrorMessage(napi_env env)
 #define NAPI_exc_1ARG(msg)  NAPI_exc_2ARGS(DEF_ENV, msg)
 #define NAPI_exc_2ARGS(env, msg)  NAPI_exc_3ARGS(env, NO_ERRCODE, msg)
 #define NAPI_exc_3ARGS(env, errcode, msg)  NAPI_exc_4ARGS(env, errcode, msg, SRCLINE) //(napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
-#define NAPI_exc_4ARGS(env, errcode, msg, srcline)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR_ATLINE(srcline)), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
+#define NAPI_exc_4ARGS(env, errcode, msg, srcline)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ATLINE(srcline) << ENDCOLOR_NOLINE), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
 //#define NAPI_exc_4ARGS(env, errcode, msg, retval)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), retval) //dummy "!okay" result to allow usage in conditional expr; throw() won't fall thru at run-time, though
 #define NAPI_exc(...)  UPTO_4ARGS(__VA_ARGS__, NAPI_exc_4ARGS, NAPI_exc_3ARGS, NAPI_exc_2ARGS, NAPI_exc_1ARG) (__VA_ARGS__)
 inline napi_status napi_throw_error(napi_env env, const char* errcode, std::/*ostringstream*/ostream& errmsg)
@@ -403,11 +403,49 @@ public: //methods
     uint32_t operator=(const uint32_t& new_val) { cre_uint32(new_val); return new_val; }
     void verify(napi_valuetype chk_type, bool subtypeok = true) //napi_typedarray_type arytype = 0)
     {
-        if ((type() != chk_type) || !subtypeok) debug(22, RED_MSG << "failed to create " << TypeName(chk_type) << ENDCOLOR);
+        if ((type() != chk_type) || !subtypeok) exc_hard("failed to create " << TypeName(chk_type));
 //        else debug(BLUE_MSG << TypeName(chk_type) << " created ok" << ENDCOLOR);
     }
 };
 //napi_thingy;
+
+
+//add named prop value to property descriptor array:
+#define add_prop_1ARG(var)  add_prop(#var, var)
+#define add_prop_2ARGS(name, value)  add_prop_3ARGS(name, value, napi_enumerable)
+#define add_prop_3ARGS(name, value, attrs)  NAMED{ _.utf8name = name; _.value = napi_thingy(env, value); _.attributes = attrs; } //(props.emplace_back()); //(*pptr++);
+#define add_prop(...)  UPTO_3ARGS(__VA_ARGS__, add_prop_3ARGS, add_prop_2ARGS, add_prop_1ARG) (__VA_ARGS__)
+
+//add method to property descriptor array:
+#define add_method_1ARG(func)  add_method_2ARGS(#func, func) //(props.emplace_back()); //(*pptr++);
+#define add_method_2ARGS(name, func)  add_method_3ARGS(name, func, nullptr)
+#define add_method_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.method = func; _.attributes = napi_default; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_method(...)  UPTO_3ARGS(__VA_ARGS__, add_method_3ARGS, add_method_2ARGS, add_method_1ARG) (__VA_ARGS__)
+
+#define add_getter_1ARG(func)  add_getter_2ARGS(#func, func) //(props.emplace_back()); //(*pptr++);
+#define add_getter_2ARGS(name, func)  add_getter_3ARGS(name, func, nullptr)
+#define add_getter_3ARGS(name, func, aodata)  add_getter_4ARGS(name, func, aodata, napi_enumerable)
+#define add_getter_4ARGS(name, func, aodata, attrs)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = attrs; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter(...)  UPTO_4ARGS(__VA_ARGS__, add_getter_4ARGS, add_getter_3ARGS, add_getter_2ARGS, add_getter_1ARG) (__VA_ARGS__)
+
+//wrapper for getter:
+napi_value getter(napi_env env, napi_callback_info info, napi_value (*get_value)(napi_env, void*))
+{
+    void* data;
+    napi_value argv[0+1], This;
+    size_t argc = SIZEOF(argv);
+    if (!env) return NULL; //Node cleanup mode?
+    struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, &data), "Getter info extract failed");
+//                    GpuPortData* aodata = static_cast<GpuPortData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+    return get_value(env, data);
+}
+
+
+//void add_prop(napi_env env, vector_cxx17<my_napi_property_descriptor>& props, const char* name, napi_value value)
+//{
+//}
 
 
 #if 0
