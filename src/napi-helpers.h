@@ -44,8 +44,22 @@
 #define NO_FINALIZE  NULL //napi_finalize NO_FINALIZE = NULL;
 #define NO_FINAL_DATA  NULL //void* NO_FINAL_DATA = NULL;
 
+//#include "str-helpers.h" //vector_cxx17<>
+
 //define top of module init chain:
 #define module_exports(env, exports)  exports
+//intended usage:
+//napi_value GpuModuleInit(napi_env env, napi_value exports)
+//{
+//    exports = module_exports(env, exports); //include previous exports
+//    vector_cxx17<my_napi_property_descriptor> methods;
+//    ... props, methods, getters/setters
+//    !NAPI_OK(napi_define_properties(env, exports, methods.size(), methods.data()), "export methods/props failed");
+//    return exports;
+//}
+//#undef module_exports
+//#define module_exports  GpuModuleInit //cumulative exports
+
 
 //important NOTEs about napi object lifespan:
 //https://nodejs.org/api/n-api.html#n_api_object_lifetime_management
@@ -202,6 +216,13 @@ struct my_napi_property_descriptor: public napi_property_descriptor
 };
 SrcLine /*GpuPortData::*/my_napi_property_descriptor::srcline; //kludge: create a place for _.srcline in above code; can't use static function wrapper due to definition of SRCLINE
 
+//napi_value& operator+=(napi_value value, std::vector<my_napi_property_descriptor>& props)
+//{
+//    !NAPI_OK(napi_define_properties(env, value, props.size(), props.data()), "def props failed");
+//    return value;
+//}
+
+
 //napi property convenience/helper functions:
 bool has_prop(napi_env env, napi_value obj, const char* name)
 {
@@ -244,6 +265,7 @@ bool /*napi_status*/ get_prop(napi_env env, napi_value obj, const char* name, ui
 struct napi_thingy
 {
     struct Object {}; //ctor disambiguation tag
+    struct Array {}; //ctor disambiguation tag
     napi_env env; //CAUTION: doesn't remain valid across napi calls/events
     napi_value value;
 public: //ctors/dtors
@@ -252,6 +274,7 @@ public: //ctors/dtors
     explicit inline napi_thingy(napi_env new_env): env(new_env) { cre_undef(); } //force env to be available
     inline napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {} //TODO: inc ref count?
     inline napi_thingy(napi_env new_env, Object) { cre_object(new_env); }
+    inline napi_thingy(napi_env new_env, Array, int len) { cre_ary(new_env, len); }
     inline napi_thingy(napi_env new_env, int32_t new_val) { cre_int32(new_env, new_val); }
     inline napi_thingy(napi_env new_env, uint32_t new_val) { cre_uint32(new_env, new_val); }
     inline napi_thingy(napi_env new_env, double new_val) { cre_double(new_env, new_val); }
@@ -263,8 +286,20 @@ public: //ctors/dtors
 public: //operators
     inline napi_thingy& operator=(const napi_thingy& that) { env = that.env; value = that.value; return *this; }
     inline napi_thingy& operator=(napi_value that) { value = that; return *this; }
+    napi_thingy& operator+=(std::vector</*my_*/napi_property_descriptor>& props)
+    {
+        !NAPI_OK(napi_define_properties(env, value, props.size(), props.data()), "def props failed");
+        return this;
+    }
     inline operator napi_env() const { return env; }
     inline operator napi_value() const { return value; }
+    inline bool isary() const
+    {
+        bool is_ary;
+        if (type() != napi_object) return false;
+        !NAPI_OK(napi_is_array(env, value, &is_ary), "Check if array failed");
+        return is_ary;
+    }
     inline bool isarybuf() const
     {
         bool is_ary;
@@ -381,6 +416,7 @@ public: //methods
     inline void cre_object(napi_env new_env) { env = new_env; cre_object(); }
     inline void cre_string(napi_env new_env, std::string str) { env = new_env; cre_string(str); }
     inline void cre_string(napi_env new_env, const char* buf, size_t len) { env = new_env; cre_string(buf, len); }
+    inline void cre_ary(napi_env new_env, size_t len) { env = new_env; cre_ary(len); }
     inline void cre_ext_arybuf(napi_env new_env, void* buf, size_t len) { env = new_env; cre_ext_arybuf(buf, len); }
     inline void cre_typed_ary(napi_env new_env, napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { env = new_env; cre_typed_ary(type, count, arybuf, bofs); }
 //n/a    inline void cre_bool(napi_env new_env, bool new_val) { env = new_env; cre_bool(new_val); }
@@ -393,6 +429,7 @@ public: //methods
     inline void cre_object() { !NAPI_OK(napi_create_object(env, &value), "Cre obj failed"); verify(napi_object); }
     inline void cre_string(std::string str) { !NAPI_OK(napi_create_string_utf8(env, str.c_str(), str.length(), &value), "Cre str failed"); verify(napi_string); }
     inline void cre_string(const char* buf, size_t strlen) { !NAPI_OK(napi_create_string_utf8(env, buf, strlen, &value), "Cre str failed"); verify(napi_string); }
+    inline void cre_ary(size_t len) { !NAPI_OK(napi_create_array_with_length(env, len, &value), "Cre ary failed"); verify(napi_object, isary()); }
     inline void cre_ext_arybuf(void* buf, size_t len) { !NAPI_OK(napi_create_external_arraybuffer(env, buf, len, NO_FINALIZE, NO_HINT, &value), "Cre arraybuf failed"); verify(napi_object, isarybuf()); }
     inline void cre_typed_ary(napi_typedarray_type type, size_t count, napi_value arybuf, size_t bofs = 0) { !NAPI_OK(napi_create_typedarray(env, type, count, arybuf, bofs, &value), "Cre typed array failed"); verify(napi_object, istypary()); }
 //n/a    inline void cre_bool(bool new_val) { !NAPI_OK(napi_create_bool(env, new_val, &value), "Cre bool failed"); show(); }
@@ -424,11 +461,13 @@ public: //methods
 
 #define add_getter_1ARG(func)  add_getter_2ARGS(#func, func) //(props.emplace_back()); //(*pptr++);
 #define add_getter_2ARGS(name, func)  add_getter_3ARGS(name, func, nullptr)
-#define add_getter_3ARGS(name, func, aodata)  add_getter_4ARGS(name, func, aodata, napi_enumerable)
-#define add_getter_4ARGS(name, func, aodata, attrs)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = attrs; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//#define add_getter_3ARGS(name, func, aodata)  add_getter_4ARGS(name, func, aodata, napi_enumerable)
+//#define add_getter_4ARGS(name, func, aodata, attrs)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = attrs; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(func_setter, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
 #define add_getter(...)  UPTO_4ARGS(__VA_ARGS__, add_getter_4ARGS, add_getter_3ARGS, add_getter_2ARGS, add_getter_1ARG) (__VA_ARGS__)
 
-//wrapper for getter:
+//getter wrappers:
 napi_value getter(napi_env env, napi_callback_info info, napi_value (*get_value)(napi_env, void*))
 {
     void* data;
@@ -440,6 +479,13 @@ napi_value getter(napi_env env, napi_callback_info info, napi_value (*get_value)
 //                    GpuPortData* aodata = static_cast<GpuPortData*>(data);
 //                    return aodata->wker_ok(env)->m_frinfo.protocol;
     return get_value(env, data);
+}
+//type-specific overloads:
+napi_value getter(napi_env env, napi_callback_info info, int32_t (*get_value)(napi_env, void*))
+{
+    napi_thingy retval(env);
+    !NAPI_OK(napi_create_int32(env, get_value(env, data), &retval.value), "Get uint32 getval failed");
+    return retval;
 }
 
 

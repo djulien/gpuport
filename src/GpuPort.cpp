@@ -4,8 +4,7 @@
 //cache pad nodebq
 //expose debug() to napi
 
-///////////////////////////////////
-/////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 ////
 /// GpuPort: a Node.js add-on with simple async callback to wrap RPi GPU as a parallel port
 //
@@ -63,7 +62,7 @@
 #include <limits.h> //INT_MAX
 
 #define MAX_DEBUG_LEVEL  100
-#include "str-helpers.h" //unmap(), NNNN_hex()
+#include "str-helpers.h" //unmap(), NNNN_hex(), vector_cxx17<>
 #include "thr-helpers.h" //thrnx()
 #include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
 //#include "elapsed.h" //elapsed_msec(), timestamp(), now()
@@ -137,8 +136,8 @@ public:
 #include <initializer_list>
 //#include <cassert>
 
-//fixed-content/len vector:
-//NOTE: don't store any member data except the list of values
+//fixed-content/length vector:
+//NOTE: don't store any member data except the list of values (or put extra data elsewhere in heap)
 template <typename TYPE, size_t SIZE>
 class PreallocVector
 {
@@ -272,7 +271,7 @@ public: //methods:
 //#define HRES_LIMIT(clock, vres, fps)  ((clock) / (vres) / (fps))
 //#define FPS_LIMIT(clock, hres, vres)  ((clock) / (hres) / (vres))
 //#define CLOCK_LIMIT(hres, vres, fps)  ((hres) * (vres) * (fps))
-#define MHz  *1000000 //must be int for template param; //*1e6
+#define MHz  *1000000 //NOTE: can't use 1e6; must be int for template param
 
 #define CLOCK_CONSTRAINT_2ARGS(hres, nodetime)  ((hres) / (nodetime))
 #define CLOCK_CONSTRAINT_3ARGS(hres, vres, fps)  ((hres) * (vres) * (fps))
@@ -299,6 +298,7 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 
 //shm struct shared by bkg gpu wker thread and main/renderer threads:
 //CAUTION: don't store ptrs; they won't be valid in other procs
+//all ipc and sync occurs via this struct to allow procs/threads to run at max speed and avoid costly memory xfrs
 struct ShmData
 {
 //    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
@@ -342,41 +342,49 @@ struct ShmData
     static const int VALIDCHK = 0xf00d1234;
     static const int VERSION = 0x001812; //0.18.12
     static const key_t SHMKEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
-//    InOutDebug inout1;
-//protected: //data members
-public: //data members
-    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
-    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Protocol& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+public: //dependent types:
+//    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
+    struct Protocol //kludge: enum class can't have members, so use struct to encapsulate operators and methods
     {
-        static const std::map<Protocol, const char*> names =
+        enum Enum: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //CANCEL combines bkg wker control with protocol selection
+        Enum value;
+        static const std::map<Protocol, const char*> Names =
         {
             {Protocol::NONE, "NONE"},
             {Protocol::DEV_MODE, "DEV MODE"},
             {Protocol::WS281X, "WS281X"},
             {Protocol::CANCEL, "CANCELLED"},
         };
-        return ostrm << NVL(unmap(names, that), "??PROTOCOL??");
-    }
-    napi_value protocol_export_enum(napi_env env)
-    {
-        napi_thingy protocol(env);
-        protocol.cre_object();
-        vector_cxx17<my_napi_property_descriptor> enum_props;
-        add_prop("NONE", static_cast<int32_t>(Protocol::NONE))(enum_props.emplace_back()); //(*pptr++);
-        add_prop("DEV_MODE", static_cast<int32_t>(Protocol::DEV_MODE))(enum_props.emplace_back()); //(*pptr++);
-        add_prop("WS281X", static_cast<int32_t>(Protocol::WS281X))(enum_props.emplace_back()); //(*pptr++);
-        add_prop("CANCEL", static_cast<int32_t>(Protocol::CANCEL))(enum_props.emplace_back()); //(*pptr++);
-//        debug(9, "add %d props", props.size());
-        !NAPI_OK(napi_define_properties(env, protocol, enum_props.size(), enum_props.data()), "export protocol enum props failed");
-        return protocol;
-    }
-//bkg gpu wker stores private data on stack or heap
-//RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
-    const int m_hdr = VALIDCHK;
-    const int m_ver = VERSION;
+//        operator const char*() const { return NVL(unmap(ProtocolNames, that), "??PROTOCOL??"); }
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Protocol& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        {
+            return ostrm << NVL(unmap(Names, that.value), "??PROTOCOL??");
+        }
+    public: //NAPI methods
+//        static napi_value my_exports(napi_env env, napi_value exports)
+        static napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        static napi_value my_exports(napi_env env, napi_value& retval)
+        {
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
+            vector_cxx17<my_napi_property_descriptor> props;
+    //        add_prop("NONE", static_cast<int32_t>(Protocol::NONE))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("DEV_MODE", static_cast<int32_t>(Protocol::DEV_MODE))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("WS281X", static_cast<int32_t>(Protocol::WS281X))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("CANCEL", static_cast<int32_t>(Protocol::CANCEL))(enum_props.emplace_back()); //(*pptr++);
+            for (auto& it: ProtocolNames)
+                add_prop(it.second, static_cast<int32_t>(it.first))(props.emplace_back()); //(*pptr++);
+    //        debug(9, "add %d props", props.size());
+//            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol enum props failed");
+            retval += props;
+            return retval;
+        }
+    };
+//provide manifest info so other procs can find data of interest within shm seg:
     struct ManifestType
     {
-//provide manifest info so other procs can find data of interest within shm seg:
+//CAUTION: don't make these static; they need to be placed as members directly within object instance
         const size_t info_ofs = offsetof(ShmData, m_info), info_len = sizeof(m_info);
         const size_t spare_ofs = offsetof(ShmData, m_spare), spare_len = sizeof(m_spare);
         const size_t fbque_ofs = offsetof(ShmData, m_fbque), fbque_len = sizeof(m_fbque);
@@ -393,12 +401,14 @@ public: //data members
             ostrm << ", fbque " << commas(that.fbque_len) << ":+" << commas(that.fbque_ofs);
             return ostrm << "}";
         }
-    public: //methods
-#if 1
-        napi_value my_exports(napi_env env) //vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
+    public: //NAPI methods
+//exported manifest allows other procs to find other non-exported data:
+//        napi_value my_exports(napi_env env) //vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
+        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        /*static*/ napi_value my_exports(napi_env env, napi_value& retval)
         {
-            napi_thingy retval(env);
-            retval.cre_object();
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
             vector_cxx17<my_napi_property_descriptor> props;
             add_prop(info_ofs)(props.emplace_back());
             add_prop(info_len)(props.emplace_back());
@@ -406,13 +416,13 @@ public: //data members
             add_prop(spare_len)(props.emplace_back());
             add_prop(fbque_ofs)(props.emplace_back());
             add_prop(fbque_len)(props.emplace_back());
-            debug(9, "add %d props", props.size());
-            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol props failed");
+//            debug(9, "add %d props", props.size());
+//            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export manifest props failed");
+            retval += props;
             return retval;
         }
-#endif
-    } m_manifest;
-    /*alignas(CACHELEN)*/ struct ShmInfo
+    };
+    /*alignas(CACHELEN)*/ struct FrameControl //ShmInfo
     {
         CONST int screen;
         CONST SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
@@ -430,9 +440,9 @@ public: //data members
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
     public: //ctors/dtors
-        explicit ShmInfo(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {} // HERE(3); }
+        explicit FrameControl(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {} // HERE(3); }
     public: //operators
-        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ShmInfo& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FrameControl& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
 //            HERE(4);
 //            ostrm << "manifest"; //<< my_templargs();
@@ -455,30 +465,42 @@ public: //data members
             ostrm << ", age " << commas(elapsed(that.started)) << " msec";
             return ostrm << "}";
         }
-    public: //methods
-#if 0
-        napi_value my_exports(napi_env env) //vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
+    public: //NAPI methods
+        static /*uint32_t*/ auto frtime_getter(FrameControl* fcptr) const { return fcptr->frame_time; }
+        static /*uint32_t*/ auto fps_getter(FrameControl* fcptr) const { return 1000. / fcptr->frame_time; }
+        static /*uint32_t*/ auto protocol_getter(FrameControl* fcptr) const { return static_cast<int32_t>(fcptr->protocol); }
+        static void protocol_setter(FrameControl* fcptr, int32_t newval) { fcptr->protocol = statis_cast<Protocol>(newval); }
+        static /*uint32_t*/ auto numfr_getter(FrameControl* fcptr) const { return fcptr->numfr; }
+        static /*uint32_t*/ auto exc_getter(FrameControl* fcptr) const { return fcptr->exc_reason; }
+//        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        /*static*/ napi_value my_exports(napi_env env, napi_value& retval)
         {
-            napi_thingy retval(env);
-            retval.cre_object();
             vector_cxx17<my_napi_property_descriptor> props;
-            [env/*, aoptr*/](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
-            {
-                _.utf8name = "NONE";
-//        !NAPI_OK(napi_create_int32(env, aoptr->m_nodebuf.wh.h/*UNIV_MAXLEN_pad*/, &_.value), "Cre w int failed");
-                _.value = napi_thingy(env, static_cast<int32_t>(Protocol::NONE));
-                _.attributes = napi_enumerable; //read-only; //napi_default;
-//        _.data = aoptr;
-            }(props.emplace_back()); //(*pptr++);
-            debug(9, "add %d props", props.size());
-            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol props failed");
+//        CONST int screen;
+//        CONST SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
+//        CONST double frame_time; //kludge: set value here to match txtr; used in FrameInfo
+//        Protocol protocol = Protocol::NONE; //WS281X;
+//        Protocol prev_protocol = Protocol::CANCEL; //track protocol changes so all nodes can be updated
+//        bool isrunning = false;
+//        int numfr; //divisor for avg timing stats
+//        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) + 1> perf_stats;
+//        char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
+//        const elapsed_t started = now(); //elapsed();
+//no; not set until port opened        add_prop("frame_time", m_info.frame_time)(props.emplace_back());
+//no            add_prop("FPS", 1000.0 / m_info.frame_time)(props.emplace_back());
+            add_getter("frtime", FrameControl::frtime_getter, this)(props.emplace_back());
+            add_getter("FPS", FrameControl::fps_getter, this)(props.emplace_back());
+            add_getter("protocol", FrameControl::protocol_getter, ShmData::protocol_setter, this)(props.emplace_back());
+            add_getter("numfr", FrameControl::numfr_getter, this)(props.emplace_back()); //(*pptr++);
+            napi_thingy arybuf(env, &perf_stats[0], sizeof(perf_stats));
+            napi_thingy perf_typary(env, GPU_NODE_type, SIZEOF(perf_stats), arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+            add_prop("perf_stats", perf_typary)(props.emplace_back()); //(*pptr++);
+//            add_prop("perf_stats", napi_thingy(env, GPU_NODE_type, SIZEOF(perf_stats), napi_thingy(env, &perf_stats[0], sizeof(perf_stats)))(props.emplace_back()); //(*pptr++);
+            add_getter("exc_reason", FrameControl::exc_getter, this)(props.emplace_back()); //(*pptr++);
+            retval += props;
             return retval;
         }
-#endif
-    } m_info;
-    const int m_flag1 = VALIDCHK;
-    alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg
-    const int m_flag2 = VALIDCHK;
+    };
     alignas(CACHELEN) struct FramebufQuent
     {
 //        /*alignas(CACHELEN)*/ struct
@@ -507,113 +529,72 @@ public: //data members
             ostrm << ", nodes " << wh;
             return ostrm << "}";
         }
-    };
-    PreallocVector<FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
-    static napi_value isopen_getter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-//    napi_reference m_ref = nullptr;
-    static STATIC_WRAP(napi_ref, m_nodes_ref, = nullptr);
-    napi_value nodes_export(napi_env env)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
-        napi_thingy arybuf(env, &m_fbque[0], sizeof(m_fbque));
-        for (auto& it = m_fbque.begin(); it != m_fbque.end(); ++it)
+    public: //NAPI methods
+        static /*uint32_t*/ auto frnum_getter(FramebufQuent* fbptr) const { return fbptr->frnum.load(); }
+        static /*uint32_t*/ auto frtime_getter(FramebufQuent* fbptr) const { return fbptr->frtime.load(); }
+        static /*uint32_t*/ auto ready_getter(FramebufQuent* fbptr) const { return fbptr->ready.load(); }
+        static void ready_setter(FramebufQuent* fbptr, uint32_t newval) { fbptr->ready.store(newval); }
+//??        static STATIC_WRAP(napi_ref, m_nodes_ref, = nullptr);
+        /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx) { return my_exports(env, arybuf, inx, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV); )
+        /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx, napi_value& retval)
         {
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
+//            vector_cxx17<my_napi_property_descriptor> props;
+//            !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
+//            napi_thingy arybuf(env, &m_fbque[0], sizeof(m_fbque));
+//            for (auto& it = m_fbque.begin(); it != m_fbque.end(); ++it)
+//            {
 //            napi_thingy arybuf(env, &it->nodes[0][0], sizeof(it->nodes)); //ext buf for all nodes in all univ
 //2D array; helps separate univ from eacher
 //    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
-            napi_thingy univ_ary(env);
-            !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &univ_ary.value), "Cre univ ary failed");
+//            napi_thingy univ_ary(env);
+//                !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &univ_ary.value), "Cre univ ary failed");
+            napi_thingy univ_ary(env, napi_thingy::Array{}, NUM_UNIV);
             for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN, arybuf, x * sizeof(it->nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN, arybuf, ofs * sizeof(*this) + x * sizeof(nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
-#if 1 //does this work?
             vector_cxx17<my_napi_property_descriptor> props;
+            add_prop("nodes", univ_ary)(props.emplace_back());
+//#if 1 //does this work?
 //        std::atomic<int32_t> frnum, prevfr;
 //        std::atomic<elapsed_t> frtime, prevtime;
 //        std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
-//            add_getter("frnum", frnum_getter, &it)(props.emplace_back());
-//            add_getter("frtime", frtime_getter, &it)(props.emplace_back());
-//            add_getter("ready", ready_getter, ready_setter, &it)(props.emplace_back());
-            add_prop("thingy", 123)(props.emplace_back());
-            !NAPI_OK(napi_define_properties(env, univ_ary, props.size(), props.data()), "export protocol props failed");
-#endif
-            !NAPI_OK(napi_set_element(env, retval, &it - m_fbque.begin(), univ_ary), "Cre inner node ary failed");
+            add_getter("frnum", FramebufQuent::frnum_getter, this)(props.emplace_back());
+            add_getter("frtime", FramebufQuent::frtime_getter, this)(props.emplace_back());
+            add_getter("ready", FramebufQuent::ready_getter, FramebufQuent::ready_setter, this)(props.emplace_back());
+//            !NAPI_OK(napi_define_properties(env, univ_ary, props.size(), props.data()), "export protocol props failed");
+            retval += props;
+            return retval;
         }
-        const int REF_COUNT = 1;
-        !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_nodes_ref), "Cre ref failed"); //allow to be reused next time
-        return retval;
-    }
-#if 0
-    static napi_value frnum_getter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<FramebufQuent*>(data)->frnum.load(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-    static napi_value frtime_getter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<FramebufQuent*>(data)->frtime.load(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-    static napi_value ready_getter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<FramebufQuent*>(data)->ready.load(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-    static napi_value ready_setter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<FramebufQuent*>(data)->frnum.load(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-    static STATIC_WRAP(napi_ref, m_frctl_ref, = nullptr);
-    napi_value frctl_export(napi_env env)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
-        for (auto& it = m_fbque.begin(); it != m_fbque.end(); ++it)
-        {
-            napi_thingy frctl(env);
-            frctl.cre_object();
-            vector_cxx17<my_napi_property_descriptor> props;
-//        std::atomic<int32_t> frnum, prevfr;
-//        std::atomic<elapsed_t> frtime, prevtime;
-//        std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
-            add_getter("frnum", frnum_getter, &it)(props.emplace_back());
-            add_getter("frtime", frtime_getter, &it)(props.emplace_back());
-            add_getter("ready", ready_getter, ready_setter, &it)(props.emplace_back());
-            debug(9, "add %d props", props.size());
-            !NAPI_OK(napi_define_properties(env, frctl, props.size(), props.data()), "export protocol props failed");
-            !NAPI_OK(napi_set_element(env, retval, &it - m_fbque.begin(), frctl), "Cre inner node ary failed");
-        }
-        const int REF_COUNT = 1;
-        !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_frctl_ref), "Cre ref failed"); //allow to be reused next time
-        return retval;
-    }
-    napi_value perf_export(napi_env env)
-    {
-//TODO
-    }
-#endif
+    };
+//    InOutDebug inout1;
+//protected: //data members
+public: //data members    
+//bkg gpu wker stores private data on stack or heap
+//RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
+    const int m_hdr = VALIDCHK;
+    const int m_ver = VERSION;
+    ManifestType m_manifest;
+    FrameControl m_frctl;
+    const int m_flag1 = VALIDCHK;
+    alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg
+    const int m_flag2 = VALIDCHK;
+//    alignas(CACHELEN) struct FramebufQuent
+    PreallocVector<alignas(CACHELEN) FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
+//    napi_reference m_ref = nullptr;
     const int m_tlr = VALIDCHK;
 //    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
 //    InOutDebug inout2;
 public: //ctors/dtors
 //    explicit ShmData(int new_screen, const SDL_Size& new_wh, double new_frame_time): info(new_screen, new_wh, new_frame_time) {}
-    explicit ShmData(): /*inout1("1"), inout2("2"),*/ m_info(-1, SDL_Size(0, 0), 0) { /*HERE(2);*/ INSPECT(GREEN_MSG "ctor " << *this); } //set junk values until bkg wker starts
+    explicit ShmData(): /*inout1("1"), inout2("2"),*/ m_frctl(-1, SDL_Size(0, 0), 0) { /*HERE(2);*/ INSPECT(GREEN_MSG "ctor " << *this); } //set junk values until bkg wker starts
     ~ShmData() { INSPECT(RED_MSG "dtor " << *this); }
 public: //operators
+    bool isvalid() /*const*/ { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
 //alloc/dealloc in shared memory:
 //this allows caller to use new + delete without special code for shm
     STATIC void* operator new(size_t size) //, size_t ents)
@@ -627,12 +608,13 @@ public: //operators
 //        HERE(1);
         if (!ptr && (ptr = shmalloc_debug(1, key, SRCLINE))) exc_hard("alloc ShmData 0x%lx failed: bigger than existing", key);
         if (!ptr) exc_hard("alloc ShmData 0x%x failed", key);
+        if (shmnattch(ptr) != 1) exc_soft("ShmData multiple calls to ctor");
         return ptr;
     }
     STATIC void operator delete(void* shmdata) //, size_t ents)
     {
         ShmData* shmptr = static_cast<ShmData*>(shmdata);
-        if (!shmptr->isvalid()) throw "Invalid shmdata";
+        if (!shmptr->isvalid()) exc_hard("Invalid shmdata");
         size_t ents = get_shmhdr(shmptr, SRCLINE)->numents;
         debug(12, "dealloc %d copies of shmdata at %p", ents, shmdata);
 //        shmfree_typesafe<ShmData>(shmptr, SRCLINE);
@@ -653,46 +635,16 @@ public: //operators
         if (!that.isvalid()) return ostrm << " INVALID}";
         ostrm << ", ver 0x" << std::hex << that.m_ver << std::dec;
         ostrm << ", manifest " << that.m_manifest;
-        ostrm << ", info " << that.m_info;
+        ostrm << ", frctl " << that.m_frctl;
         ostrm << ", is open? " << that.isopen();
-        ostrm << ", que [";
+        ostrm << ", fbque [";
 //broken        for (const auto it: that.m_fbque)
         for (/*const*/ auto it = that.m_fbque.cbegin(); it != that.m_fbque.cend(); ++it)
             ostrm << ", "[(it == that.m_fbque.cbegin())? 0: 2] << *it;
         return ostrm << "}";
     }
 public: //methods:
-    bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
     bool isopen() const { return (isvalid() && m_info.isrunning); } //(m_info.protocol != Protocol::CANCEL)); }
-    static napi_value isopen_getter(napi_env env, void* data)
-    {
-        napi_thingy retval(env);
-        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
-        return retval;
-    }
-    void my_exports(vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
-    {
-//static cfg consts:
-        add_prop(VERSION)(props.emplace_back()); //(*pptr++);
-        add_prop(SHMKEY)(props.emplace_back()); //(*pptr++);
-        add_prop(NUM_UNIV)(props.emplace_back()); //(*pptr++);
-        add_prop("UNIV_MAXLEN", UNIV_MAXLEN_pad)(props.emplace_back()); //give caller actual row len for correct node addressing
-//expose Protocol types (enum consts):
-        named_prop("Protocol", protocol_export_enum(env))(props.emplace_back());
-//state getters/setters:
-        add_getter("isopen", isopen_getter, this)(props.emplace_back()); //(*pptr++);
-//shm data structs:
-        add_prop("manifest", m_manifest.my_exports(env))(props.emplace_back()); //(*pptr++);
-//        napi_thingy fbque(env);
-//        fbque.cre_object();
-//        napi_thingy arybuf(env, &nodes[0][0], sizeof(nodes));
-//        /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
-        add_prop("nodes", nodes_export(env))(props.emplace_back()); //(*pptr++);
-        add_prop("frctl", frctl_export(env))(props.emplace_back()); //(*pptr++);
-        add_prop("perf", perf_export(env))(props.emplace_back()); //(*pptr++);
-//        !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol props failed");
-//        return retval;
-    }
     void init_fbque()
     {
 //set up first round of framebufs to be processed by wker threads:
@@ -724,13 +676,14 @@ public: //methods:
             SDL_Size view;
             m_info.wh.w = NUM_UNIV; //nodes
             view.w = BIT_SLICES - 1; //last 1/3 bit will overlap hblank; clip from visible part of window
+//TODO: consolidate ScreenInfo + ScreenConfig
             view.h = m_info.wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), /*static_cast<int>*/SIZEOF(m_fbque[0].nodes[0])); //univ len == display height
             const ScreenConfig* const cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
             if (!cfg) exc_hard("can't get screen %d config");
             m_info.screen = cfg->screen;
 //        /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ m_info.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
         /*static_cast<std::remove_const(decltype(m_info.frame_time))>*/ (m_info.frame_time = cfg->frame_time()) || (m_info.frame_time = 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-           debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ATLINE(srcline), screen);
+            debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ATLINE(srcline), screen);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size
@@ -834,7 +787,230 @@ public: //methods:
 //        aodata->listener.busy = false; //work = 0;
 //    bkg.detach();
     }
+public: //NAPI methods:
+    static bool isopen(ShmData* shmptr) const { return shmptr->isopen(); }
+//    static napi_value isopen_getter(napi_env env, void* data)
+//    {
+//        napi_thingy retval(env);
+//        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
+//        return retval;
+//    }
+//export control data and methods for JS clients to use:
+//        static napi_value my_exports(napi_env env, napi_value exports)
+//    static napi_value my_exports(napi_env env)
+//    {
+//            exports = module_exports(env, exports); //include previous exports
+//    }
+//    void napi_export(vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
+//    napi_value my_exports(napi_env env, napi_value& retval)
+//    napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+    napi_value my_exports(napi_env env, napi_value& retval)
+    {
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
+        vector_cxx17<my_napi_property_descriptor> props;
+//        vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
+//static cfg consts:
+        add_prop(VERSION)(props.emplace_back()); //(*pptr++);
+        add_prop(SHMKEY)(props.emplace_back()); //(*pptr++);
+        add_prop(NUM_UNIV)(props.emplace_back()); //(*pptr++);
+        add_prop("UNIV_MAXLEN", UNIV_MAXLEN_pad)(props.emplace_back()); //give caller actual row len for correct node addressing
+//expose Protocol types (enum consts):
+        add_prop("Protocol", Protocol::my_exports(env))(props.emplace_back());
+//state getters/setters:
+        add_getter("isopen", ShmData::isopen, this)(props.emplace_back()); //(*pptr++);
+//        add_prop("frctl", m_frctl.my_exports(env))(props.emplace_back()); //(*pptr++);
+        retval = m_frctl.my_exports(env, retval); //promote these for easier access;
+//shm data structs:
+        add_prop("manifest", ManifestType::my_exports(env))(props.emplace_back()); //(*pptr++);
+//        napi_thingy fbque(env);
+//        fbque.cre_object();
+//        napi_thingy arybuf(env, &nodes[0][0], sizeof(nodes));
+//        /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+//        add_prop("nodes", nodes_export(env))(props.emplace_back()); //(*pptr++);
+        napi_thingy node_arybuf(env, &m_fbque[0], sizeof(m_fbque));
+        napi_thingy fbque_ary(env, napi_thingy::Array{}, SIZEOF(m_fbque));
+//        for (auto& fbquent: m_fbque)
+        for (auto& it = m_fbque.begin(); it != m_fbque.end(); ++it)
+        {
+            size_t inx = &it - m_fbque.begin();
+            napi_value fbquent = it.my_exports(env, node_arybuf, inx);
+            !NAPI_OK(napi_set_element(env, fbque_ary, inx, fbquent), "Cre inner node ary failed");
+        }
+        add_prop("nodes", node_ary)(props.emplace_back()); //(*pptr++);
+//??        const int REF_COUNT = 1;
+//??        !NAPI_OK(napi_create_reference(env, retval, REF_COUNT, &m_nodes_ref), "Cre ref failed"); //allow to be reused next time
+//        add_prop("frctl", frctl_export(env))(props.emplace_back()); //(*pptr++);
+//        !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol props failed");
+        napi_thingy spare_arybuf(env, &m_spare[0], sizeof(m_spare));
+        napi_thingy spare_typary(env, GPU_NODE_type, SIZEOF(m_spare), spare_arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+        add_prop("spare", spare_typary)(props.emplace_back()); //(*pptr++);
+//methods:
+        add_method("open", ShmData::Open_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
+        add_method("close", ShmData::Close_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
+        retval += props;
+        return retval;
+    }
+//"open" GPU port:
+    static napi_value Open_NAPI(napi_env env, napi_callback_info info)
+    {
+        if (!env) return NULL; //Node cleanup mode?
+        DebugInOut("Open_napi");
+
+        ShmData* shmptr;
+        napi_value argv[1+1], This; //allow 1 extra arg to check for extras
+        size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+       !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+        if (argc > 1) NAPI_exc("expected 0-1 opts arg, got " << argc << " args");
+        shmptr->isvalid(env, SRCLINE);
+        if (shmptr->isopen()) NAPI_exc("GPU port is already open");
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+        int debug = 33;
+        int screen = FIRST_SCREEN;
+//    key_t PREALLOC_shmkey = 0;
+        int vgroup = 1;
+        Uint32 init_color = BLACK;
+        /*Nodebuf::Protocol*/ int protocol = static_cast<int>(Protocol.WS281X);
+        int frtime_msec = 0; //target frame rate; //double fps;
+        bool had_opts = false;
+
+//        napi_thingy opts(env, argv[0]);
+        if (argc && (argv[0].type() != napi_undefined))
+        {
+            uint32_t listlen;
+            napi_value proplist;
+            if (argv[0].type() != napi_object) NAPI_exc("First arg not object"); //TODO: allow other types?
+            !NAPI_OK(napi_get_property_names(env, argv[0], &proplist), "Get prop names failed");
+            !NAPI_OK(napi_get_array_length(env, proplist, &listlen), "Get array len failed");
+//#if 1
+//            static const std::map<const char*, int*> known_opts =
+//            static const struct { const char* name; int* valp; } known_opts[] =
+//            using KEYTYPE = const char*;
+//            using MAPTYPE = std::vector<std::pair<KEYTYPE, int*>>;
+            static const str_map<const char*, int*> known_opts = //MAPTYPE known_opts =
+            {
+//NOTE: NUM_UNIV and UNIV_LEN are determined by video config so they are not selectable by caller
+                {"debug", &debug},
+                {"screen", &screen},
+                {"vgroup", &vgroup},
+                {"init_color", (int*)&init_color},
+                {"protocol", &protocol},
+                {"frtime_msec", &frtime_msec},
+            };
+//            std::function<int(KEYTYPE key)> find = [known_opts](KEYTYPE key) -> std::pair<KEYTYPE, int*>*
+//            {
+//                for (auto pair : known_opts)
+//                    if (!strcmp(key, pair.first)) return &pair;
+//                return 0;
+//            };
+//            debug(BLUE_MSG "checking %d option names in list of %d known options" ENDCOLOR, listlen, known_opts.size());
+//            for (auto opt : known_opts) debug(BLUE_MSG "key '%s', val@ %p vs. %p" ENDCOLOR, opt.first, opt.second, this);
+            for (int i = 0; i < listlen; ++i)
+            {
+//TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
+                char buf[20]; //= ",";
+                size_t buflen;
+                napi_thingy propname(env), propval(env);
+                !NAPI_OK(napi_get_element(env, proplist, i, &propname.value), "Get array element failed");
+                !NAPI_OK(napi_get_value_string_utf8(env, propname, buf, sizeof(buf), &buflen), "Get string failed");
+//                strcpy(&buf[1 + buflen], ",");
+//                if (strstr(",screen,vgroup,color,protocol,debug,nodes,", buf)) continue;
+//                buf[1 + buflen] = '\0';
+//                if (!get_prop(env, optsval, buf, &propval.value)) propval.cre_undef();
+                !NAPI_OK(napi_get_named_property(env, argv[0], buf, &propval.value), "Get named prop failed");
+                debug(17, "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d", i, listlen, buflen, buf, !!known_opts.find(buf));
+                if (!strcmp(buf, "fps")) { double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
+                else if (!known_opts.find(buf)) NAPI_exc("unrecognized option: '%s' " << propval, buf); //strlen(buf) - 2, &buf[1]);
+                else !NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get prop failed");
+            }
+            had_opts = true;
+//#endif
+//            opts.get_prop("debug", &m_opts.debug);
+//            /*!NAPI_OK(*/opts.get_prop("screen", &m_opts.screen); //, opts.env, "Invalid .screen prop");
+//        !NAPI_OK(get_prop(env, argv[0], "shmkey", &PREALLOC_shmkey), "Invalid .shmkey prop");
+//            /*!NAPI_OK(*/opts.get_prop("vgroup", &m_opts.vgroup); //, opts.env, "Invalid .vgroup prop");
+//            /*!NAPI_OK(*/opts.get_prop("color", &m_opts.init_color); //, opts.env, "Invalid .color prop");
+//            int /*int32_t*/ prtemp;
+//            opts.get_prop("protocol", &prtemp); //!NAPI_OK(napi_get_value_int32(env, argv[0], &prtemp), "Get uint32 setval failed");
+//            m_opts.protocol = static_cast<Nodebuf::Protocol>(prtemp);
+//        if (islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
+        }
+        debug(17, "open opts: explicit? %d, screen %d, vgroup %d, init_color 0x%x, protocol %d, frtime_msec %d, debug %d", had_opts, screen, vgroup, init_color, protocol, frtime_msec, debug);
+//internal state:
+//        static const Nodebuf::TXTR* PBEOF = (Nodebuf::TXTR*)-5;
+//        napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+//        Nodebuf::TXTR::REFILL refill; //void (*m_refill)(Nodebuf::TXTR*); //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+//to "open" gpu port, start up bkg wker:
+        shmptr->m_info.protocol = static_cast<Protocol>(protocol); //this one is under caller control and passed via shm
+//        void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
+        std::thread bkg(gpu_wker, INT_MAX, screen, NO_SIZE, vgroup, init_color, SRCLINE);
+//      try {} catch {}
+        bkg.detach();
+#if 0
+    Uint32 color; //= BLACK;
+    napi_value num_arg;
+    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+//actual work done here; surrounding code is overhead :(
+    color = limit<ShmData::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+//    napi_value retval;
+//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
+//    return retval;
+    return napi_thingy(env, color);
+#endif
+        napi_thingy retval(env, bkg.get_id());
+//        return NULL;
+        return retval;
+    }
+//"close" GPU port:
+    static napi_value Close_NAPI(napi_env env, napi_callback_info info)
+    {
+        if (!env) return NULL; //Node cleanup mode?
+        DebugInOut("Close_napi");
+
+        ShmData* shmptr;
+        napi_value argv[0+1], This; //allow 1 extra arg to check for extras
+        size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+        !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+        if (argc) NAPI_exc("expected 0 args, got " << argc << " arg" << plural(argc));
+        shmptr->isvalid(env, SRCLINE);
+        if (!shmptr->isopen()) NAPI_exc("GPU port is not already open");
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+        shmptr->protocol = CANCEL;
+        shmptr->m_fbque[shmptr->m_info.numfr % SIZEOF(shmptr->m_fbque)].ready = ALL_UNIV; //make sure bkg wker sees new protocol
+        napi_thingy retval(env, shmptr->m_info.numfr); //TODO: what to put here?
+#if 0
+    Uint32 color; //= BLACK;
+    napi_value num_arg;
+    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+//actual work done here; surrounding code is overhead :(
+    color = limit<ShmData::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
+//    napi_value retval;
+//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
+//    return retval;
+    return napi_thingy(env, color);
+#endif
+        return retval;
+    }
 public: //named arg variants
+#if 0
     template <typename CALLBACK>
     inline static auto gpu_wker(CALLBACK&& named_params)
     {
@@ -852,6 +1028,7 @@ public: //named arg variants
         unpack(params, named_params);
         VOID gpu_wker(params.NUMFR, params.screen, params.wh, params.vgroup, params.init_color, params.srcline);
     }
+#endif
 private: //helpers
 //xfr node (color) values to txtr, bit-bang into currently selected protocol format:
 //CAUTION: this needed to run fast because it blocks Node fg thread
@@ -1014,18 +1191,6 @@ public: //operators
         ostrm << ", shdata " << *that.m_shdata.ptr();
         ostrm << ", age " << /*elapsed(that.started)*/ commas(elapsed(that.m_started)) << " msec";
         return ostrm << "}";
-    }
-public: //methods:
-    void open()
-//    void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
-    {
-//        std::thread bkg();
-//      try {} catch {}
-//        bkg.detach();
-    }
-    void close()
-    {
-//        protocol = CANCEL;
     }
 };
 #endif
@@ -2375,80 +2540,6 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 }
 
 
-//"open" GPU port:
-napi_value Open_NAPI(napi_env env, napi_callback_info info)
-{
-    if (!env) return NULL; //Node cleanup mode?
-    DebugInOut("Open_napi");
-
-    ShmData* shmptr;
-    napi_value argv[1+1], This; //allow 1 extra arg to check for extras
-    size_t argc = SIZEOF(argv);
-//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
-    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
-    if (argc > 1) NAPI_exc("expected 0-1 opts arg, got " << argc << " args");
-//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
-//    if (argc < 1) 
-//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
-//    char str[1024];
-//    size_t str_len;
-//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
-//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
-//    Napi::String str = Napi::String::New(env, )
-#if 0
-    Uint32 color; //= BLACK;
-    napi_value num_arg;
-    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
-    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
-//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
-//actual work done here; surrounding code is overhead :(
-    color = limit<ShmData::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
-//    napi_value retval;
-//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
-//    return retval;
-    return napi_thingy(env, color);
-#endif
-    return NULL;
-}
-
-
-//"close" GPU port:
-napi_value Close_NAPI(napi_env env, napi_callback_info info)
-{
-    if (!env) return NULL; //Node cleanup mode?
-    DebugInOut("Close_napi");
-
-    ShmData* shmptr;
-    napi_value argv[1+1], This; //allow 1 extra arg to check for extras
-    size_t argc = SIZEOF(argv);
-//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
-    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
-    if (argc) NAPI_exc("expected 0 args, got " << argc << " arg" << plural(argc));
-//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
-//    if (argc < 1) 
-//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
-//    char str[1024];
-//    size_t str_len;
-//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
-//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
-//    Napi::String str = Napi::String::New(env, )
-#if 0
-    Uint32 color; //= BLACK;
-    napi_value num_arg;
-    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
-    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
-//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
-//actual work done here; surrounding code is overhead :(
-    color = limit<ShmData::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
-//    napi_value retval;
-//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
-//    return retval;
-    return napi_thingy(env, color);
-#endif
-    return NULL;
-}
-
-
 #if 0
 //return a js wrapper to node buf:
 napi_value GetNodes_NAPI(napi_env env, napi_callback_info info)
@@ -2754,8 +2845,8 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //kludge: use lambas in lieu of C++ named member init:
 //(named args easier to maintain than long param lists)
     add_method("limit", Limit_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
-    add_method("open", Open_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
-    add_method("close", Close_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
+//    add_method("open", ShmData::Open_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
+//    add_method("close", ShmData::Close_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
 #if 0 //broken in slave process
     [env, aoptr](auto& _) //napi_property_descriptor& _) //kludge: use lamba in lieu of C++ named member init
     {
@@ -2840,9 +2931,9 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //decorate exports with the above-defined properties:
 //    if (pptr - props > SIZEOF(props)) NAPI_exc("prop ary overflow: needed " << (pptr - props) << ", only had space for " << SIZEOF(props));
 //    !NAPI_OK(napi_define_properties(env, exports, pptr - props, props), "export method props failed");
-    shmptr->my_exports(methods, env);
     debug(9, "export %d methods/props", methods.size());
     !NAPI_OK(napi_define_properties(env, exports, methods.size(), methods.data()), "export methods/props failed");
+    methods = shmptr->my_exports(env, methods);
 //debug(9, BLUE_MSG "here14" ENDCOLOR);
 
 //wrap internal data with module exports object:

@@ -106,6 +106,22 @@ public: //methods
 };
 
 
+//std::map<void*, ShmHdr> hdrs; //store hdrs in heap; owner is only proc that needs info anyway
+//polyfill c++17 methods:
+template <typename TYPE, typename super = std::vector<TYPE>> //2nd arg to help stay DRY
+class vector_cxx17: public super //std::vector<TYPE>
+{
+//    using super = std::vector<TYPE>;
+public:
+    template <typename ... ARGS>
+    TYPE& emplace_back(ARGS&& ... args)
+    {
+        super::emplace_back(std::forward<ARGS>(args) ...); //perfect fwd
+        return super::back();
+    }
+};
+
+
 //return default string instead of null:
 //use function to avoid evaluating params > 1x
 //#define NVL(str, defval)  ((str)? (str): (defval)? (defval): "(null")

@@ -36,17 +36,18 @@ const util = require("util");
 //const buffer = require("buffer"); //needed for consts; only classes/methods are pre-included in global Node scope
 const {elapsed} = require("./elapsed");
 const {debug, caller} = require("./debug");
-const tryRequire = require("try-require"); //https://github.com/rragan/try-require
+//const tryRequire = require("try-require"); //https://github.com/rragan/try-require
 //const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
 //const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
-const cluster = tryRequire("cluster") || {isMaster: true}; //https://nodejs.org/api/cluster.html; //http://learnboost.github.com/cluster
-const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = tryRequire('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
+const cluster = require("cluster"); //tryRequire("cluster") || {isMaster: true}; //https://nodejs.org/api/cluster.html; //http://learnboost.github.com/cluster
+//const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = tryRequire('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
 cluster.proctype = cluster.isMaster? "Main": cluster.isWorker? "Wker": "?UNKN-TYPE?";
 //console.log("here1");
 //debug("here2");
 //console.log("here3");
 const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_MAXLEN: 1136, FPS: 30};
-const {/*limit, listen, nodebufq,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
+const {/*limit, listen, nodebufq, frctl, perf, nodes,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
+debug("gp", JSON.stringify(gp).json_tidy);
 
 //render control info:
 const ALL_READY = (1 << NUM_UNIV) - 1, SOME_READY = (1 << (NUM_UNIV / 2)) - 1, FIRST_READY = 1 << (NUM_UNIV - 1); //set half-ready to force sync first time
@@ -54,19 +55,24 @@ debug(`all ready ${hex(ALL_READY)}, some ready ${hex(SOME_READY)}, first ready $
 //console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
-const NUM_WKERs = 3; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
+const NUM_WKERs = 3-2; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
 debug("change this".red_lt, "change this".red);
 //    NUM_WKERs: 0, //whole-house fg render
 //  NUM_WKERs: 1, //whole-house bg render
 //    NUM_WKERs: os.cpus().length, //1 bkg wker for each core (optimal)
 //    NUM_WKERs: 6, //hard-coded #bkg wkers
-const WKER_UNIV = NUM_UNIV / NUM_WKERs; //#univ each wker should render
-debug(`#wkers ${NUM_WKERs}, univ/wker ${WKER_UNIV}`);
-const QUELEN = 4;
+const WKER_UNIV = Math.ceil(NUM_UNIV / NUM_WKERs); //#univ each wker should render
+debug(`#wkers ${NUM_WKERs}, #univ/wker ${WKER_UNIV}`.cyan_lt);
+//const QUELEN = 4;
 
 //sequence/layout info:
 //const seq = tryRequire("./my-seq");
-const NUMFR = 18; //seq len (#frames total)
+debug("load seq here".red_lt);
+const seq = {NUMFR: 18, FRTIME: 50}; //seq len (#frames total)
+seq.duration = seq.NUMFR * seq.FRTIME;
+seq.gpufr = divup(seq.duration, FPS);
+debug("seq info", JSON.stringify(seq).json_tidy);
+====>
 
 
 //(A)RGB primary colors:
@@ -95,7 +101,7 @@ show_env();
 extensions(); //hoist for use by in-line code
 
 //set up shm node bufs + fr ctl:
-const {frctl, perf, nodes} = shmbufs();
+//const {frctl, perf, nodes} = shmbufs();
 //debug("frctl", frctl);
 //debug(`frctl[3]: fr# ${frctl[3].frnum}, ready 0x${frctl[3].ready}`);
 
@@ -109,6 +115,17 @@ const {frctl, perf, nodes} = shmbufs();
 //if (multi.isMainThread)
 function* main()
 {
+    const opts =
+    {
+//        screen: 0, //FIRST_SCREEN,
+    //    key_t PREALLOC_shmkey = 0;
+        vgroup: 20,
+        debug: 33,
+        init_color: PINK, //= 0;
+        protocol: gp.Protocol.DEVMODE,
+//        int frtime_msec; //double fps;
+    };
+    //int
 //    frame_test();
 //fill_test();
 //fwrite_test();
@@ -119,10 +136,11 @@ function* main()
 //    };
     debug(`main thread start`.cyan_lt);
 //    yield wait(10000); //check if wker epoch reset affects main
-    nodes.forEach((quent) => quent.forEach((univ) => univ.forEach((node) => node = BLACK))); //start with all LEDs off
+    gp.open(opts); //{screen, init_color, wh} //numfr: seq.NUMFR});
+    nodes.forEach((nodes) => nodes.forEach((univ) => univ.forEach((node) => node = PINK))); //BLACK))); //start with all LEDs off
 //init shm frbuf que < wkers so they will have already work to do:
-    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
-    debug(`frbuf quent initialized`.blue_lt);
+//    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
+//    debug(`frbuf quent initialized`.blue_lt);
     debug(`launch ${plural(NUM_WKERs)} wker${plural.cached}`.blue_lt);
     for (let w = 0; w < NUM_WKERs; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
 //    for (let i = 1; i <= 10; ++i)
@@ -132,11 +150,22 @@ function* main()
 //            wker.postMessage("message", `req-from-main#${shdata.main_which = i}`);
 //        }, 1000 * i);
 //    const perf = {wait: 0, render: 0}; //wait time, render time
+    while (gp.isopen)
+    {
+        debug(`fr# ${gp.numfr}, frtime ${}, ready ${}, perf stats:`, JSON.stringify(perf).json_tidy);
+        yield wait_sec(1);
+    }
+    debug(`main idle (done): ${perf[0].show("xfred", 0)}`.cyan_lt);
+}
+
+
+function junk1()
+{
     perf[0].init();
 //    let previous = elapsed.now(), started = previous;
     for (var frnum = 0; frnum < NUMFR; ++frnum)
     {
-        let qent = frnum % frctl.length; //simple, circular queue
+        let qent = frnum % nodes.length; //simple, circular queue
         if (frctl[qent].frnum != frnum) exc(`frbuf que addressing messed up: got fr#${frctl[qent].frnum}, wanted ${frnum}`); //main is only writer; this shouldn't happen!
         while (frctl[qent].ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
         {
@@ -161,14 +190,14 @@ function* main()
 }
 
 
-function start_wker(filename, data, opts)
+function start_wker() //filename) //, data, opts)
 {
 //    debug("env", process.env);
-    data = Object.assign({}, data, {ID: ++start_wker.count || (start_wker.count = 1)}); //shallow copy + extend
+//    data = Object.assign({}, data, {ID: ++start_wker.count || (start_wker.count = 1)}); //shallow copy + extend
 //    const OPTS = //null;
 //    {
 //        cwd: process.cwd(),
-    const env = Object.assign({}, process.env, {wker_data: JSON.stringify(data)}); //shallow copy + extend
+//    const env = Object.assign({}, process.env, {wker_data: JSON.stringify(data)}); //shallow copy + extend
 //        silent: false, //inherit from parent; //true, //stdin/out/err piped to parent
 //        eval: false, //whether first arg is javascript instead of filename
 //        workerData: data || {ID: start_wker.count || 0}, //cloned wker data
@@ -180,15 +209,15 @@ function start_wker(filename, data, opts)
 //    const wker = cluster.fork(data || {wker_data: {ID: start_wker.count || 0}})
     const NO_PID = "?NO-PID?";
 //    opts = Object.assign({}, OPTS, opts || {});
-    const wker = cluster.fork(/*filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)*/ env)
-        .on("online", () => debug(`wker ${(wker/*.threadId*/ .process || {}).pid || NO_PID} is on-line`.cyan_lt)) //, arguments))
-        .on('message', (data) => debug("msg from wker".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
-        .on('error', (data) => debug("err from wker".red_lt, data, arguments))
+    const wker = cluster.fork(/*env*/) // /*filename || __filename, Array.from(process.argv).slice(2), opts) //|| OPTS)*/ env)
+        .on("online", () => debug(`wker# ${wker.id} pid ${(wker/*.threadId*/ .process || {}).pid || NO_PID} is on-line`.cyan_lt)) //, arguments))
+        .on('message', (data) => debug("msg from wker# ${wker.id}".blue_lt, data)) //, /*arguments,*/ "my data".blue_lt, shdata)) //args: {}, require, module, filename, dirname
+        .on('error', (data) => debug("err from wker# ${wker.id}".red_lt, data, arguments))
 //TODO: add restart logic if needed
-        .on('exit', (code) => debug("wker exit".yellow_lt, code)) //, arguments)) //args: {}, require, module, filename, dirname
+        .on('exit', (code) => debug("wker# ${wker.id} exit".yellow_lt, code)) //, arguments)) //args: {}, require, module, filename, dirname
 //          if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-        .on('disconnect', () => debug(`wker disconnect`.cyan_lt)); //, arguments));
-    debug(`launched wker#${start_wker.count} pid ${(wker.process || {}).pid || NO_PID}, now have ${Object.keys(cluster.workers).length} wkers: ${Object.keys(cluster.workers).join(", ")} ...`.cyan_lt);
+        .on('disconnect', () => debug(`wker# ${wker.id} disconnect`.cyan_lt)); //, arguments));
+    debug(`launched wker#${wker.id} pid ${(wker.process || {}).pid || NO_PID}, now have ${Object.keys(cluster.workers).length} wkers: ${Object.keys(cluster.workers).join(", ")} ...`.cyan_lt);
 //    if (wker.connected) wker.send()
     return wker;
 }
@@ -243,7 +272,7 @@ function* wker() //wker_data)
 //20     21   0x000008
 //20     24   0x00000F
     const my_ready = (ALL_READY >> univ_begin) & ~(ALL_READY >> univ_end); //Ready bits for all my univ
-    debug(`wker thread id ${wkid} start, responsible for rendering univ ${univ_begin}..${univ_end}, my ready bits ${hex(my_ready)}`.cyan_lt); //, "cloned data", /*process.env.*/wker_data); //multi.workerData);
+    debug(`wker# ${wkid} started, responsible for rendering univ ${univ_begin}..${univ_end}, my ready bits ${hex(my_ready)}`.cyan_lt); //, "cloned data", /*process.env.*/wker_data); //multi.workerData);
 //    for (let i = 1; i <= 3; ++i)
 //        setTimeout(() => multi.parentPort.postMessage(`hello-from-wker#${multi.workerData.wker_which = i}`, {other: 123}), 6000 * i);
 //    multi.parentPort.on("message", (data) => debug("msg from main".blue_lt, data, /*arguments,*/ "his data".blue_lt, multi.workerData)); //args: {}, require, module, filename, dirname
@@ -294,7 +323,7 @@ function* wker() //wker_data)
 //const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
 //nodes.forEach((row, inx) => debug(typeof row, typeof inx, row.constructor.name)); //.prototype.inspect = function() { return "custom"; }; }});
 //debug(`shm nodes ${NUM_UNIV} x ${UNIV_MAXLEN} x ${Uint32Array.BYTES_PER_ELEMENT} = ${commas(NUM_UNIV *UNIV_MAXLEN *Uint32Array.BYTES_PER_ELEMENT)} = ${commas(shbuf.byteLength)} created`.pink_lt);
-function shmbufs()
+function OBS_shmbufs()
 {
     const shmkey = (0xfeed0000 | NNNN_hex(UNIV_MAXLEN)) >>> 0;
     const UNIV_BYTELEN = cache_pad(UNIV_MAXLEN) * Uint32Array.BYTES_PER_ELEMENT;
@@ -443,6 +472,8 @@ function wait_msec(msec)
 //    return msec; //dummy retval for testing
     return msec; //dummy value for debug
 }
+function wait_sec(sec) { return wait_msec(sec * 1000); }
+function wait_usec(usec) { return wait_msec(usec / 1000); }
 //wait.cancel = function wait_cancel(reason)
 //{
 //    reason && (reason += ": ");

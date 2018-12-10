@@ -82,6 +82,7 @@ public: //operators
 //}
 
 #define exc exc_hard
+#define warn exc_soft
 #define exc_hard(...)  myprintf(-1, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
 #define exc_soft(...)  myprintf(-2, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
 //#define exc(...)  myprintf(-1, ssfriend() << __VA_ARGS__)
@@ -271,12 +272,12 @@ void snapshot(const char* desc, const void* addr, size_t len, SrcLine srcline = 
 //    static int count = 0;
 //    if (!count++) printf(CYAN_MSG "[elapsed-msec $thread] ===============================\n" ENDCOLOR_NOLINE);
     FILE* fout = (level < 0)? stderr: stdout;
-    const char* hdr_color = (level < 0)? RED_MSG: PINK_MSG;
-    const char* msg_color = (level < 0)? RED_MSG: BLUE_MSG;
-    thread_local static int /*numerr = 0,*/ nummsg = 0;
+//    const char* hdr_color = (level == -1)? RED_MSG: (level == -2)? YELLOW_MSG: PINK_MSG;
+    const char* msg_color = (level == -1)? RED_MSG: (level == -2)? YELLOW_MSG: BLUE_MSG;
+    thread_local static int /*numerr = 0,*/ nummsg = 0; //show thread info once
 //    if (level < 0) //error
 //    {
-    if (!nummsg++) fprintf(stderr, "%s[msec $thr] ======== thread# %d, id 0x%x, pid %d ========" ENDCOLOR_NEWLINE, hdr_color, thrinx(), thrid(), getpid());
+    if (!nummsg++) fprintf(stderr, PINK_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========" ENDCOLOR_NEWLINE, thrinx(), thrid(), getpid());
 //for (char* bp = fmtbuf; bp = strchr(bp, '\n'); *bp++ = '\\');
 //for (char* bp = fmtbuf; bp = strchr(bp, '\x1b'); *bp++ = '?');
 //printf("first ofs %d, last ofs %d, len %d, cc start %u, end %u, buf \"%s\"\n", first_ofs, last_ofs, fmtlen, cc_startlen, cc_endlen, fmtbuf); fflush(stdout);
