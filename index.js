@@ -14,10 +14,13 @@ const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared
 const GpuPort = require('./build/Release/gpuport'); //.node');
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.SHMKEY, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
-
-//console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
-debug("gpu port imports", JSON.stringify(GpuPort, null, 2).json_tidy);
+
+//kludge: trim down for shorter display info:
+//GpuPort.nodebufs.forEach((nodebuf) => { nodebuf.nodes.splice(3, 21); nodebuf.nodes.forEach((univ) => univ.splice(4, univ.length)); });
+//console.log("GpuPort", GpuPort);
+debug("gpu port imports".cyan_lt, JSON.stringify(GpuPort, null, 2).json_tidy.trunc(1600));
+debug("spares", Array.isArray(GpuPort.spares)? "array": typeof(GpuPort.spares), GpuPort.spares.length, "nodebufs", typeof GpuPort.nodebufs, GpuPort.nodebufs.length, typeof GpuPort.nodebufs[0], GpuPort.nodebufs[0].nodes.length, GpuPort.nodebufs[0].nodes[0].length);
 debug(`peek ${hex(shmpeek[0])}, ${hex(shmpeek[1])}, ${hex(shmpeek[2])}, ${hex(shmpeek[3])}, ...`);
 process.exit();
 

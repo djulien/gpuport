@@ -24,11 +24,11 @@
 //https://www.npmjs.com/package/shared-buffer
 
 
-
 'use strict'; //find bugs easier
 //modules common to main + wker threads:
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require('colors').enabled = true; //for console output (incl bkg threads); https://github.com/Marak/colors.js/issues/127
+extensions(); //hoist for use by in-line code below
 
 //console.log("here1", process.pid, "env", process.env);
 const fs = require("fs");
@@ -46,8 +46,8 @@ cluster.proctype = cluster.isMaster? "Main": cluster.isWorker? "Wker": "?UNKN-TY
 //debug("here2");
 //console.log("here3");
 const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_MAXLEN: 1136, FPS: 30};
-const {/*limit, listen, nodebufq, frctl, perf, nodes,*/ NUM_UNIV, UNIV_MAXLEN, FPS} = gp; //make global for easier access
-debug("gp", JSON.stringify(gp).json_tidy);
+const {/*limit, listen, nodebufq, frctl, perf, nodes,*/ NUM_UNIV, UNIV_MAXLEN, FPS, frctl, spares, nodebufs} = gp; //make global for easier access
+debug("gp", JSON.stringify(gp).json_tidy.trunc(2000));
 
 //render control info:
 const ALL_READY = (1 << NUM_UNIV) - 1, SOME_READY = (1 << (NUM_UNIV / 2)) - 1, FIRST_READY = 1 << (NUM_UNIV - 1); //set half-ready to force sync first time
@@ -61,7 +61,7 @@ debug("change this".red_lt, "change this".red);
 //  NUM_WKERs: 1, //whole-house bg render
 //    NUM_WKERs: os.cpus().length, //1 bkg wker for each core (optimal)
 //    NUM_WKERs: 6, //hard-coded #bkg wkers
-const WKER_UNIV = Math.ceil(NUM_UNIV / NUM_WKERs); //#univ each wker should render
+const WKER_UNIV = NUM_WKERs? Math.ceil(NUM_UNIV / NUM_WKERs): NUM_UNIV; //#univ each wker should render
 debug(`#wkers ${NUM_WKERs}, #univ/wker ${WKER_UNIV}`.cyan_lt);
 //const QUELEN = 4;
 
@@ -69,7 +69,7 @@ debug(`#wkers ${NUM_WKERs}, #univ/wker ${WKER_UNIV}`.cyan_lt);
 //const seq = tryRequire("./my-seq");
 debug("load seq here".red_lt);
 const seq = {NUMFR: 18, FRTIME: 50}; //seq len (#frames total)
-seq.duration = seq.NUMFR * seq.FRTIME;
+seq.duration_msec = seq.NUMFR * seq.FRTIME;
 seq.gpufr = divup(seq.duration, FPS);
 debug("seq info", JSON.stringify(seq).json_tidy);
 
@@ -92,12 +92,12 @@ const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 //const SALMON  0xFF8080
 //const LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //ARGB primary colors:
-debug("palette", BLACK, WHITE, hex(BLACK), hex(WHITE));
+debug("palette", /*BLACK, WHITE,*/ hex(BLACK), hex(WHITE));
 const PALETTE = [BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0b001, green 0b010, blue 0b100
 //const PALETTEix = [0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111]; //red 0b001, green 0b010, blue 0b100
 
 show_env();
-extensions(); //hoist for use by in-line code
+//extensions(); //hoist for use by in-line code
 
 //set up shm node bufs + fr ctl:
 //const {frctl, perf, nodes} = shmbufs();
@@ -121,7 +121,7 @@ function* main()
         vgroup: 20,
         debug: 33,
         init_color: PINK, //= 0;
-        protocol: gp.Protocol.DEVMODE,
+        protocol: gp.Protocols.DEVMODE,
 //        int frtime_msec; //double fps;
     };
     //int
@@ -136,7 +136,7 @@ function* main()
     debug(`main thread start`.cyan_lt);
 //    yield wait(10000); //check if wker epoch reset affects main
     gp.open(opts); //{screen, init_color, wh} //numfr: seq.NUMFR});
-    nodes.forEach((nodes) => nodes.forEach((univ) => univ.forEach((node) => node = PINK))); //BLACK))); //start with all LEDs off
+//    nodebufs[0].nodes.forEach((univ) => univ.forEach((node) => node = PINK)); //BLACK))); //start with all univ dark
 //init shm frbuf que < wkers so they will have already work to do:
 //    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
 //    debug(`frbuf quent initialized`.blue_lt);
@@ -151,10 +151,10 @@ function* main()
 //    const perf = {wait: 0, render: 0}; //wait time, render time
     while (gp.isopen)
     {
-        debug(`fr# ${gp.numfr}, frtime ${gp.frtime}, ready ${gp.ready}, perf stats:`, JSON.stringify(gp.perf_stats).json_tidy);
+        debug(`fr# ${frctl.numfr}, frtime ${frctl.frtime}, ready ${hex(frctl.ready)}, perf stats:`, JSON.stringify(frctl.perf_stats).json_tidy);
         yield wait_sec(1);
     }
-    debug(`main idle (done): ${gp.perf_stats}`.cyan_lt);
+    debug(`main idle (done after ${frctl.numfr} frames): ${JSON.stringify(frctl.perf_stats)}`.cyan_lt);
 }
 
 
@@ -692,6 +692,26 @@ function extensions()
 //    Object.defineProperty(global, '__parent_line', { get: function() { return __stack[2].getLineNumber(); } });
 //    Array.prototype.unshift_fluent = function(args) { this.unshift.apply(this, arguments); return this; };
 //    String.prototype.grab = function(inx) { return grab(this, inx); }
+    Object.defineProperties(global,
+    {
+        __srcline: { get: function() { return srcline(1); }, },
+        __parent_srcline: { get: function() { return srcline(2); }, },
+    });
+//    const test = [];
+//    test.push(1);
+//    if (!push.back)
+    if (!Array.prototype.hasOwnProperty("back")) //polyfill
+        Object.defineProperty(Array.prototype, "back", { get() { return this[this.length - 1]; }});
+    Array.prototype.push_fluent = function push_fluent(args) { this.push.apply(this, arguments); return this; };
+    String.prototype.splitr = function splitr(sep, repl) { return this.replace(sep, repl).split(sep); } //split+replace
+    String.prototype.unindent = function unindent(prefix) { unindent.svprefx = ""; return this.replace(prefix, (match) => match.substr((unindent.svprefix || (unindent.svprefix = match)).length)); } //remove indents
+    String.prototype.quote = function quote(quotype) { quotype || (quotype = '"'); return `${quotype}${this/*.replaceAll(quotype, `\\${quotype}`)*/}${quotype}`; }
+//below are mainly for debug:
+//    if (!String.prototype.echo)
+    String.prototype.echo = function echo(args) { args = Array.from(arguments); args.push(this.escnl); console.error.apply(null, args); return this; } //fluent to allow in-line usage
+    String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${commas(this.length - maxlen)})`: this; }
+    String.prototype.replaceAll = function replaceAll(from, to) { return this.replace(new RegExp(from, "g"), to); } //NOTE: caller must esc "from" string if contains special chars
+//    if (!String.prototype.splitr)
     Object.defineProperties(String.prototype,
     {
 //            escnl: { get() { return this.replace(/\n/g, "\\n"); }}, //escape all newlines
@@ -715,7 +735,6 @@ function extensions()
 //        escnl: { get() { return escnl(this); }, },
     });
 //    Uint32Array.prototype.inspect = function() //not a good idea; custom inspect deprecated in Node 11.x
-
 //detect if shbuf is too small:
 //more data tends to be added during dev, so size mismatch is likely
 //if request is too small, error return is cryptic so test for it automatically here
@@ -864,7 +883,7 @@ if (module.parent) exc("not a callable module; run it directly");
 //if (multi.isMainThread) step(main);
 //if (!process.env.wker_data) step(main);
 if (cluster.isMaster) step(main);
-else if (cluster.isWorker) step(wker, () => process.disconnect()); //, JSON.parse(process.env.wker_data));
+else if (cluster.isWorker) step(wker, () => process.disconnect()); //exit when done so main can clean up; //, JSON.parse(process.env.wker_data));
 else exc(`don't know what type process ${process.pid} is`);
 //debug(`${/*multi.isMainThread*/ /*cluster.isMaster? "Main": "Wker"*/ cluster.proctype} fell thru - process might exit.`.yellow_lt); //main() or wker() should probably not return; could end process prematurely
 //if (cluster.isWorker) process.disconnect();

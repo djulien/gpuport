@@ -144,7 +144,8 @@ if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*
 
 function extensions()
 {
-    if (!Array.prototype.back)
+//    if (!Array.prototype.back)
+    if (!Array.prototype.hasOwnProperty("back")) //polyfill
         Object.defineProperty(Array.prototype, "back", //"top",
         {
             get() { return this[this.length - 1]; }, //NOTE: will be undefined when array is empty; okay
