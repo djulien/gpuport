@@ -300,6 +300,8 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 //shm struct shared by bkg gpu wker thread and main/renderer threads:
 //CAUTION: don't store ptrs; they won't be valid in other procs
 //all ipc and sync occurs via this struct to allow procs/threads to run at max speed and avoid costly memory xfrs
+#define IFDEBUG(yes_stmt, no_stmt)  yes_stmt
+//#define IFDEBUG(yes_stmt, no_stmt)  no_stmt
 struct ShmData
 {
 //    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
@@ -314,7 +316,7 @@ struct ShmData
     static const int IOPINS = 24; //total #I/O pins available (h/w dependent); also determined by device overlay
     static const int HWMUX = 0; //#I/O pins (0..23) to use for external h/w mux
 //derived settings:
-    static const int NUM_UNIV = (1 << HWMUX) * (IOPINS - HWMUX); //max #univ with/out external h/w mux
+    static const int NUM_UNIV = IFDEBUG(3, (1 << HWMUX) * (IOPINS - HWMUX)); //max #univ with/out external h/w mux
 //settings that must match (cannot exceed) video config:
 //put 3 most important constraints first, 4th will be dependent on other 3
 //default values are for my layout
@@ -323,7 +325,7 @@ struct ShmData
     static const int FPS = 30; //target #frames/sec
 //derived settings:
     static const int UNIV_MAXLEN_raw = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ; above values give ~1128
-    static const int UNIV_MAXLEN_pad = cache_pad<NODEVAL>(UNIV_MAXLEN_raw); //1132 for above values; padded for better memory cache performance
+    static const int UNIV_MAXLEN_pad = IFDEBUG(4, cache_pad<NODEVAL>(UNIV_MAXLEN_raw)); //1132 for above values; padded for better memory cache performance
 //    static const SDL_Size max_wh(NUM_UNIV, UNIV_MAXLEN_pad);
     typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
 //    using MASK_TYPE = uint32_t; //using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
@@ -338,8 +340,8 @@ struct ShmData
     static const MASK_TYPE NOT_READY = ALL_UNIV >> (NUM_UNIV / 2); //turn off half the universes to use as intermediate value
 //    std::unique_ptr<NODEVAL> m_nodes; //define as member data to avoid WET defs needed for class derivation; NOTE: must come before depend refs below; //NODEBUF_FrameInfo, NODEBUF_deleter>; //DRY kludge
 //    using SYNCTYPE = BkgSync<MASK_TYPE, true>;
-    static const int QUELEN = 4; //#render queue entries (circular)
-    static const int SPARELEN = 64;
+    static const int QUELEN = IFDEBUG(2, 4); //#render queue entries (circular)
+    static const int SPARELEN = IFDEBUG(6, 64);
     static const int VALIDCHK = 0xf00d1234;
     static const int VERSION = 0x001812; //0.18.12
     static const key_t SHMKEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
@@ -511,7 +513,7 @@ public: //dependent types:
 //            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
 //broken            for (const auto it: that.perf_stats)
             for (/*const*/ auto it = that.perf_stats.cbegin(); it != that.perf_stats.cend(); ++it)
-                ostrm << ", "[(it == that.perf_stats.cbegin())? 0: 2] << (*it / std::max(that.numfr, 1));
+                ostrm << ", "[(it == that.perf_stats.cbegin())? 0: 2] << (that.numfr? *it / that.numfr: 0); //std::max(that.numfr, 1));
             ostrm << " avg msec]";
             if (that.exc_reason[0]) ostrm << ", exc '" << that.exc_reason << "'";
             ostrm << ", age " << commas(elapsed(that.started)) << " msec";
@@ -610,7 +612,7 @@ public: //dependent types:
             for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_raw, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
             vector_cxx17<my_napi_property_descriptor> props;
@@ -874,7 +876,7 @@ public: //NAPI methods:
 //    }
 //    void napi_export(vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
 //    napi_value my_exports(napi_env env, napi_value& retval)
-//    napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+    napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
     napi_value my_exports(napi_env env, const napi_value& retval)
     {
 //            exports = module_exports(env, exports); //include previous exports
@@ -2895,6 +2897,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     std::unique_ptr<ShmData> shmdata(new ShmData); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     ShmData* shmptr = shmdata.get();
     if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc("alloc shmdata " << shmptr << " failed");
+    napi_thingy my_exports(env, shmptr->my_exports(env, exports));
 //    debug(11, BLUE_MSG "aodata %p, &node[0][0[0] %p" ENDCOLOR, aoptr, &aoptr->m_nodebq[0].nodes[0][0]);
 //    inout.checkpt("cre data");
 //    aoptr->isvalid(env);
@@ -2992,10 +2995,11 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //decorate exports with the above-defined properties:
 //    if (pptr - props > SIZEOF(props)) NAPI_exc("prop ary overflow: needed " << (pptr - props) << ", only had space for " << SIZEOF(props));
 //    !NAPI_OK(napi_define_properties(env, exports, pptr - props, props), "export method props failed");
-    debug(9, "export %d methods/props", props.size());
+    debug(9, "export %d more methods/props", props.size());
 //    !NAPI_OK(napi_define_properties(env, exports, props.size(), props.data()), "export methods/props failed");
-    napi_thingy more_exports(env, exports);
-    more_exports += props;
+//    napi_thingy more_exports(env, exports);
+    my_exports += props;
+//    return napi_thingy(env, more_retval) += props;
 //    methods = shmptr->my_exports(env, methods);
 //debug(9, BLUE_MSG "here14" ENDCOLOR);
 
@@ -3018,7 +3022,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
         delete shmptr; //free(addon_data);
     };
 //debug(9, BLUE_MSG "here15" ENDCOLOR);
-    !NAPI_OK(napi_wrap(env, exports, shmptr, addon_final, /*aoptr.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
+    !NAPI_OK(napi_wrap(env, my_exports, shmptr, addon_final, /*aoptr.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
   // Return the decorated exports object.
 //    napi_status status;
 //    INSPECT(CYAN_MSG "napi init: " << *aoptr, SRCLINE);
@@ -3027,7 +3031,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //debug(9, BLUE_MSG "here17" ENDCOLOR);
     shmdata.release(); //NAPI owns it now; finalize will clean it up
 //debug(9, BLUE_MSG "here18" ENDCOLOR);
-    return more_exports;
+    return my_exports;
 }
 // NAPI_MODULE(NODE_GYP_MODULE_NAME, ModuleInit)
  #endif //def SRC_NODE_API_H_ //USE_NAPI

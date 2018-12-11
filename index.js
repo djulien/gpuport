@@ -10,11 +10,16 @@ require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
 const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
 //TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
+const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
 const GpuPort = require('./build/Release/gpuport'); //.node');
-const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
+//const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
+const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.SHMKEY, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
+
 //console.log("GpuPort", GpuPort);
 extensions(); //hoist so inline code below can use
-debug("gpu port imports", JSON.stringify(GpuPort).json_tidy);
+debug("gpu port imports", JSON.stringify(GpuPort, null, 2).json_tidy);
+debug(`peek ${hex(shmpeek[0])}, ${hex(shmpeek[1])}, ${hex(shmpeek[2])}, ${hex(shmpeek[3])}, ...`);
+process.exit();
 
 //module.exports = gpuport;
 
