@@ -82,6 +82,10 @@ public: //ctors/dtors
 //initializer list example: https://en.cppreference.com/w/cpp/utility/initializer_list
     str_map(std::initializer_list<PAIRTYPE> il): m_vec(il) {}
 public: //methods
+    inline auto begin() { return m_vec.begin(); }
+    inline auto end() { return m_vec.end(); }
+    inline auto cbegin() const { return m_vec.cbegin(); }
+    inline auto cend() const { return m_vec.cend(); }
     /*std::pair<KEYTYPE, VALTYPE>*/ const PAIRTYPE* find(KEYTYPE key, int def = -1) const
     {
 //printf("here10\n"); fflush(stdout);

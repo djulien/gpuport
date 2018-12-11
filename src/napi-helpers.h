@@ -6,7 +6,7 @@
 //decide which Node API to use:
 #if defined(USE_NAPI)
  #define NAPI_EXPERIMENTAL //NOTE: need this to avoid compile errors; needs Node v10.6.0 or later
- #include <node_api.h> //C style api; https://nodejs.org/api/n-api.html
+ #include <node_api.h> //C style api; https://nodejs.org/api/n-api.html; at ~/.node-gyp/ver#/include/node/node_api.h
  #define NAPI_EXPORTS  NAPI_MODULE //kludge: make macro name consistent to reduce #ifs
  #ifndef SRC_NODE_API_H_
   #define SRC_NODE_API_H_ //USE_NAPI; for "smart" text editors
@@ -30,6 +30,9 @@
 #endif
 #ifndef UPTO_4ARGS
  #define UPTO_4ARGS(skip1, skip2, skip3, skip4, use5, ...)  use5
+#endif
+#ifndef UPTO_6ARGS
+ #define UPTO_6ARGS(skip1, skip2, skip3, skip4, skip5, skip6, use7, ...)  use7
 #endif
 
 
@@ -80,12 +83,12 @@ std::string NAPI_ErrorMessage(napi_env env)
     return ss.str(); //NOTE: returns stack var by value, not by ref
 }
 
-//TODO: add SRCLINE
 #define DEF_ENV  env //assume env is named "env"
 #define NO_ERRCODE  NULL
 #define NAPI_exc_1ARG(msg)  NAPI_exc_2ARGS(DEF_ENV, msg)
 #define NAPI_exc_2ARGS(env, msg)  NAPI_exc_3ARGS(env, NO_ERRCODE, msg)
 #define NAPI_exc_3ARGS(env, errcode, msg)  NAPI_exc_4ARGS(env, errcode, msg, SRCLINE) //(napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
+//TODO: allow printf-like varargs
 #define NAPI_exc_4ARGS(env, errcode, msg, srcline)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ATLINE(srcline) << ENDCOLOR_NOLINE), 0) //dummy "!okay" or null ptr result to allow usage in conditional expr; throw() won't fall thru at run-time, though
 //#define NAPI_exc_4ARGS(env, errcode, msg, retval)  (napi_throw_error(env, errcode, std::ostringstream() << RED_MSG << msg << ": " << NAPI_ErrorMessage(env) << ENDCOLOR), retval) //dummy "!okay" result to allow usage in conditional expr; throw() won't fall thru at run-time, though
 #define NAPI_exc(...)  UPTO_4ARGS(__VA_ARGS__, NAPI_exc_4ARGS, NAPI_exc_3ARGS, NAPI_exc_2ARGS, NAPI_exc_1ARG) (__VA_ARGS__)
@@ -309,6 +312,10 @@ struct napi_thingy
 {
     struct Object {}; //ctor disambiguation tag
     struct Array {}; //ctor disambiguation tag
+//    struct Size {}; //ctor disambiguation tag
+    struct Int32 {};
+    struct Uint32 {};
+    struct Float {};
     napi_env env; //CAUTION: doesn't remain valid across napi calls/events
     napi_value value;
 public: //ctors/dtors
@@ -318,10 +325,11 @@ public: //ctors/dtors
     inline napi_thingy(napi_env new_env, napi_value new_value): env(new_env), value(new_value) {} //TODO: inc ref count?
     inline napi_thingy(napi_env new_env, Object) { cre_object(new_env); }
     inline napi_thingy(napi_env new_env, Array, int len) { cre_ary(new_env, len); }
-    inline napi_thingy(napi_env new_env, int32_t new_val) { cre_int32(new_env, new_val); }
-    inline napi_thingy(napi_env new_env, uint32_t new_val) { cre_uint32(new_env, new_val); }
-    inline napi_thingy(napi_env new_env, double new_val) { cre_double(new_env, new_val); }
+    inline napi_thingy(napi_env new_env, int32_t new_val, Int32) { cre_int32(new_env, new_val); }
+    inline napi_thingy(napi_env new_env, uint32_t new_val, Uint32) { cre_uint32(new_env, new_val); }
+    inline napi_thingy(napi_env new_env, double new_val, Float) { cre_double(new_env, new_val); }
     inline napi_thingy(napi_env new_env, std::string str) { cre_string(new_env, str); }
+    inline napi_thingy(napi_env new_env, const char* str, size_t len) { cre_string(new_env, str, len); }
     inline napi_thingy(napi_env new_env, void* data, size_t len) { cre_ext_arybuf(new_env, data, len); }
     inline napi_thingy(napi_env new_env, napi_typedarray_type arytype, size_t count, napi_value arybuf, size_t bofs = 0) { cre_typed_ary(new_env, arytype, count, arybuf, bofs); }
 //    inline napi_thingy(const napi_thingy)
@@ -329,7 +337,8 @@ public: //ctors/dtors
 public: //operators
     inline napi_thingy& operator=(const napi_thingy& that) { env = that.env; value = that.value; return *this; }
     inline napi_thingy& operator=(napi_value that) { value = that; return *this; }
-    napi_thingy& operator+=(std::vector</*my_*/napi_property_descriptor>& props)
+//    napi_thingy& operator+=(const std::vector</*my_*/napi_property_descriptor>& props)
+    napi_thingy& operator+=(const vector_cxx17<my_napi_property_descriptor>& props)
     {
         !NAPI_OK(napi_define_properties(env, value, props.size(), props.data()), "def props failed");
         return *this;
@@ -448,7 +457,7 @@ public: //operators
         return ostrm;
     }
 public: //conversions:
-    int32_t as_int32(bool coerce = false)
+    int32_t as_int32(bool coerce = false) const
     {
         int32_t intval;
         napi_value newval;
@@ -456,7 +465,7 @@ public: //conversions:
         !NAPI_OK(napi_get_value_int32(env, coerce? newval: value, &intval), "Get int32 failed");
         return intval;
     }
-    uint32_t as_uint32(bool coerce = false)
+    uint32_t as_uint32(bool coerce = false) const
     {
         uint32_t uintval;
         napi_value newval;
@@ -508,26 +517,45 @@ public: //methods
 
 
 //add named prop value to property descriptor array:
-#define add_prop_1ARG(var)  add_prop(#var, var)
-#define add_prop_2ARGS(name, value)  add_prop_3ARGS(name, value, napi_enumerable)
-#define add_prop_3ARGS(name, value, attrs)  NAMED{ _.utf8name = name; _.value = napi_thingy(env, value); _.attributes = attrs; } //(props.emplace_back()); //(*pptr++);
-#define add_prop(...)  UPTO_3ARGS(__VA_ARGS__, add_prop_3ARGS, add_prop_2ARGS, add_prop_1ARG) (__VA_ARGS__)
+#define add_prop_1ARG(var)  add_prop_2ARGS(#var, var) //napi_thingy(env, var))
+#define add_prop_2ARGS(namee, valuee)  add_prop_3ORMORE_ARGS(namee, napi_enumerable, valuee)
+//#define add_prop_3ARGS(namee, valuee, attrs)  NAMED{ _.utf8name = namee; _.value = napi_thingy(env, valuee)/*valuee*/; _.attributes = attrs; } //(props.emplace_back()); //(*pptr++);
+//allow additional args to napi_thingy ctor:
+#define add_prop_3ORMORE_ARGS(namee, attrs, ...)  NAMED{ _.utf8name = namee; _.value = napi_thingy(env, __VA_ARGS__)/*valuee*/; _.attributes = attrs; } //(props.emplace_back()); //(*pptr++);
+#define add_prop(...)  UPTO_6ARGS(__VA_ARGS__, add_prop_3ORMORE_ARGS, add_prop_3ORMORE_ARGS, add_prop_3ORMORE_ARGS, add_prop_3ORMORE_ARGS, add_prop_2ARGS, add_prop_1ARG) (__VA_ARGS__)
+//#define add_prop_type(var, typee)  NAMED{ _.utf8name = #var; _.value = napi_thingy(env, valuee, typee); _.attributes = attrs; } //kludge: disambiguate
+
+//disambiguate:
+#define add_prop_uint32_1ARG(var)  add_prop_uint32_2ARGS(#var, var)
+#define add_prop_uint32_2ARGS(namee, valuee)  add_prop(namee, napi_enumerable, valuee, napi_thingy::Uint32{})
+#define add_prop_uint32(...)  UPTO_2ARGS(__VA_ARGS__, add_prop_uint32_2ARGS, add_prop_uint32_1ARG) (__VA_ARGS__)
 
 //add method to property descriptor array:
 #define add_method_1ARG(func)  add_method_2ARGS(#func, func) //(props.emplace_back()); //(*pptr++);
-#define add_method_2ARGS(name, func)  add_method_3ARGS(name, func, nullptr)
-#define add_method_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.method = func; _.attributes = napi_default; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_method_2ARGS(namee, func)  add_method_3ARGS(namee, func, nullptr)
+#define add_method_3ARGS(namee, func, aodata)  NAMED{ _.utf8name = namee; _.method = func; _.attributes = napi_default; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
 #define add_method(...)  UPTO_3ARGS(__VA_ARGS__, add_method_3ARGS, add_method_2ARGS, add_method_1ARG) (__VA_ARGS__)
 
 #define add_getter_1ARG(func)  add_getter_2ARGS(#func, func) //(props.emplace_back()); //(*pptr++);
-#define add_getter_2ARGS(name, func)  add_getter_3ARGS(name, func, nullptr)
+#define add_getter_2ARGS(namee, func)  add_getter_3ARGS(namee, func, nullptr)
 //#define add_getter_3ARGS(name, func, aodata)  add_getter_4ARGS(name, func, aodata, napi_enumerable)
 //#define add_getter_4ARGS(name, func, aodata, attrs)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = attrs; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
-#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
-//#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_wrapper, std::placeholders::_1, std::placeholders::_2, std::bind(getter_shim, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//BROKEN: #define add_getter_3ARGS(namee, func, aodata)  NAMED{ _.utf8name = namee; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_3ARGS(namee, func, aodata)  NAMED{ _.utf8name = namee; _.getter = napicb_bind(getter_shim, func); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_wrapper, std::placeholders::_1, std::placeholders::_2, std::bind(getter_shim, func); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
 //#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(func_setter, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
-#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(setter_shim, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//BROKEN: #define add_getter_4ARGS(namee, func_getter, func_setter, aodata)  NAMED{ _.utf8name = namee; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(setter_shim, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_4ARGS(namee, func_getter, func_setter, aodata)  NAMED{ _.utf8name = namee; _.getter = napicb_bind(getter_shim, func_getter); _.setter = napicb_bind(setter_shim, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
 #define add_getter(...)  UPTO_4ARGS(__VA_ARGS__, add_getter_4ARGS, add_getter_3ARGS, add_getter_2ARGS, add_getter_1ARG) (__VA_ARGS__)
+
+//kludge: std::bind<> binds too much; use lamba instead; see details at https://stackoverflow.com/questions/37482136/using-stdbind-in-stdbind-compilation-error-implicit-cast
+//#define bind_lamda(func, env, cbinfo, ...)  [](napi_env env, napi_callback_info info) -> napi_value
+#define napicb_bind(generic_func, specific_func)  \
+[](napi_env env, napi_callback_info cbinfo) /*-> napi_value*/  \
+{ \
+    return generic_func(env, cbinfo, specific_func); \
+}
+
 
 //getter wrappers:
 #if 0
@@ -550,7 +578,9 @@ napi_value getter_shim(napi_env env, void* data, int32_t (*get_value)(void*))
     !NAPI_OK(napi_create_int32(env, get_value(env, data), &retval), "Get uint32 getval failed");
     return retval;
 }
-#else //combine wrapper and shim; more code but less run-time (bind) overhead
+#endif
+//combine wrapper and shim; more code but less run-time (bind) overhead
+#if 0
 template <typename TYPE>
 napi_value getter_shim(napi_env env, napi_callback_info info, TYPE (*get_value)(void*))
 {
@@ -566,9 +596,25 @@ napi_value getter_shim(napi_env env, napi_callback_info info, TYPE (*get_value)(
 //    !NAPI_OK(napi_create_int32(env, get_value(data), &retval), "Get uint32 getval failed");
     return retval;
 }
+#else
+napi_value getter_shim(napi_env env, napi_callback_info info, napi_value (*get_value)(napi_env, void*))
+{
+    void* data;
+    napi_value argv[0+1], This; //, retval;
+    size_t argc = SIZEOF(argv);
+    if (!env) return NULL; //Node cleanup mode?
+    struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, &data), "Getter info extract failed");
+//                    GpuPortData* aodata = static_cast<GpuPortData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+    return get_value(env, data);
+//    !NAPI_OK(napi_create_int32(env, get_value(data), &retval), "Get uint32 getval failed");
+//    return retval;
+}
+#endif
 
-template <typename TYPE>
-napi_value setter_shim(napi_env env, napi_callback_info info, void (*set_value)(napi_thingy& newval, void*))
+//template <typename TYPE>
+napi_value setter_shim(napi_env env, napi_callback_info info, void (*set_value)(const napi_thingy& newval, void*))
 {
     void* data;
     napi_value argv[1+1], This; //, retval;
@@ -582,13 +628,12 @@ napi_value setter_shim(napi_env env, napi_callback_info info, void (*set_value)(
 //    TYPE newval;
 //    !NAPI_OK(napi_get_value_int32(env, argv[0], &newval), "Get uint32 setval failed");
 //                aodata->/*wker_ok(env, SRCLINE)->*/m_frinfo.
-    napi_thingy setval(env, argv[0]);
-    set_value(setval, data);
+//    napi_thingy setval(env, argv[0]);
+    set_value(napi_thingy(env, argv[0]), data);
 //    !NAPI_OK(napi_create_int32(env, get_value(data), &retval), "Get uint32 getval failed");
 //    return retval;
     return nullptr;
 }
-#endif
 
 
 //void add_prop(napi_env env, vector_cxx17<my_napi_property_descriptor>& props, const char* name, napi_value value)

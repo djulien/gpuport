@@ -55,7 +55,7 @@ debug(`all ready ${hex(ALL_READY)}, some ready ${hex(SOME_READY)}, first ready $
 //console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
 const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
-const NUM_WKERs = 3-2; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
+const NUM_WKERs = 3-3; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
 debug("change this".red_lt, "change this".red);
 //    NUM_WKERs: 0, //whole-house fg render
 //  NUM_WKERs: 1, //whole-house bg render
@@ -72,7 +72,6 @@ const seq = {NUMFR: 18, FRTIME: 50}; //seq len (#frames total)
 seq.duration = seq.NUMFR * seq.FRTIME;
 seq.gpufr = divup(seq.duration, FPS);
 debug("seq info", JSON.stringify(seq).json_tidy);
-====>
 
 
 //(A)RGB primary colors:
@@ -152,14 +151,14 @@ function* main()
 //    const perf = {wait: 0, render: 0}; //wait time, render time
     while (gp.isopen)
     {
-        debug(`fr# ${gp.numfr}, frtime ${}, ready ${}, perf stats:`, JSON.stringify(perf).json_tidy);
+        debug(`fr# ${gp.numfr}, frtime ${gp.frtime}, ready ${gp.ready}, perf stats:`, JSON.stringify(gp.perf_stats).json_tidy);
         yield wait_sec(1);
     }
-    debug(`main idle (done): ${perf[0].show("xfred", 0)}`.cyan_lt);
+    debug(`main idle (done): ${gp.perf_stats}`.cyan_lt);
 }
 
 
-function junk1()
+function* junk1()
 {
     perf[0].init();
 //    let previous = elapsed.now(), started = previous;
@@ -617,10 +616,9 @@ function prec(val, scale) { return Math.round(val * scale) / scale; }
 function commas(num) { return num.toLocaleString(); } //grouping (1000s) default = true
 
 
-//function divup(num, den) { return ((num + den - 1) / den) * den; }
+function divup(num, den) { return ((num + den - 1) / den) * den; }
 
 function rndup(num, den) { return num + den - ((num % (den || 1)) || den); }
-
 
 //const myDate = new Date(Date.parse('04 Dec 1995 00:12:00 GMT'))
 function datestr(date)
@@ -721,6 +719,7 @@ function extensions()
 //detect if shbuf is too small:
 //more data tends to be added during dev, so size mismatch is likely
 //if request is too small, error return is cryptic so test for it automatically here
+/*
     sharedbuf.createSharedBuffer_retry = function(key, bytelen, create)
     {
         try { return sharedbuf.createSharedBuffer(key, bytelen, create); } //size is okay
@@ -736,6 +735,7 @@ function extensions()
             throw exc; //rethrow original error so caller can deal with it
         }
     }
+*/
 }
 
 

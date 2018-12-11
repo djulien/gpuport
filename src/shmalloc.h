@@ -390,15 +390,17 @@ int shmfree_typesafe(TYPE* ptr, SrcLine srcline = 0)
 //kludge: wrapper to avoid trailing static decl at global scope:
 #if 1
 #define INIT_NONE  //dummy arg for macro
-#define STATIC_WRAP_3ARGS(TYPE, VAR, INIT)  \
+//kludge: use "..." to allow "," within INIT; still can't use "," within TYPE, though
+#define STATIC_WRAP_3ARGS(TYPE, VAR, /*INIT*/ ...)  \
     /*static*/ inline TYPE& static_##VAR() \
     { \
-        static TYPE m_##VAR /*=*/ INIT; \
+        static TYPE m_##VAR /*=*/ /*INIT*/ __VA_ARGS__; \
         return m_##VAR; \
     }; \
     TYPE& VAR = static_##VAR() //kludge-2: create ref to avoid the need for "()"
-#define STATIC_WRAP_2ARGS(TYPE, VAR)  STATIC_WRAP_3ARGS(TYPE, VAR, INIT_NONE) //optional third param
-#define STATIC_WRAP(...)  UPTO_3ARGS(__VA_ARGS__, STATIC_WRAP_3ARGS, STATIC_WRAP_2ARGS, STATIC_WRAP_1ARG) (__VA_ARGS__)
+//#define STATIC_WRAP_2ARGS(TYPE, VAR)  STATIC_WRAP_3ARGS(TYPE, VAR, INIT_NONE) //optional third param
+//#define STATIC_WRAP(...)  UPTO_3ARGS(__VA_ARGS__, STATIC_WRAP_3ARGS, STATIC_WRAP_2ARGS, STATIC_WRAP_1ARG) (__VA_ARGS__)
+#define STATIC_WRAP  STATIC_WRAP_3ARGS
 #else //no worky
 template <typename TYPE>
 class static_wrap

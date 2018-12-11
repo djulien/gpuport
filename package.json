@@ -30,6 +30,7 @@
     "xtest": "node-gyp rebuild && mocha --reporter spec",
     "xbuild": "node-gyp rebuild --verbose",
     "xclean": "node-gyp clean",
+    "showenv": "node -p \"process.env\"",
     "test": "node-gyp rebuild --verbose  && node ./"
   },
   "old-dependencies": {
