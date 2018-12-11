@@ -184,6 +184,47 @@ static inline const char* TypeName(napi_typedarray_type key)
 }
 
 
+//template <typename CTYPE>
+//CTYPE from_napi(napi_env, napi_value)
+//{
+//    NAPI_exc(env, "don't know how to get type");
+//}
+//template <int32_t>
+//int32_t napi2int(napi_env, napi_value)
+//{
+//    int32_t newval;
+//    !NAPI_OK(napi_get_value_int32(env, value, &newval), "Get uint32 setval failed");
+//                aodata->/*wker_ok(env, SRCLINE)->*/m_frinfo.
+//    set_value(newval, data));
+#if 0
+template <typename CTYPE, bool COERCE = false> //need template because ret type varies
+CTYPE napi2c(napi_env env, napi_value value)
+{
+    CTYPE retval;
+    napi_value newval;
+    if (COERCE) !NAPI_OK(napi_coerce_to_int(env, value, &intval), "Get value as int failed");
+    !NAPI_OK(napi_get_value_int32(env, COERCE? intval: value, &newval), "Get int32 failed");
+    return newval;
+}
+#elif 0
+struct my_napi_value: napi_value
+{
+//ctors/dtors:
+    my_napi_value(napi_value& other) { *this = other; }
+//methods:
+    int32_t as_int(bool coerce = false)
+    {
+        int32_t retval;
+        napi_value newval;
+        if (coerce) !NAPI_OK(napi_coerce_to_int(env, value, &intval), "Get value as int failed");
+    !NAPI_OK(napi_get_value_int32(env, COERCE? intval: value, &newval), "Get int32 failed");
+
+    }
+};
+#endif
+
+
+#if 0
 //create thread-safe wrapper for caller's js callback function:
 //    napi_ref aoref; //ref to wrapped version of this object
 void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
@@ -201,6 +242,8 @@ void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js
     !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &wker_name), "Cre wkitem desc str failed");
     !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, NO_CONTEXT, napi_cb, fats), "Cre JS fats failed");
 }
+#endif
+
 
 struct my_napi_property_descriptor: public napi_property_descriptor
 {
@@ -289,7 +332,7 @@ public: //operators
     napi_thingy& operator+=(std::vector</*my_*/napi_property_descriptor>& props)
     {
         !NAPI_OK(napi_define_properties(env, value, props.size(), props.data()), "def props failed");
-        return this;
+        return *this;
     }
     inline operator napi_env() const { return env; }
     inline operator napi_value() const { return value; }
@@ -404,6 +447,23 @@ public: //operators
         }
         return ostrm;
     }
+public: //conversions:
+    int32_t as_int32(bool coerce = false)
+    {
+        int32_t intval;
+        napi_value newval;
+        if (coerce) !NAPI_OK(napi_coerce_to_number(env, value, &newval), "Get value as int failed");
+        !NAPI_OK(napi_get_value_int32(env, coerce? newval: value, &intval), "Get int32 failed");
+        return intval;
+    }
+    uint32_t as_uint32(bool coerce = false)
+    {
+        uint32_t uintval;
+        napi_value newval;
+        if (coerce) !NAPI_OK(napi_coerce_to_number(env, value, &newval), "Get value as int failed");
+        !NAPI_OK(napi_get_value_uint32(env, coerce? newval: value, &uintval), "Get uint32 failed");
+        return uintval;
+    }
 public: //methods
 //get value:
     inline bool has_prop(const char* name) { return ::has_prop(env, value, name); }
@@ -463,12 +523,15 @@ public: //methods
 #define add_getter_2ARGS(name, func)  add_getter_3ARGS(name, func, nullptr)
 //#define add_getter_3ARGS(name, func, aodata)  add_getter_4ARGS(name, func, aodata, napi_enumerable)
 //#define add_getter_4ARGS(name, func, aodata, attrs)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = attrs; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
-#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
-#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(func_setter, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//#define add_getter_3ARGS(name, func, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_wrapper, std::placeholders::_1, std::placeholders::_2, std::bind(getter_shim, func); _.attributes = napi_enumarable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+//#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(func_setter, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
+#define add_getter_4ARGS(name, func_getter, func_setter, aodata)  NAMED{ _.utf8name = name; _.getter = std::bind(getter_shim, std::placeholders::_1, std::placeholders::_2, func_getter); _.setter = std::bind(setter_shim, std::placeholders::_1, std::placeholders::_2, func_setter); _.attributes = napi_enumerable; _.data = aodata; } //(props.emplace_back()); //(*pptr++);
 #define add_getter(...)  UPTO_4ARGS(__VA_ARGS__, add_getter_4ARGS, add_getter_3ARGS, add_getter_2ARGS, add_getter_1ARG) (__VA_ARGS__)
 
 //getter wrappers:
-napi_value getter(napi_env env, napi_callback_info info, napi_value (*get_value)(napi_env, void*))
+#if 0
+napi_value getter_wrapper(napi_env env, napi_callback_info info, napi_value (*get_value)(napi_env, void*))
 {
     void* data;
     napi_value argv[0+1], This;
@@ -481,12 +544,51 @@ napi_value getter(napi_env env, napi_callback_info info, napi_value (*get_value)
     return get_value(env, data);
 }
 //type-specific overloads:
-napi_value getter(napi_env env, napi_callback_info info, int32_t (*get_value)(napi_env, void*))
+napi_value getter_shim(napi_env env, void* data, int32_t (*get_value)(void*))
 {
-    napi_thingy retval(env);
-    !NAPI_OK(napi_create_int32(env, get_value(env, data), &retval.value), "Get uint32 getval failed");
+    napi_value retval;
+    !NAPI_OK(napi_create_int32(env, get_value(env, data), &retval), "Get uint32 getval failed");
     return retval;
 }
+#else //combine wrapper and shim; more code but less run-time (bind) overhead
+template <typename TYPE>
+napi_value getter_shim(napi_env env, napi_callback_info info, TYPE (*get_value)(void*))
+{
+    void* data;
+    napi_value argv[0+1], This; //, retval;
+    size_t argc = SIZEOF(argv);
+    if (!env) return NULL; //Node cleanup mode?
+    struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, &data), "Getter info extract failed");
+//                    GpuPortData* aodata = static_cast<GpuPortData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+    napi_thingy retval(env, get_value(data));
+//    !NAPI_OK(napi_create_int32(env, get_value(data), &retval), "Get uint32 getval failed");
+    return retval;
+}
+
+template <typename TYPE>
+napi_value setter_shim(napi_env env, napi_callback_info info, void (*set_value)(napi_thingy& newval, void*))
+{
+    void* data;
+    napi_value argv[1+1], This; //, retval;
+    size_t argc = SIZEOF(argv);
+    if (!env) return NULL; //Node cleanup mode?
+    struct { SrcLine srcline; } _; //kludge: global destination so SRCLINE can be used outside NAMED; NOTE: name must match NAMED var name
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, &data), "Setter info extract failed");
+    if (argc != 1) NAPI_exc("got " << argc << " args, expected 1");
+//                    GpuPortData* aodata = static_cast<GpuPortData*>(data);
+//                    return aodata->wker_ok(env)->m_frinfo.protocol;
+//    TYPE newval;
+//    !NAPI_OK(napi_get_value_int32(env, argv[0], &newval), "Get uint32 setval failed");
+//                aodata->/*wker_ok(env, SRCLINE)->*/m_frinfo.
+    napi_thingy setval(env, argv[0]);
+    set_value(setval, data);
+//    !NAPI_OK(napi_create_int32(env, get_value(data), &retval), "Get uint32 getval failed");
+//    return retval;
+    return nullptr;
+}
+#endif
 
 
 //void add_prop(napi_env env, vector_cxx17<my_napi_property_descriptor>& props, const char* name, napi_value value)

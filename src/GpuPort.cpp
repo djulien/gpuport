@@ -346,24 +346,34 @@ public: //dependent types:
 //    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
     struct Protocol //kludge: enum class can't have members, so use struct to encapsulate operators and methods
     {
-        enum Enum: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //CANCEL combines bkg wker control with protocol selection
+        using base_type = int32_t;
+        enum class Enum: base_type { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //CANCEL combines bkg wker control with protocol selection
+//        static const val_type NONE = 0, DEV_MODE = 1, WS281X = 2, CANCEL = -1;
         Enum value;
-        static const std::map<Protocol, const char*> Names =
+        static const std::map</*Enum*/ base_type, const char*>& Names() //kludge: gcc won't allow static member info so wrap it
         {
-            {Protocol::NONE, "NONE"},
-            {Protocol::DEV_MODE, "DEV MODE"},
-            {Protocol::WS281X, "WS281X"},
-            {Protocol::CANCEL, "CANCELLED"},
-        };
-//        operator const char*() const { return NVL(unmap(ProtocolNames, that), "??PROTOCOL??"); }
+            static const std::map</*Enum*/ base_type, const char*> names =
+            {
+                {Enum::NONE, "NONE"},
+                {Enum::DEV_MODE, "DEV MODE"},
+                {Enum::WS281X, "WS281X"},
+                {Enum::CANCEL, "CANCELLED"},
+            };
+            return names;
+        }
+//    public: //ctor/dtor
+//        explicit Protocol(base_type newval): value(newval) {}
+//        ~Protocol() {}
+//        Protocol operator=(val_type newval) { value = newval; return *this; }
     public: //operators
+//        operator const char*() const { return NVL(unmap(ProtocolNames, that), "??PROTOCOL??"); }
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Protocol& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
-            return ostrm << NVL(unmap(Names, that.value), "??PROTOCOL??");
+            return ostrm << NVL(unmap(Names(), that.value), "??PROTOCOL??");
         }
     public: //NAPI methods
 //        static napi_value my_exports(napi_env env, napi_value exports)
-        static napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        static napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
         static napi_value my_exports(napi_env env, napi_value& retval)
         {
 //            exports = module_exports(env, exports); //include previous exports
@@ -373,7 +383,7 @@ public: //dependent types:
     //        add_prop("DEV_MODE", static_cast<int32_t>(Protocol::DEV_MODE))(enum_props.emplace_back()); //(*pptr++);
     //        add_prop("WS281X", static_cast<int32_t>(Protocol::WS281X))(enum_props.emplace_back()); //(*pptr++);
     //        add_prop("CANCEL", static_cast<int32_t>(Protocol::CANCEL))(enum_props.emplace_back()); //(*pptr++);
-            for (auto& it: ProtocolNames)
+            for (auto& it: Names())
                 add_prop(it.second, static_cast<int32_t>(it.first))(props.emplace_back()); //(*pptr++);
     //        debug(9, "add %d props", props.size());
 //            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol enum props failed");
@@ -402,9 +412,12 @@ public: //dependent types:
             return ostrm << "}";
         }
     public: //NAPI methods
+        static inline Protocol* my(void* ptr) { return static_cast<Protocol*>(ptr); }
+        static /*uint32_t*/ auto getter(void* ptr) /*const*/ { return static_cast<int32_t>(my(ptr)->value); }
+        static void setter(void* ptr, napi_thingy& newval) { my(ptr)->protocol.value = static_cast<Enum>(newval.as_int32(true)); }
 //exported manifest allows other procs to find other non-exported data:
 //        napi_value my_exports(napi_env env) //vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
-        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
         /*static*/ napi_value my_exports(napi_env env, napi_value& retval)
         {
 //            exports = module_exports(env, exports); //include previous exports
@@ -466,13 +479,14 @@ public: //dependent types:
             return ostrm << "}";
         }
     public: //NAPI methods
-        static /*uint32_t*/ auto frtime_getter(FrameControl* fcptr) const { return fcptr->frame_time; }
-        static /*uint32_t*/ auto fps_getter(FrameControl* fcptr) const { return 1000. / fcptr->frame_time; }
-        static /*uint32_t*/ auto protocol_getter(FrameControl* fcptr) const { return static_cast<int32_t>(fcptr->protocol); }
-        static void protocol_setter(FrameControl* fcptr, int32_t newval) { fcptr->protocol = statis_cast<Protocol>(newval); }
-        static /*uint32_t*/ auto numfr_getter(FrameControl* fcptr) const { return fcptr->numfr; }
-        static /*uint32_t*/ auto exc_getter(FrameControl* fcptr) const { return fcptr->exc_reason; }
-//        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{}); )
+        static inline FrameControl* my(void* ptr) { return static_cast<FrameControl*>(ptr); }
+        static /*uint32_t*/ auto frtime_getter(void* ptr) /*const*/ { return my(ptr)->frame_time; }
+        static /*uint32_t*/ auto fps_getter(void* ptr) /*const*/ { return my(ptr)->frame_time? 1000. / my(ptr)->frame_time: 0; }
+//        static /*uint32_t*/ auto protocol_getter(void* ptr) /*const*/ { return static_cast<int32_t>(me(ptr)->protocol.value); }
+//        static void protocol_setter(FrameControl* fcptr, napi_thingy& newval) { fcptr->protocol = static_cast<Protocol>(newval.as_int32(true)); }
+        static /*uint32_t*/ auto numfr_getter(void* ptr) /*const*/ { return my(ptr)->numfr; }
+        static /*uint32_t*/ auto exc_getter(void* ptr) /*const*/ { return my(ptr)->exc_reason; }
+//        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
         /*static*/ napi_value my_exports(napi_env env, napi_value& retval)
         {
             vector_cxx17<my_napi_property_descriptor> props;
@@ -490,7 +504,7 @@ public: //dependent types:
 //no            add_prop("FPS", 1000.0 / m_info.frame_time)(props.emplace_back());
             add_getter("frtime", FrameControl::frtime_getter, this)(props.emplace_back());
             add_getter("FPS", FrameControl::fps_getter, this)(props.emplace_back());
-            add_getter("protocol", FrameControl::protocol_getter, ShmData::protocol_setter, this)(props.emplace_back());
+            add_getter("protocol", Protocol::getter, Protocol::setter, &protocol)(props.emplace_back());
             add_getter("numfr", FrameControl::numfr_getter, this)(props.emplace_back()); //(*pptr++);
             napi_thingy arybuf(env, &perf_stats[0], sizeof(perf_stats));
             napi_thingy perf_typary(env, GPU_NODE_type, SIZEOF(perf_stats), arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
@@ -530,12 +544,13 @@ public: //dependent types:
             return ostrm << "}";
         }
     public: //NAPI methods
-        static /*uint32_t*/ auto frnum_getter(FramebufQuent* fbptr) const { return fbptr->frnum.load(); }
-        static /*uint32_t*/ auto frtime_getter(FramebufQuent* fbptr) const { return fbptr->frtime.load(); }
-        static /*uint32_t*/ auto ready_getter(FramebufQuent* fbptr) const { return fbptr->ready.load(); }
-        static void ready_setter(FramebufQuent* fbptr, uint32_t newval) { fbptr->ready.store(newval); }
+        static inline FramebufQuent* my(void* ptr) { return static_cast<FramebufQuent*>(ptr); }
+        static /*uint32_t*/ auto frnum_getter(void* ptr) /*const*/ { return my(ptr)->frnum.load(); }
+        static /*uint32_t*/ auto frtime_getter(void* ptr) /*const*/ { return my(ptr)->frtime.load(); }
+        static /*uint32_t*/ auto ready_getter(void* ptr) /*const*/ { return my(ptr)->ready.load(); }
+        static void ready_setter(void* ptr, napi_thingy& newval) { my(ptr)->ready.store(newval.as_uint32(true)); }
 //??        static STATIC_WRAP(napi_ref, m_nodes_ref, = nullptr);
-        /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx) { return my_exports(env, arybuf, inx, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV); )
+        /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx) { return my_exports(env, arybuf, inx, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV)); }
         /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx, napi_value& retval)
         {
 //            exports = module_exports(env, exports); //include previous exports
@@ -788,7 +803,8 @@ public: //methods:
 //    bkg.detach();
     }
 public: //NAPI methods:
-    static bool isopen(ShmData* shmptr) const { return shmptr->isopen(); }
+    static inline ShmData* my(void* ptr) { return static_cast<ShmData*>(ptr); }
+    static bool isopen(void* mptr) /*const*/ { return my(ptr)->isopen(); }
 //    static napi_value isopen_getter(napi_env env, void* data)
 //    {
 //        napi_thingy retval(env);
