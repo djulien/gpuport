@@ -407,6 +407,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
     inline bool operator!=(const mySDL_Point& that) const { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Point& that) CONST
     {
+        if (!&that) return ostrm << "NO_XY";
 //    std::ostringstream ss;
 //    if (!rect) ss << "all";
 //    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
@@ -441,6 +442,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
     inline bool operator!=(const mySDL_Size& that) const { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Size& that) CONST
     {
+        if (!&that) return ostrm << "NO_SIZE";
         ostrm << that.w << " x " << that.h;
         if (that.w && that.h) ostrm << " = " << commas(that.w * that.h);
         return ostrm;
@@ -485,9 +487,8 @@ inline int mySDL_SetHint(const char* name, const char* value)
 //    else ss << (rect->w * rect->h) << " ([" << rect->x << ", " << rect->y << "]..[+" << rect->w << ", +" << rect->h << "])";
 //    return ss.str();
 //    ostrm << "SDL_Rect";
-        if (!&that) ostrm << "NO RECT";
-        else ostrm << "[" << that.x << "," << that.y << ", " << that.size() << "]"; //rect.w << " x " << rect.h << " = " << commas(rect.w * rect.h) << "]";
-        return ostrm;
+        if (!&that) return ostrm << "NO RECT";
+        return ostrm << "[" << that.x << "," << that.y << ", " << that.size() << "]"; //rect.w << " x " << rect.h << " = " << commas(rect.w * rect.h) << "]";
     }
 }; //mySDL_Rect;
 #define SDL_Rect  mySDL_Rect //use my def instead of SDL def
@@ -590,10 +591,21 @@ public: //operators
         ostrm << "SDL_TextureInfo";
         ostrm << "{" << that.wh;
         ostrm << ", " << that.fmt;
-        ostrm << ", access " << that.access;
+        ostrm << ", access " << that.access << " " << NVL(SDL_TextureAccessName((SDL_TextureAccess)that.access), "??ACCESS??");
         ostrm << ", pitch " << that.pitch << " vs. " << that.expected_pitch();
         ostrm << "}";
         return ostrm;
+    }
+    static inline const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
+    {
+        static const std::map<SDL_TextureAccess, const char*> names =
+        {
+            {SDL_TEXTUREACCESS_STATIC, "static"}, //changes rarely, not lockable
+            {SDL_TEXTUREACCESS_STREAMING, "streaming"}, //changes frequently, lockable
+            {SDL_TEXTUREACCESS_TARGET, "target"}, //can be used as a render target
+//            {~(SDL_TEXTUREACCESS_STATIC | SDL_TEXTUREACCESS_STREAMING | SDL_TEXTUREACCESS_TARGET), "????"},
+        };
+        return unmap(names, key); //names;
     }
 }; //mySDL_TextureInfo;
 #define SDL_TextureInfo  mySDL_TextureInfo //use my def instead of SDL def (in case SDL defines one in future)
@@ -1774,6 +1786,7 @@ class mySDL_AutoTexture: public super //mySDL_AutoTexture_super //std::unique_pt
 {
     static const int LEVEL = 44;
 //readable names (mainly for debug msgs):
+#if 0
     static inline const /*std::map<Uint32, const char*>*/ char* SDL_TextureAccessName(SDL_TextureAccess key)
     {
         static const std::map<SDL_TextureAccess, const char*> names =
@@ -1785,6 +1798,7 @@ class mySDL_AutoTexture: public super //mySDL_AutoTexture_super //std::unique_pt
         };
         return unmap(names, key); //names;
     }
+#endif
 protected:
 //no worky :(    using super = std::unique_ptr; //no C++ built-in base class (due to multiple inheritance), so define one; compiler already knows template params so they don't need to be repeated here :); https://www.fluentcpp.com/2017/12/26/emulate-super-base/
 //    using super = mySDL_AutoTexture_super; //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>;

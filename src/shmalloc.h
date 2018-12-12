@@ -240,10 +240,21 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
 }
 
 
+#if 0 //not needed?
+void* shmreattch(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srcline = 0)
+{
+    if (!key) err_ret(nullptr, ENOENT);
+    const int extralen = IFHEAPHDR(0, sizeof(ShmHdr));
+    int shmid = shmget(key, size + extralen, 0666); // | IPC_CREAT); //create if !exist; clears to 0 upon creation
+    if (shmid == -1) shmid = shmget(key, 1, 0666); //re-check if existed with smaller size
+    if (shmid == -1) err_ret(nullptr);
+}
+#endif
+
+
 key_t shmkey(void* addr, SrcLine srcline = 0)
 {
 //printf("here10 %p\n", addr); fflush(stdout);
-
     return get_shmhdr(addr, srcline)->key;
 }
 
@@ -262,6 +273,7 @@ key_t shmexisted(const void* addr, SrcLine srcline = 0)
 //printf("here12 %p\n", addr); fflush(stdout);
     return (get_shmhdr(addr, srcline)->marker != ShmHdr::SHM_VALID);
 }
+
 
 int shmnattch(const void* addr, SrcLine srcline = 0)
 {

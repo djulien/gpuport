@@ -384,8 +384,9 @@ public: //dependent types:
 //kludge: gcc won't allow static member init so wrap in static function/data member:
         static STATIC_WRAP(wrap_type, Names, =
         {
+//NOTE: strings should be valid Javascript names
             {/*Enum::*/NONE, "NONE"},
-            {/*Enum::*/DEV_MODE, "DEV MODE"},
+            {/*Enum::*/DEV_MODE, "DEV_MODE"},
             {/*Enum::*/WS281X, "WS281X"},
             {/*Enum::*/CANCEL, "CANCELLED"},
         });
@@ -407,11 +408,11 @@ public: //dependent types:
 //        inline Protocol& operator=(base_type rhs) { value = cast(rhs); return *this; } //needed for inline init (used by FrontControl, xfr_bb)
 //        inline bool operator==(const Protocol& rhs) { return (value == rhs.value); } //used by xfr_bb
 //        inline bool operator!=(const Protocol& rhs) { return !(value == rhs.value); }
-        inline operator const char*() const { return toString(); }
+//        inline operator const char*() const { return toString(); } //causes amb with op!=
         const char* toString() const { return NVL(unmap(static_Names(), value), "??PROTOCOL??"); }
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const Protocol& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
-            return ostrm << toString();
+            return ostrm << that.toString();
         }
 //kludge: supply supporting operators; class gets "incomplete" errors without; https://stackoverflow.com/questions/42437155/how-to-stdmapenum-class-stdstring
         inline bool operator <(/*const Enum lhs,*/ const Enum rhs) { return uncast(value) < uncast(rhs); }
@@ -496,6 +497,7 @@ public: //dependent types:
         bool isrunning = false;
 //TODO: use alignof here instead of cache_pad
 //    static const napi_typedarray_type perf_stats_type = napi_uint32_array; //NOTE: must match elapsed_t
+//??        std::atomic<int32_t> numfr;
         int numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         const elapsed_t started = now(); //elapsed();
@@ -536,7 +538,7 @@ public: //dependent types:
     public: //NAPI methods
         static inline FrameControl* my(void* ptr) { return static_cast<FrameControl*>(ptr); }
         static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Int32{}); }
-        static /*uint32_t*/ napi_value fps_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time? 1000. / my(ptr)->frame_time: 0, napi_thingy::Float{}); }
+        static /*uint32_t*/ napi_value fps_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time? 1000.0 / my(ptr)->frame_time: 0, napi_thingy::Float{}); }
 //        static /*uint32_t*/ auto protocol_getter(void* ptr) /*const*/ { return static_cast<int32_t>(me(ptr)->protocol.value); }
 //        static void protocol_setter(FrameControl* fcptr, napi_thingy& newval) { fcptr->protocol = static_cast<Protocol>(newval.as_int32(true)); }
         static /*uint32_t*/ napi_value numfr_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->numfr, napi_thingy::Uint32{}); }
@@ -592,9 +594,9 @@ public: //dependent types:
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FramebufQuent& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
 //            HERE(7);
-            ostrm << "{fr# " << commas(that.frnum) << ", prev " << commas(that.prevfr);
-            ostrm << ", fr time " << commas(that.frtime) << ", prev " << commas(that.prevtime) << " msec";
-            ostrm << ", ready 0x " << std::hex << that.ready << std::dec;
+            ostrm << "{fr# " << commas(that.frnum.load()) << ", prev " << commas(that.prevfr.load());
+            ostrm << ", fr time " << commas(that.frtime.load()) << ", prev " << commas(that.prevtime.load()) << " msec";
+            ostrm << ", ready 0x" << std::hex << that.ready.load() << std::dec;
             SDL_Size wh(SIZEOF(nodes), SIZEOF(nodes[0]));
             ostrm << ", nodes " << wh;
             return ostrm << "}";
@@ -605,7 +607,15 @@ public: //dependent types:
 //        static /*uint32_t*/ /*auto*/ napi_value frnum_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frnum.load()); }
         static /*uint32_t*/ /*auto*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frtime.load(), napi_thingy::Uint32{}); }
         static /*uint32_t*/ /*auto*/ napi_value ready_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->ready.load(), napi_thingy::Uint32{}); } //MASK_TYPE
-        static void ready_setter(const napi_thingy& newval, void* ptr) { my(ptr)->ready.store(newval.as_uint32(true)); }
+        static void ready_setter(const napi_thingy& newval, void* ptr)
+        {
+//NOTE: js "|=" uses getter + setter so it's not atomic; this setter implements "|=" semantics directly in here to ensure atomic updates
+            uint32_t newbits = newval.as_uint32(true);
+            uint32_t sv_ready = my(ptr)->ready.load(); //TODO: find out where upper 8 bits are being set
+            if (newbits) my(ptr)->ready |= newbits;
+            else my(ptr)->ready.store(0); //"|= 0" will reset value to 0
+            debug(12, "ready 0x%x |= 0x%x => 0x%x", sv_ready, newbits, my(ptr)->ready.load());
+        }
 //??        static STATIC_WRAP(napi_ref, m_nodes_ref, = nullptr);
         /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx) { return my_exports(env, arybuf, inx, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV)); }
         /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx, const napi_value& retval)
@@ -674,6 +684,7 @@ public: //operators
     bool isvalid(napi_env env, SrcLine srcline = 0) const { return isvalid() || NAPI_exc("ShmData invalid" << ATLINE(srcline)); }
 //alloc/dealloc in shared memory:
 //this allows caller to use new + delete without special code for shm
+#if 0 //NO; need to decide earlier whether to call ctor or not
     STATIC void* operator new(size_t size) //, size_t ents)
     {
         size_t ents = 1;
@@ -697,6 +708,7 @@ public: //operators
 //        shmfree_typesafe<ShmData>(shmptr, SRCLINE);
         shmfree_debug(shmptr, SRCLINE);
     }
+#endif
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ShmData& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
     {
 //        HERE(5);
@@ -730,18 +742,25 @@ public: //operators
     }
 public: //methods:
     bool isopen() const { return (isvalid() && m_frctl.isrunning); } //(m_frctl.protocol != Protocol::CANCEL)); }
-    void init_fbque()
+    void init_fbque(NODEVAL color = BLACK)
     {
 //set up first round of framebufs to be processed by wker threads:
 //broken        for (auto it: m_fbque) //.begin(); int i = 0; i < SIZEOF(fbque); ++i)
         for (auto it = m_fbque.begin(); it != m_fbque.end(); ++it)
         {
-            it->ready = 0;
+            it->ready.store(0);
             it->frnum = it - m_fbque.begin(); //initially set to 0, 1, 2, ...
-            it->prevfr = -1; //no previous frame
-//            fbque[i].frtime = fbque[i].prevtime = 0;
+            it->frtime = 0; //TODO
+            it->prevfr = it->prevtime = -1; //no previous frame
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
-            for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+#if 0
+            for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = color; //BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
+#else //test pattern for js client test
+ #pragma message("test pattern")
+            for (int x = 0; x < SIZEOF(it->nodes); ++x)
+                for (int y = 0; y < SIZEOF(it->nodes[0]); ++y)
+                    it->nodes[x][y] = fromARGB(it - m_fbque.begin(), x, 0, 0) | y;
+#endif
         }
 //also init gpu wker stats:
         m_frctl.numfr = 0;
@@ -776,14 +795,14 @@ public: //methods:
             if (!cfg) exc_hard("can't get screen %d config");
             m_frctl.screen = cfg->screen;
 //        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ m_frctl.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ (m_frctl.frame_time = cfg->frame_time()) || (m_frctl.frame_time = 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-            debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ATLINE(srcline), screen);
+            debug(33, "set fr time: from cfg %f, from templ %f", cfg->frame_time() * 1e3, 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
+        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ (m_frctl.frame_time = cfg->frame_time() * 1e3) || (m_frctl.frame_time = 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
+            debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ", fr time %f" << ATLINE(srcline), screen, m_frctl.frame_time);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size
 //debug("here51" ENDCOLOR);
 //{ DebugInOut("assgn new txtr", SRCLINE);
-            m_frctl.isrunning = true;
             SDL_Size txtr_wh(BIT_SLICES, m_frctl.wh.h);
 //        ShmData::TXTR txtr(ShmData::TXTR::NullOkay{}); //leave empty until bkg thread starts
 //        m_txtr(TXTR::NullOkay{}), //leave empty until bkg thread starts
@@ -794,7 +813,8 @@ public: //methods:
             txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
             debug(19, "txtr after reset " << txtr);
-            init_fbque();
+            init_fbque(init_color); //do this *before* set running state
+            m_frctl.isrunning = true;
 //debug("here52" ENDCOLOR);
 //        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
 //done by main:        dirty.store(0); //first sync with client thread(s)
@@ -809,7 +829,7 @@ public: //methods:
 //        napi_status status;
 //        ExecuteWork(env, addon_data);
 //        WorkComplete(env, status, addon_data);
-            debug(12, PINK_MSG "bkg: aodata %p, valid? %d", this, isvalid());
+            debug(12, PINK_MSG "start bkg loop: aodata " << *this); //, valid? %d", this, isvalid());
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
 //        !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
@@ -817,16 +837,17 @@ public: //methods:
 //        aoptr->start(); //env);
 //        try{
 //        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
+            const int delay_msec = 1000; //2 msec;
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
 //        let qent = frnum % frctl.length; //simple, circular queue
                 FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
                 if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
-                while (it->ready != ALL_UNIV) //wait for all wkers to render nodes; wait means wkers are running too slow
+                while ((it->ready & ALL_UNIV) != ALL_UNIV) //wait for all wkers to render nodes (ignore unused bits); wait means wkers are running too slow
                 {
-                    debug(15, YELLOW_MSG "fr[%d/%d] not ready: 0x%x, main waiting for wkers to render ...", frnum, NUMFR, it->ready.load());
-                    SDL_Delay(2 msec); //timing is important; don't wait longer than needed
+                    debug(15, YELLOW_MSG "fr[%d/%d] buf[%d/%d] not ready: 0x%x, gpu wker wait %d msec for wkers to render ...", frnum, NUMFR, it - &m_fbque[0], SIZEOF(m_fbque), it->ready.load(), delay_msec);
+                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
                 }
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
@@ -841,8 +862,10 @@ public: //methods:
                 VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
 //            m_frctl.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)
-//make frbuf ready available a new frame:
-                it->ready = 0;
+//make frbuf available for next round of frames:
+//CAUTION: potential race condition, but render wkers should be far enough ahead that it doesn't matter:
+                it->ready.store(0);
+                it->prevfr.store(it->frnum.load());
                 it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
 //        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
 //        perf[0].numfr = frnum + 1;
@@ -869,8 +892,8 @@ public: //methods:
         catch (...) { exc_msg = "??EXC??"; }
 //            std::exception_ptr excptr; //= nullptr; //init redundant (default init)
 //            excptr = std::current_exception(); //allow main thread to rethrow
-        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames", exc_msg.c_str(), commas(m_frctl.numfr));
-        else debug(12, YELLOW_MSG "bkg exit after %s frames", commas(m_frctl.numfr));
+        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
+        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
         m_frctl.protocol = Protocol::CANCEL;
         m_frctl.isrunning = false;
@@ -1029,8 +1052,8 @@ public: //NAPI methods:
                 !NAPI_OK(napi_get_named_property(env, argv[0], buf, &propval.value), "Get named prop failed");
                 debug(17, "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d", i, listlen, buflen, buf, !!known_opts.find(buf));
                 if (!strcmp(buf, "fps")) { double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
-                else if (!known_opts.find(buf)) NAPI_exc("unrecognized option: '" << buf << "' " << propval); //strlen(buf) - 2, &buf[1]);
-                else !NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get prop failed");
+                else if (!known_opts.find(buf)) NAPI_exc("unrecognized option: " << buf << " " << propval); //strlen(buf) - 2, &buf[1]);
+                else !NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get " << buf << " opt failed for " << propval);
             }
             had_opts = true;
 //#endif
@@ -1044,12 +1067,13 @@ public: //NAPI methods:
 //            m_opts.protocol = static_cast<Nodebuf::Protocol>(prtemp);
 //        if (islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
         }
-        debug(17, "open opts: explicit? %d, screen %d, vgroup %d, init_color 0x%x, protocol %d (%s), frtime_msec %d, debug %d", had_opts, screen, vgroup, init_color, protocol, (const char*)protocol, frtime_msec, debug);
+        debug(17, "open opts: explicit? %d, screen %d, vgroup %d, init_color 0x%x, protocol %d (%s), frtime_msec %d, debug %d", had_opts, screen, vgroup, init_color, protocol, Protocol(protocol).toString(), frtime_msec, debug);
 //internal state:
 //        static const Nodebuf::TXTR* PBEOF = (Nodebuf::TXTR*)-5;
 //        napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
 //        Nodebuf::TXTR::REFILL refill; //void (*m_refill)(Nodebuf::TXTR*); //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
 //to "open" gpu port, start up bkg wker:
+//??        init_fbque(); //do this before returning to caller
         shmptr->m_frctl.protocol = protocol; //this one is under caller control and passed via shm
 //        void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
         std::thread bkg(gpu_wker_static, shmptr, INT_MAX, screen, NO_SIZE, vgroup, init_color, &SRCLINE[0]);
@@ -2921,9 +2945,11 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //    ShmData* shmptr = shmalloc_typesafe<ShmData>(ShmData::SHMKEY, 1, SRCLINE);
 //    ShmDeleter dtor = std::bind(shmfree_typesafe<ShmData>, std::placeholders::_1, SRCLINE);
 //    std::unique_ptr<ShmData, ShmDeleter> shmdata(shmptr, dtor); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
-    std::unique_ptr<ShmData> shmdata(new ShmData); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
+    std::unique_ptr<ShmData> shmdata(static_cast<ShmData*>(shmalloc_debug(sizeof(ShmData), ShmData::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     ShmData* shmptr = shmdata.get();
-    if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc("alloc shmdata " << shmptr << " failed");
+    bool isnew = (shmnattch(shmptr) == 1);
+    if (isnew) new (shmptr) ShmData; //placement "new" to call ctor; NOTE: must be first time only
+    if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc((isnew? "alloc": "reattch") << " shmdata " << shmptr << " failed");
     napi_thingy my_exports(env, shmptr->my_exports(env, exports));
 //    debug(11, BLUE_MSG "aodata %p, &node[0][0[0] %p" ENDCOLOR, aoptr, &aoptr->m_nodebq[0].nodes[0][0]);
 //    inout.checkpt("cre data");
@@ -3042,11 +3068,13 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //        GpuPortData* aoptr = static_cast<GpuPortData*>(aodata); //(GpuPortData*)data;
         ShmData* shmptr = static_cast<ShmData*>(shmdata); //(GpuPortData*)data;
 //    if (!env) return; //Node cleanup mode
-        debug(9, RED_MSG "addon finalize: aodata %p, valid? %d, open? %d, hint %p", shmptr, shmptr->isvalid(), shmptr->isopen(), hint);
+        debug(9, RED_MSG "addon finalize: aodata %p, valid? %d, open? %d, hint %p, #nattch %d", shmptr, shmptr->isvalid(), shmptr->isopen(), hint, shmnattch(shmptr));
 //        aoptr->isvalid(env);
 //        if (aoptr->isopen()) NAPI_exc("GpuPort still open");
 //        aoptr->reset(env);
-        delete shmptr; //free(addon_data);
+        if (shmnattch(shmptr) == 1) shmptr->~ShmData(); //call dtor before dealloc/dettach
+//        delete shmptr; //free(addon_data);
+        shmfree_debug(shmptr, SRCLINE); //dealloc/dettach
     };
 //debug(9, BLUE_MSG "here15" ENDCOLOR);
     !NAPI_OK(napi_wrap(env, my_exports, shmptr, addon_final, /*aoptr.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
