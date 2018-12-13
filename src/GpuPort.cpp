@@ -303,6 +303,9 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 
 //typedef uint32_t elapsed_t; //20 bits is enough for 5-minute timing using msec; 32 bits is plenty
 
+inline size_t my_offsetof(const void* from, const void* to) { return to - from; } //static_cast<intptr_t>(to) - static_cast<intptr_t>(from); }
+
+
 #define IFDEBUG(yes_stmt, no_stmt)  no_stmt //yes_stmt
 
 //shm struct shared by bkg gpu wker thread and main/renderer threads:
@@ -447,10 +450,13 @@ public: //dependent types:
 //provide manifest info so other procs can find data of interest within shm seg:
     struct ManifestType
     {
-//CAUTION: don't make these static; they need to be placed as members directly within object instance
-        const size_t frctl_ofs = offsetof(ShmData, m_frctl), frctl_len = sizeof(m_frctl);
-        const size_t spares_ofs = offsetof(ShmData, m_spare), spares_len = sizeof(m_spare);
-        const size_t nodebufs_ofs = offsetof(ShmData, m_fbque), nodebufs_len = sizeof(m_fbque);
+//CAUTION: don't make these static; they need to be placed as members directly within object instance (in memory)
+//NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
+//TODO? sizeof(key_t), sizeof(uint32_t), sizeof(size_t), sizeof(double);
+        const /*key_t*/ uint32_t shmkey = SHMKEY, shmlen = sizeof(ShmData); //shmkey demoted to here for completeness
+        const /*size_t*/ uint32_t frctl_ofs = offsetof(ShmData, m_frctl), frctl_len = sizeof(m_frctl);
+        const /*size_t*/ uint32_t spares_ofs = offsetof(ShmData, m_spare), spares_len = sizeof(m_spare);
+        const /*size_t*/ uint32_t nodebufs_ofs = offsetof(ShmData, m_fbque), nodebufs_len = sizeof(m_fbque);
     public: //operators
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ManifestType& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
@@ -459,7 +465,8 @@ public: //dependent types:
 //            ostrm << "{" << commas(sizeof(that)) << ":" << &that;
 //        if (!&that) return ostrm << " NO DATA}";
 //        if (!that.isvalid()) return ostrm << " INVALID}";
-            ostrm << "{frctl " << commas(that.frctl_len) << ":+" << commas(that.frctl_ofs);
+            ostrm << "{shm " << commas(that.shmlen) << ":" << commas(that.shmkey);
+            ostrm << ", frctl " << commas(that.frctl_len) << ":+" << commas(that.frctl_ofs);
             ostrm << ", spares " << commas(that.spares_len) << ":+" << commas(that.spares_ofs);
             ostrm << ", nodebufs " << commas(that.nodebufs_len) << ":+" << commas(that.nodebufs_ofs);
             return ostrm << "}";
@@ -472,7 +479,11 @@ public: //dependent types:
         {
 //            exports = module_exports(env, exports); //include previous exports
 //            napi_thingy retval(env, napi_thingy::Object{});
+//        add_prop_uint32(SHMKEY)(props.emplace_back()); //(*pptr++);
+
             vector_cxx17<my_napi_property_descriptor> props;
+            add_prop_uint32(shmkey)(props.emplace_back());
+            add_prop_uint32(shmlen)(props.emplace_back());
             add_prop_uint32(frctl_ofs)(props.emplace_back());
             add_prop_uint32(frctl_len)(props.emplace_back());
             add_prop_uint32(spares_ofs)(props.emplace_back());
@@ -489,16 +500,17 @@ public: //dependent types:
     };
     /*alignas(CACHELEN)*/ struct FrameControl //ShmInfo
     {
-        CONST int screen;
+//NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
+        CONST int32_t screen;
         CONST SDL_Size wh; // /*(0, 0)*/, view; //(0, 0); //#univ, univ len for caller-accessible node values
         CONST double frame_time; //kludge: set value here to match txtr; used in FrameInfo
         Protocol protocol = Protocol::/*Enum::*/NONE; //WS281X;
         Protocol prev_protocol = Protocol::/*Enum::*/CANCEL; //track protocol changes so all nodes can be updated
-        bool isrunning = false;
+        /*bool*/ uint32_t isrunning = false;
 //TODO: use alignof here instead of cache_pad
 //    static const napi_typedarray_type perf_stats_type = napi_uint32_array; //NOTE: must match elapsed_t
 //??        std::atomic<int32_t> numfr;
-        int numfr; //divisor for avg timing stats
+        int32_t numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         const elapsed_t started = now(); //elapsed();
         PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) + 1> perf_stats;
@@ -640,7 +652,7 @@ public: //dependent types:
             for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0])); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0] + my_offsetof(this, &FramebufQuent::nodes[0][0]))); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
             add_prop("nodes", univ_ary)(props.emplace_back());
@@ -662,17 +674,18 @@ public: //dependent types:
 public: //data members (visible to bkg wkers via shm)
 //bkg gpu wker stores private data on stack or heap
 //RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
-    const int m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
-    const int m_ver = VERSION; //bytes[4..7]; 1 x int32
+//NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
+    const int32_t m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
+    const int32_t m_ver = VERSION; //bytes[4..7]; 1 x int32
     ManifestType m_manifest; //bytes[8..55]; 6 x uint32
     FrameControl m_frctl; //bytes[56..]; 8 x int32 + 1 x float + 5 x uint stats + 80 char (168 bytes total)
-    const int m_flag1 = VALIDCHK; //bytes[]; 1 x int32
+    const int32_t m_flag1 = VALIDCHK; //bytes[]; 1 x int32
     alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg; bytes[284..]; 64 x uint32
-    const int m_flag2 = VALIDCHK; //1 x int32
+    const int32_t m_flag2 = VALIDCHK; //1 x int32
 //    alignas(CACHELEN) struct FramebufQuent
     PreallocVector<alignas(CACHELEN) FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
 //    napi_reference m_ref = nullptr;
-    const int m_tlr = VALIDCHK;
+    const int32_t m_tlr = VALIDCHK;
 //    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
 //    InOutDebug inout2;
 public: //ctors/dtors
@@ -753,13 +766,12 @@ public: //methods:
             it->frtime = 0; //TODO
             it->prevfr = it->prevtime = -1; //no previous frame
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
-#if 0
             for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = color; //BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
-#else //test pattern for js client test
+#if 1 //test pattern for js client test
  #pragma message("test pattern")
             for (int x = 0; x < SIZEOF(it->nodes); ++x)
                 for (int y = 0; y < SIZEOF(it->nodes[0]); ++y)
-                    it->nodes[x][y] = fromARGB(it - m_fbque.begin(), x, 0, 0) | y;
+                    it->nodes[x][y] = ((it - m_fbque.begin() + 10) * 0x11000000UL) | ((x + 1) * 0x10000UL) | (y + 1);
 #endif
         }
 //also init gpu wker stats:
@@ -930,7 +942,7 @@ public: //NAPI methods:
 //        vector_cxx17<my_napi_property_descriptor>& props, napi_env env)
 //static cfg consts:
         add_prop_uint32(VERSION)(props.emplace_back()); //(*pptr++);
-        add_prop_uint32(SHMKEY)(props.emplace_back()); //(*pptr++);
+//        add_prop_uint32(SHMKEY)(props.emplace_back()); //(*pptr++);
         add_prop_uint32(NUM_UNIV)(props.emplace_back()); //(*pptr++);
         add_prop_uint32("UNIV_MAXLEN", UNIV_MAXLEN_pad)(props.emplace_back()); //give caller actual row len for correct node addressing
 //expose Protocol types (enum consts):

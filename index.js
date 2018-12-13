@@ -13,7 +13,7 @@ const pathlib = require("path"); //NOTE: called it something else to reserve "pa
 const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
 const GpuPort = require('./build/Release/gpuport'); //.node');
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
-const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.SHMKEY, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
+const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.manifest.shmkey, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
 extensions(); //hoist so inline code below can use
 
 //kludge: trim down for shorter display info:

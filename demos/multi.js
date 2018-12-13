@@ -40,7 +40,7 @@ const {debug, caller} = require("./debug");
 //const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
 //const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
 const cluster = require("cluster"); //tryRequire("cluster") || {isMaster: true}; //https://nodejs.org/api/cluster.html; //http://learnboost.github.com/cluster
-//const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = tryRequire('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
+const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
 cluster.proctype = cluster.isMaster? "Main": cluster.isWorker? "Wker": "?UNKN-TYPE?";
 //console.log("here1");
 //debug("here2");
@@ -76,18 +76,52 @@ debug("seq info", JSON.stringify(seq).json_tidy);
 
 
 //debug(hex(nodebufs[0].nodes[0][0]), hex(nodebufs[2].nodes[2][222]), hex(nodebufs[0].nodes[23][1135]));
-var num_bad = 0, num_good = 0;
-for (var q = 0; q < 4; ++q)
-    for (var x = 0; x < 24; ++x)
-        for (var y = 0; y < 1136; ++y)
-            if (nodebufs[q].nodes[x][y] != (q << 24) | (x << 16) | y)
+function shm_dump()
+{
+    const shmbuf = sharedbuf.createSharedBuffer(gp.manifest.shmkey, gp.manifest.shmlen, false); //gpu wker creates new, all others acquire existing
+    const vals = new Uint32Array(shmbuf, 0, gp.manifest.shmlen / Uint32Array.BYTES_PER_ELEMENT);
+    debug(`shm dump: ${JSON.stringify(gp.manifest).json_tidy}`);
+    for (let ofs = 0; ofs < 256; ofs += 16)
+        debug(`'${hex(ofs * Uint32Array.BYTES_PER_ELEMENT)}: ${vals.slice(ofs, ofs + 16).reduce((fmtlist, val) => fmtlist.push_fluent(hex(val)), []).join(", ")}`);
+}
+
+function test_pattern()
+{
+    var num_bad = 0, num_good = 0, reported = 0;
+    if ((nodebufs.length != 4) || (nodebufs[0].nodes.length != 24) || (nodebufs[0].nodes[0].length != 1136)) exc(`bad dim: ${nodebufs.length} x ${nodebufs[0].nodes.length} x  ${nodebufs[0].nodes[0].length}`);
+    for (var q = 0; q < 4; ++q)
+        for (var x = 0; x < 24; ++x)
+            for (var y = 0; y < 1136; ++y)
             {
-                if (++num_bad > 10) continue;
-                debug(`nbq[${q}][${x}][${y}] bad: got 0x${hex(nodebufs[q].nodes[x][y])} should be 0x${hex((q << 24) | (x << 16) | y)}`);
+                let expected = ((q + 10) *0x11000000) | ((x + 1) << 16) | (y + 1);
+                if (nodebufs[q].nodes[x][y] == expected) { ++num_good; continue; }
+//                if (++num_bad > 10) continue;
+                ++num_bad;
+                if (!nodebufs[q].nodes[x][y]) continue;
+                if (++reported > 10) continue;
+                debug(`nbq[${q}][${x}][${y}] bad: got ${hex(nodebufs[q].nodes[x][y])} should be ${hex(expected)}`);
             }
-            else ++num_good;
-debug("good", num_good, "bad", num_bad);
-process.exit();
+            debug("good", commas(num_good), "bad", commas(num_bad));
+//process.exit();
+}
+function test_bufs()
+{
+//    const shbuf = new SharedArrayBuffer(NUM_UNIV * UNIV_ROWSIZE); //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
+//const nodes = Array.from({length: NUM_UNIV}, (undef, univ) => new Uint32Array(shbuf, univ * UNIV_ROWSIZE, UNIV_ROWSIZE / Uint32Array.BYTES_PER_ELEMENT)); //CAUTION: len = #elements, !#bytes; https://stackoverflow.com/questions/3746725/create-a-javascript-array-containing-1-n
+    const shmbuf = sharedbuf.createSharedBuffer(gp.manifest.shmkey, gp.manifest.shmlen, false); //gpu wker creates new, all others acquire existing
+    const CTLOFS = 5;
+    const shm_nodebufs = [];
+    for (var i = 0; i < 4; ++i)
+        shm_nodebufs[i] = new Uint32Array(shmbuf, gp.manifest.nodebufs_ofs + i * gp.manifest.nodebufs_len / 4, gp.manifest.nodebufs_len / 4 / Uint32Array.BYTES_PER_ELEMENT);
+    debug("buffr#s", shm_nodebufs.map((nodebuf) => nodebuf[0]).join(", "), "readies", shm_nodebufs.map((nodebuf) => nodebuf[4]).join(", "));
+    var num_match = 0, num_mismatch = 0;
+    for (var q = 0; q < 4; ++q)
+        for (var x = 0; x < 24; ++x)
+            for (var y = 0; y < 1136; ++y)
+                if (nodebufs[q].nodes[x][y] == shm_nodebufs[q][CTLOFS + x * 1136 + y]) ++num_match;
+                else if (++num_mismatch < 10) debug(`nodebuf[${q}][${x}][${y}] mism: ${hex(shm_nodebufs[q][CTLOFS + x * 1136 + y])} should be ${hex(nodebufs[q].nodes[x][y])}`);
+    debug("match", num_match, "mismatch", num_mismatch);
+}
 
 //const x = {};
 //Object.defineProperty(x, "ready",
@@ -174,6 +208,9 @@ function* main()
 //    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
 //    debug(`frbuf quent initialized`.blue_lt);
     yield* wait4port(true);
+    shm_dump();
+    test_pattern();
+    test_bufs();
     if (!NUM_WKERs) warn("no workers");
     debug(`launch ${plural(NUM_WKERs)} wker${plural.cached}`.blue_lt);
     for (let w = 0; w < NUM_WKERs; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
@@ -683,7 +720,8 @@ function color_reset(str, color)
 
 //function debug(args) { console.log.apply(null, Array.from(arguments).push_fluent(__parent_srcline)); debugger; }
 
-function hex(thing) { return (thing > 9)? `0x${(thing >>> 0).toString(16)}`: thing; }
+//function hex(thing) { return ((thing < 0) || (thing > 9))? `0x${(thing >>> 0).toString(16)}`: thing; }
+function hex(thing) { return `0x${(thing >>> 0).toString(16)}`.replace(/^0x(\d)$/, "$1"); }
 
 
 //adjust precision on a float val:
