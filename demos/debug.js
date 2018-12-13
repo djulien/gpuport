@@ -47,6 +47,7 @@ function caller(depth)
 
 const debug =
 module.exports.debug =
+//TODO: convert args to lamba callback to reduce overhead when debug turned off
 function debug(args)
 {
 //no; allow it but handle it    if (debug.busy) return; //avoid recursion (via elapsed())
@@ -57,13 +58,13 @@ function debug(args)
 //console.error("debug:" + JSON.stringify(arguments));
         var detail = 0;
         args = Array.from(arguments); //turn into real array
-        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args[1].toString().indexOf("%") != -1)) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
+        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") /*&& (args[1].toString().indexOf("%") != -1)*/) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
         const parent = caller(++debug.nested || 1);
         debug.nested = 0; //reset for next time
 //    debug.wanted || (debug.wanted = {});
-        var want_detail = debug.wanted[parent.replace(/^@|:.*$/g, "")] || debug.wanted['*'] || -1;
+        var want_detail = debug.wanted(parent.replace(/^@|:.*$/g, "")); //] || debug.wanted['*'] || -1;
 //console.log("enabled: %j, parent %s", Object.keys(want_debug), my_parent.replace(/^@|:.*$/g, ""));
 //console.log("DEBUG '%s': want %d vs current %d, discard? %d, options %j", my_parent, want_detail, detail, detail >= want_detail, want_debug);
         if (detail >= want_detail) return; //too much detail; caller doesn't want it
@@ -112,10 +113,15 @@ function debug(args)
     finally { debug.busy = false; }
 }
 debug.nested = 0;
+debug.wanted = function(name, level)
+{
+    if (arguments.length > 1) deb_wanted[name] = level;
+    return deb_wanted[name] || deb_wanted['*'] || -1;
+}
 
 
 //debug.nested = 0; //allow caller to adjust stack level
-debug.wanted = {};
+var deb_wanted = {};
 (process.env.DEBUG || "").split(/\s*,\s*/).forEach((part, inx) =>
 {
     if (!part) return; //continue;
@@ -124,9 +130,9 @@ debug.wanted = {};
     var [, remove, name,, level] = parsed;
 //    console.log("part: \"%s\", +/- '%s', name '%s', level '%s'", part, remove, name, level);
     if (name == "*") //all on/off; clear previous options
-        debug.wanted = (remove == "-")? {}: {'*': level || Number.MAX_SAFE_INTEGER}; //remove/enable all, set default level if missing
+        deb_wanted = (remove == "-")? {}: {'*': level || Number.MAX_SAFE_INTEGER}; //remove/enable all, set default level if missing
     else //named module
-        debug.wanted[name] = (remove == "-")? -1: level || Number.MAX_SAFE_INTEGER;
+        deb_wanted[name] = (remove == "-")? -1: level || Number.MAX_SAFE_INTEGER;
 });
 //tell user how to get debug msgs:
 if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*" for debug msgs.`.yellow_lt);

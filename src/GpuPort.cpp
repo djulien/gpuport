@@ -518,6 +518,7 @@ public: //dependent types:
         Protocol protocol = Protocol::/*Enum::*/NONE; //WS281X;
         Protocol prev_protocol = Protocol::/*Enum::*/CANCEL; //track protocol changes so all nodes can be updated
         /*bool*/ uint32_t isrunning = false;
+//        int32_t debug_level = MAX_DEBUG_LEVEL;
 //TODO: use alignof here instead of cache_pad
 //    static const napi_typedarray_type perf_stats_type = napi_uint32_array; //NOTE: must match elapsed_t
 //??        std::atomic<int32_t> numfr;
@@ -543,6 +544,7 @@ public: //dependent types:
             ostrm << ", frame_time " << that.frame_time << " msec";
             ostrm << ", protocol " << that.protocol; //NVL(unmap(names, that.protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
             ostrm << ", previous " << that.prev_protocol; //NVL(unmap(names, that.prev_protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
+            ostrm << ", debug level " << /*that.*/debug_level;
             ostrm << ", #fr " << commas(that.numfr);
             ostrm << ", perf [";
 //            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
@@ -560,10 +562,20 @@ public: //dependent types:
         }
     public: //NAPI methods
         static inline FrameControl* my(void* ptr) { return static_cast<FrameControl*>(ptr); }
-        static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Float{}); }
+        static inline /*uint32_t*/ napi_value univlen_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->wh.h, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value fps_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time? 1000.0 / my(ptr)->frame_time: 0, napi_thingy::Float{}); }
+        static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Float{}); }
 //        static /*uint32_t*/ auto protocol_getter(void* ptr) /*const*/ { return static_cast<int32_t>(me(ptr)->protocol.value); }
 //        static void protocol_setter(FrameControl* fcptr, napi_thingy& newval) { fcptr->protocol = static_cast<Protocol>(newval.as_int32(true)); }
+        static inline /*uint32_t*/ napi_value deblevel_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, /*my(ptr)->*/debug_level, napi_thingy::Int32{}); }
+        static void deblevel_setter(const napi_thingy& newval, void* ptr)
+        {
+//            /*my(ptr)->*/debug_level = new_level;
+            int new_level = newval.as_int32(true), old_level = debug_level;
+            if (new_level > old_level) debug_level = new_level; //inc detail before showing debug msg (more likely to show msg that way)
+            debug(44, "debug level %d -> %d", old_level, new_level);
+            if (new_level < old_level) debug_level = new_level; //dec detail afte showing debug msg (more likely to show msg that way)
+        }
         static /*uint32_t*/ napi_value numfr_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->numfr, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value exc_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->exc_reason); }
 //        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
@@ -582,9 +594,11 @@ public: //dependent types:
 //        const elapsed_t started = now(); //elapsed();
 //no; not set until port opened        add_prop("frame_time", m_frctl.frame_time)(props.emplace_back());
 //no            add_prop("FPS", 1000.0 / m_frctl.frame_time)(props.emplace_back());
+            add_getter("UNIV_LEN", FrameControl::univlen_getter, this)(props.emplace_back());
             add_getter("FPS", FrameControl::fps_getter, this)(props.emplace_back());
             add_getter("frtime", FrameControl::frtime_getter, this)(props.emplace_back());
             add_getter("protocol", Protocol::getter, Protocol::setter, &protocol)(props.emplace_back());
+            add_getter("debug_level", FrameControl::deblevel_getter, FrameControl::deblevel_setter, this)(props.emplace_back()); //(*pptr++);
             add_getter("numfr", FrameControl::numfr_getter, this)(props.emplace_back()); //(*pptr++);
             napi_thingy arybuf(env, &perf_stats[0], sizeof(perf_stats));
             napi_thingy perf_typary(env, GPU_NODE_type, SIZEOF(perf_stats), arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
@@ -792,13 +806,14 @@ public: //methods:
             it->prevtime = it->prevfr = -1; //no previous frame
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
             for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = color; //BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
-#if 1 //test pattern for js client shm test
+#if 0 //test pattern for js client shm test
  #pragma message("test pattern")
             for (int x = 0; x < SIZEOF(it->nodes); ++x)
                 for (int y = 0; y < SIZEOF(it->nodes[0]); ++y)
                     it->nodes[x][y] = ((it - m_fbque.begin() + 10) * 0x11000000UL) | ((x + 1) * 0x10000UL) | (y + 1);
 #endif
         }
+        debug(44, "init %d fbque ents to 0x%x", SIZEOF(m_fbque), color);
 //also init gpu wker stats:
         m_frctl.numfr = 0;
         memset(&m_frctl.perf_stats[0], 0, sizeof(m_frctl.perf_stats));
@@ -849,7 +864,7 @@ public: //methods:
 //TODO: refill not needed?
             txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
-            debug(19, "txtr after reset " << txtr);
+            debug(19, "bkg gpu txtr " << txtr);
             init_fbque(init_color); //do this *before* set running state, but after determining frame_time
             isopen(true); //m_frctl.isrunning = true;
 //debug("here52" ENDCOLOR);
@@ -889,7 +904,7 @@ public: //methods:
 //                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
                     ++wait_frames;
                 }
-                if (wait_frames) debug(15, YELLOW_MSG "fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
+                if (wait_frames) debug(15, YELLOW_MSG "qpu wker fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -1054,7 +1069,7 @@ public: //NAPI methods:
 //    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
 //    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
 //    Napi::String str = Napi::String::New(env, )
-        int debug = 33;
+//        int debug = 33;
         int screen = FIRST_SCREEN;
 //    key_t PREALLOC_shmkey = 0;
         int vgroup = 1;
@@ -1079,7 +1094,7 @@ public: //NAPI methods:
             static const str_map<const char*, int*> known_opts = //MAPTYPE known_opts =
             {
 //NOTE: NUM_UNIV and UNIV_LEN are determined by video config so they are not selectable by caller
-                {"debug", &debug},
+//                {"debug", &debug},
                 {"screen", &screen},
                 {"vgroup", &vgroup},
                 {"init_color", (int*)&init_color},
@@ -1124,7 +1139,7 @@ public: //NAPI methods:
 //            m_opts.protocol = static_cast<Nodebuf::Protocol>(prtemp);
 //        if (islistening()) debug(RED_MSG "TODO: check for arg mismatch" ENDCOLOR);
         }
-        debug(17, "open opts: explicit? %d, screen %d, vgroup %d, init_color 0x%x, protocol %d (%s), frtime_msec %d, debug %d", had_opts, screen, vgroup, init_color, protocol, Protocol(protocol).toString(), frtime_msec, debug);
+        debug(17, "open opts: explicit? %d, screen %d, vgroup %d, init_color 0x%x, protocol %d (%s), frtime_msec %d", had_opts, screen, vgroup, init_color, protocol, Protocol(protocol).toString(), frtime_msec); //, debug);
 //internal state:
 //        static const Nodebuf::TXTR* PBEOF = (Nodebuf::TXTR*)-5;
 //        napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
@@ -1237,6 +1252,34 @@ private: //helpers
         /*auto*/ MASK_TYPE dirty = fbquent.ready.load() | (255 * Ashift); //use dirty/ready bits as start bits
         if (shdata.m_frctl.protocol != shdata.m_frctl.prev_protocol) dirty = ALL_UNIV; //protocol/fmt changed; force all nodes to be updated (for dev/debug); wouldn't happen in prod
         debug(19, "xfr " << commas(xfrlen) << " *3, protocol " << shdata.m_frctl.protocol); //static_cast<int>(nodebuf.protocol) << ENDCOLOR);
+//        if (debug_level <= 80)
+#if 1
+        debug(80, "xfr_bb: " << shdata.m_frctl.wh);
+        int yy = shdata.m_frctl.wh.h;
+        while ((yy > 1) /*&& (fbquent.nodes[*][yy - 1] == fbquent.nodes[*][yy - 2])*/) //--yy;
+            for (int x = 0; x < NUM_UNIV; ++x)
+                if (fbquent.nodes[x][yy - 1] != fbquent.nodes[x][yy - 2]) { yy = -yy; break; }
+                else if (x == NUM_UNIV - 1) --yy;
+        if (yy < 0) yy = -yy; //kludge: restore unique len after outer loop break
+        for (int y = 0; y < /*shdata.m_frctl.wh.h*/ yy; ++y) //outer loop = node# within each universe
+        {
+            std::ostringstream ss;
+            ss << "[" << y << "/" << shdata.m_frctl.wh.h << "]:'" << std::hex << &"0x"[(y * NUM_UNIV < 10)? 2: 0] << (y * NUM_UNIV);
+            int xx = NUM_UNIV;
+            while ((xx > 1) && (fbquent.nodes[xx - 1][y] == fbquent.nodes[xx - 2][y])) --xx;
+            for (int x = 0; x < /*NUM_UNIV*/ xx; ++x) //inner loop = universe#
+            {
+                ss << (x? ", ": ": ") << &"0x"[(fbquent.nodes[x][y] < 10)? 2: 0] << fbquent.nodes[x][y];
+//                for (int xx = x + 1; xx < NUM_UNIV; ++xx) //look ahead for changes
+//                    if (fbquent.nodes[xx][y] != fbquent.nodes[x][y])) break;
+//                    else if (xx == NUM_UNIV - 1) ss << " ...";
+            }
+            if (xx < NUM_UNIV) ss << " ... x " << (NUM_UNIV - xx);
+            ss << std::dec;
+            debug(80, ss.str());
+        }
+        if (yy < shdata.m_frctl.wh.h) debug(80, " ::: x " << (shdata.m_frctl.wh.h - yy));
+#endif
         switch (shdata.m_frctl.protocol.value)
         {
             default: //NONE (raw)

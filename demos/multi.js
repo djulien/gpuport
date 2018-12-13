@@ -49,6 +49,7 @@ const gp = require("../build/Release/gpuport"); //{NUM_UNIV: 24, UNIV_MAXLEN: 11
 const {/*limit, listen, nodebufq, frctl, perf, nodes,*/ NUM_UNIV, UNIV_MAXLEN, spares, nodebufs} = gp; //make global for easier access
 //debug("gp", JSON.stringify(gp).json_tidy.trunc(2000));
 debug("nodebufs", `${nodebufs.length} x ${nodebufs[0].nodes.length} x ${nodebufs[0].nodes[0].length}`, "spares", spares.length);
+gp.debug_level = debug.wanted("gpuport");
 
 //render control info:
 const ALL_READY = (1 << NUM_UNIV) - 1, SOME_READY = (1 << (NUM_UNIV / 2)) - 1, FIRST_READY = 1 << (NUM_UNIV - 1); //set half-ready to force sync first time
@@ -160,6 +161,9 @@ const PINK = MAGENTA; //easier to spell :)
 const BLACK = (RED & GREEN & BLUE); //0xFF000000 //NOTE: needs Alpha
 const WHITE = (RED | GREEN | BLUE); //fromRGB(255, 255, 255) //0xFFFFFFFF
 //other ARGB colors (debug):
+const CYAN_DARK = 0xFF004040;
+const PINK_DARK = 0xFF400040;
+const WHITE_DARK= 0xFF404040;
 //const SALMON  0xFF8080
 //const LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
 //ARGB primary colors:
@@ -187,11 +191,12 @@ function* main()
 {
     const opts =
     {
+//        screen: 1,
 //        screen: 0, //FIRST_SCREEN,
     //    key_t PREALLOC_shmkey = 0;
         vgroup: 20,
-        debug: 33,
-        init_color: PINK, //= 0;
+//        debug: 33,
+        init_color: CYAN_DARK, //CYAN, //PINK, //= 0;
         protocol: gp.Protocols.NONE, //DEV_MODE,
 //        int frtime_msec; //double fps;
     };
@@ -211,7 +216,9 @@ function* main()
     gp.open(opts); //{screen, init_color, wh} //numfr: seq.NUMFR});
     yield* wait4port(() => gp.isopen, ONE_SEC);
     seq.NUMFR = Math.ceil(seq.DURATION * gp.FPS) || 5; //NOTE: need to wait for GPU port to open befpre calculating this (FPS not known until port opened)
+    seq.NUMFR = Math.min(seq.NUMFR, gp.NUM_UNIV * gp.UNIV_LEN);
     debug("numfr", seq.NUMFR);
+    debug("gp", JSON.stringify(gp).json_tidy.trunc(600));
 //debug("here5");
 //TODO: add cb func or block?
 //    nodebufs[0].nodes.forEach((univ) => univ.forEach((node) => node = PINK)); //BLACK))); //start with all univ dark
@@ -264,7 +271,7 @@ function* wait4port(pred, delay_time)
 
     function show_state()
     {
-        debug(`waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
+        if (retry) debug(`waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
     }
 }
 
@@ -371,13 +378,6 @@ function start_wker() //filename) //, data, opts)
 /// Wker threads:
 //
 
-function dump_nodes(quent, univ, univlen)
-{
-    debug("`dump nodes:"); // ${JSON.stringify(gp.manifest).json_tidy}`);
-    for (let ofs = 0; ofs < Math.min(gp.UNIV_MAXLEN, univlen); ofs += 16)
-        debug(`'${hex(ofs * Uint32Array.BYTES_PER_ELEMENT)}: ${nodebufs[quent].nodes[univ].slice(ofs, ofs + 16).reduce((fmtlist, nodeval) => fmtlist.push_fluent(hex(nodeval)), []).join(", ")}`);
-}
-
 function* wker() //wker_data)
 {
 //    debug("wker env", process.env);
@@ -396,6 +396,7 @@ function* wker() //wker_data)
 //    const my_univ = nodebufs.map((qent) => qent.nodes = qent.nodes.slice(univ_begin, univ_end)); //exclude other wkers
     nodebufs.forEach((qent) => { qent.my_nodes = qent.nodes.slice(univ_begin, univ_end); }); //trim off univs/nodes for other wkers
     let ani_speed = gp.NUM_UNIV * gp.UNIV_MAXLEN / seq.NUMFR; //ani_speed * numfr == #nodes (NUM_UNIV * UNIV_MAXLEN)
+//seq.NUMFR = 5;
 
 //    dump_nodes(0, 0, 32);
 //    for (var i = 0; i < gp.UNIV_MAXLEN; ++i)
@@ -437,7 +438,7 @@ function* wker() //wker_data)
 
         let which_fr = `[${commas(nodebufs[qent].frnum)}/${commas(seq.NUMFR)}]`;
 //        if (nodebufs[qent].ready & my_ready) exc(`fr#${which_fr} in quent ${qent} ready ${hex(nodebufs[qent].ready)} already has my ready bits: ${hex(my_ready)}`);
-        debug(`wker# ${wkid} will render fr#${which_fr} univ ${hex(my_ready)} into nodebuf${which_buf}, ready ${hex(nodebufs[qent].ready)}, ${(nodebufs[qent].ready & my_ready)? "already done?!".red_lt: ""} ...`);
+        debug(10, `wker# ${wkid} will render fr#${which_fr} univs ${hex(my_ready)} into nodebuf${which_buf}, ready ${hex(nodebufs[qent].ready)}, ${(nodebufs[qent].ready & my_ready)? "already done?!".red_lt: ""} ...`);
 //TODO: render
 //NOTE: wker must set new values for *all* nodes (prev frame contents are stale from 4 frames ago)
 //to leave nodes unchanged, wker can set A = 0 (dev mode only) or copy values from prev frame
@@ -448,14 +449,20 @@ function* wker() //wker_data)
 
         nodebufs[qent]./*my_*/nodes.forEach((univ, uinx, all) =>
         {
+//            debug("prev fbque", (qent + nodebufs.length - 1) % nodebufs.length);
+            const prevbuf = nodebufs[(qent + nodebufs.length - 1) % nodebufs.length].nodes[uinx];
             let color = hsv2rgb(uinx / all.length, 1.0, 0.25); //rainbow across all univ
 //CAUTION: need to copy nodes from previous frame if !changing
-            univ.forEach((nodeval, ninx) => univ[ninx] = BLACK); //(ninx & 4)? WHITE: color); //(ninx == (frnum % gp.UNIV_MAXLEN))? WHITE: color); //PALETTE[frnum % PALETTE.length]: 0xFF004040);
+//            univ.forEach((nodeval, ninx) => univ[ninx] = BLACK); //(ninx & 4)? WHITE: color); //(ninx == (frnum % gp.UNIV_MAXLEN))? WHITE: color); //PALETTE[frnum % PALETTE.length]: 0xFF004040);
 //            univ[frnum] = WHITE;
 //            for (var i = 0; i < 10; ++i) univ[i] = WHITE;
-            univ[frnum % 20] = WHITE; // * ani_speed] = WHITE;
-            debug(`fbquent[${qent}]univ[${uinx}][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[uinx][frnum % 20])}`);
+            if (frnum) univ.forEach((nodeval, ninx) => univ[ninx] = prevbuf[ninx]); //use previous frame if no change
+//            univ[frnum % 20] = PINK_DARK; //WHITE; // * ani_speed] = WHITE;
         });
+        let x = Math.floor(frnum / gp.UNIV_LEN), y = frnum % gp.UNIV_LEN; //NUM_UNIV;
+        debug(20, `fr#${frnum} -> x ${x}, y ${y}`);
+        nodebufs[qent].nodes[x][y] = PINK_DARK;
+        debug(20, `fbquent[${qent}]univ[*][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[0][frnum % 20])}`);
 //        var y = Math.floor(frnum / gp.NUM_UNIV), x = frnum % gp.NUM_UNIV;
 //        nodebufs[qent].nodes[x][y] = WHITE;
 //        nodebufs[qent].my_nodes[0][frnum] = WHITE; // * ani_speed] = WHITE;
@@ -464,7 +471,7 @@ function* wker() //wker_data)
 //        nodebufs[0].nodes[i % 24][i] = hsv2rgb(.4, 1, 1);
 /**/
         nodebufs[qent].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
-        debug(`wker# ${wkid} rendered fr#${which_fr} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
+        debug(10, `wker# ${wkid} rendered fr#${which_fr} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
 //        delta = elapsed.now() - previous; perf[wkid].render += delta; previous += delta;
 //        perf[wkid].numfr = frnum + 1;
 //        perf[wkid].update(true);
@@ -472,7 +479,7 @@ function* wker() //wker_data)
         my_stats[1] += delta;
         previous += delta; //==now(), avoid another system call overhead
         if (previous >= frnum * frtime_delay + TIMING_SLOP) ++my_stats[2]; //overdue
-        yield wait_msec(250);
+//        yield wait_sec(0.5); //wait_msec(250);
     }
 //    perf[wkid].unknown = previous - started - perf[wkid].render - perf[wkid].wait; //should be 0 or close to
 //    process.send({data}, (err) => {});
@@ -485,6 +492,14 @@ function* wker() //wker_data)
 //    debug(`wker# ${wkid} waiting for gpu wker to finish fr#${frnum}, currently doing fr#${gp.numfr} ...`.green_lt);
 //    yield wait_msec(frtime_delay); //msec; timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
 //}
+
+
+function dump_nodes(quent, univ, univlen)
+{
+    debug("`dump nodes:"); // ${JSON.stringify(gp.manifest).json_tidy}`);
+    for (let ofs = 0; ofs < Math.min(gp.UNIV_MAXLEN, univlen); ofs += 16)
+        debug(`'${hex(ofs * Uint32Array.BYTES_PER_ELEMENT)}: ${nodebufs[quent].nodes[univ].slice(ofs, ofs + 16).reduce((fmtlist, nodeval) => fmtlist.push_fluent(hex(nodeval)), []).join(", ")}`);
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -942,13 +957,14 @@ function extensions()
     String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${commas(this.length - maxlen)})`: this; }
     String.prototype.replaceAll = function replaceAll(from, to) { return this.replace(new RegExp(from, "g"), to); } //NOTE: caller must esc "from" string if contains special chars
 //    if (!String.prototype.splitr)
+console.error("TODO: fix json_tidy #s".red_lt);
     Object.defineProperties(String.prototype,
     {
 //            escnl: { get() { return this.replace(/\n/g, "\\n"); }}, //escape all newlines
 //            nocomment: { get() { return this.replace(/\/\*.*?\*\//gm, "").replace(/(#|\/\/).*?$/gm, ""); }}, //strip comments; multi-line has priority over single-line; CAUTION: no parsing or overlapping
 //            nonempty: { get() { return this.replace(/^\s*\r?\n/gm , ""); }}, //strip empty lines
 //            escre: { get() { return this.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }}, //escape all RE special chars
-        json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
+        json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/[0-9.]{5,}/g, (val) => (val.indexOf(".") != -1)? `0x${(val >>> 0).toString(16)}`: val); }}, //tidy up JSON for readability
 //        quoted: { get() { return quote(this/*.toString()*/); }, },
 //        quoted1: { get() { return quote(this/*.toString()*/, "'"); }, },
 //        unquoted: { get() { return unquote(this/*.toString()*/); }, },

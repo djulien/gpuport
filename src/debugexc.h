@@ -81,6 +81,16 @@ public: //operators
 //    /*return*/ myprintf(0, __VA_ARGS__);
 //}
 
+//inline int32_t debug_level(int32_t newlevel)
+//{
+//    static int current_level = MAX_DEBUG_LEVEL;
+//    if (newlevel >= 0) current_level = newlevel;
+//    return current_level;
+//}
+//inline int32_t debug_level() { return debug_level(-1); }
+extern int32_t debug_level = MAX_DEBUG_LEVEL;
+
+
 #define exc exc_hard
 #define warn exc_soft
 #define exc_hard(...)  myprintf(-1, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
@@ -98,7 +108,8 @@ public: //operators
 //#define debug_level(level, ...)  myprintf(level, std::ostringstream() << __VA_ARGS__)
 //set default if caller didn't specify:
 //use macro so SRCLINE will be correct
-#define debug(level, ...)  ((level <= MAX_DEBUG_LEVEL)? (myprintf(level, SRCLINE, std::ostringstream() << __VA_ARGS__), 0): 0) //filter out *max* detail at compile time
+//compiler should filter out anything > MAX_DEBUG_LEVEL, leaving only the second condition for run-time eval
+#define debug(level, ...)  (((level <= MAX_DEBUG_LEVEL) && (level <= debug_level))? (myprintf(level, SRCLINE, std::ostringstream() << __VA_ARGS__), 0): 0) //filter out *max* detail at compile time
 //#define debug(...)  myprintf(0, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
 //void debug(ARGS&& ... args)

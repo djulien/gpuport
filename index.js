@@ -140,7 +140,7 @@ const opts =
     protocol: GpuPort.DEV_MODE,
 //    protocol: GpuPort.WS281X,
 //    fps: .1,
-    fps: 30,
+//    fps: 30,
 //    mynodes: new Uint32Array(GpuPort.NUM_UNIV * GpuPort.UNIV_MAXLEN + 1),
 };
 //var THIS = {count: 0, };
