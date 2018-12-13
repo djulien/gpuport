@@ -315,6 +315,7 @@ struct napi_thingy
 //    struct Size {}; //ctor disambiguation tag
     struct Int32 {};
     struct Uint32 {};
+    using Boolean = Uint32; //kludge: no napi_create_boolean(), use uint32 instead
     struct Float {};
     napi_env env; //CAUTION: doesn't remain valid across napi calls/events
     napi_value value;

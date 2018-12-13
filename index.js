@@ -12,17 +12,41 @@ const pathlib = require("path"); //NOTE: called it something else to reserve "pa
 //TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
 const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
 const GpuPort = require('./build/Release/gpuport'); //.node');
-//const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
-const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.manifest.shmkey, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
 extensions(); //hoist so inline code below can use
+
+debug("isvalid?", GpuPort.isvalid);
+//const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
+//const shmpeek = new Uint32Array(sharedbuf.createSharedBuffer(GpuPort.manifest.shmkey, 100 * Uint32Array.BYTES_PER_ELEMENT, true), 100, 0);
 
 //kludge: trim down for shorter display info:
 //GpuPort.nodebufs.forEach((nodebuf) => { nodebuf.nodes.splice(3, 21); nodebuf.nodes.forEach((univ) => univ.splice(4, univ.length)); });
 //console.log("GpuPort", GpuPort);
-debug("gpu port imports".cyan_lt, JSON.stringify(GpuPort, null, 2).json_tidy.trunc(1600));
+debug("isvalid?", GpuPort.isvalid);
+GpuPort.open(); //{vgroup: 20, debug: 33, init_color: 0xFF00FFFF /*CYAN*/, protocol: GpuPort.Protocols.DEV_MODE});
+wait4port(true);
+debug("GpuPort imports".cyan_lt, JSON.stringify(GpuPort, null, 2).json_tidy.trunc(1600));
 debug("spares", Array.isArray(GpuPort.spares)? "array": typeof(GpuPort.spares), GpuPort.spares.length, "nodebufs", typeof GpuPort.nodebufs, GpuPort.nodebufs.length, typeof GpuPort.nodebufs[0], GpuPort.nodebufs[0].nodes.length, GpuPort.nodebufs[0].nodes[0].length);
 debug(`peek ${hex(shmpeek[0])}, ${hex(shmpeek[1])}, ${hex(shmpeek[2])}, ${hex(shmpeek[3])}, ...`);
 process.exit();
+
+
+function* wait4port(want_state)
+{
+//debug("here1");
+    if (want_state) want_state = "open";
+    const MAX_RETRY = 10;
+    for (let retry = 0; retry < MAX_RETRY; ++retry)
+    {
+//debug("here2", retry);
+        let qent = GpuPort.numfr % nodebufs.length; //circular queue
+        debug(`waiting[${retry}] for GPU port ${want_state || "close"}, open? ${GpuPort.isopen}`);
+        if (!!GpuPort.isopen == !!want_state) return;
+        yield wait_sec(1); //timing not critical here
+    }
+//debug("here3");
+    throw `gpu port ${want_state || "close"} timeout`.red_lt;
+}
+
 
 //module.exports = gpuport;
 
@@ -261,7 +285,7 @@ function step(gen, async_cb)
 
 
 //delay for step/generator function:
-function wait(msec)
+function wait_msec(msec)
 {
 //    if (!step.async_cb)
 //    return setTimeout.bind(null, step, msec); //defer to step loop
@@ -274,6 +298,7 @@ function wait(msec)
 //    return msec; //dummy retval for testing
     return msec; //dummy value for debug
 }
+function wait_sec(sec) { return wait_msec(sec * 1000); }
 //wait.cancel = function wait_cancel(reason)
 //{
 //    reason && (reason += ": ");

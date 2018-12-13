@@ -69,13 +69,15 @@ debug(`#wkers ${NUM_WKERs}, #univ/wker ${WKER_UNIV}`.cyan_lt);
 //sequence/layout info:
 //const seq = tryRequire("./my-seq");
 debug("load seq here".red_lt);
-const seq = {NUMFR: 18, FRTIME: 50}; //seq len (#frames total)
-seq.duration_msec = seq.NUMFR * seq.FRTIME;
-seq.gpufr = divup(seq.duration, gp.FPS);
-debug("seq info", JSON.stringify(seq).json_tidy);
+const seq = {NUMFR: 18, FRTIME: .050, DURATION: 30}; //seq len (#frames total)
+const ONE_SEC = 1000; //msec
+//seq.duration_msec = seq.NUMFR * seq.FRTIME;
+//seq.gpufr = divup(seq.duration, gp.FPS);
+//debug("seq info", JSON.stringify(seq).json_tidy);
 
 
 //debug(hex(nodebufs[0].nodes[0][0]), hex(nodebufs[2].nodes[2][222]), hex(nodebufs[0].nodes[23][1135]));
+/*
 function shm_dump()
 {
     const shmbuf = sharedbuf.createSharedBuffer(gp.manifest.shmkey, gp.manifest.shmlen, false); //gpu wker creates new, all others acquire existing
@@ -84,7 +86,9 @@ function shm_dump()
     for (let ofs = 0; ofs < 256; ofs += 16)
         debug(`'${hex(ofs * Uint32Array.BYTES_PER_ELEMENT)}: ${vals.slice(ofs, ofs + 16).reduce((fmtlist, val) => fmtlist.push_fluent(hex(val)), []).join(", ")}`);
 }
+*/
 
+/*
 function test_pattern()
 {
     var num_bad = 0, num_good = 0, reported = 0;
@@ -93,17 +97,20 @@ function test_pattern()
         for (var x = 0; x < 24; ++x)
             for (var y = 0; y < 1136; ++y)
             {
-                let expected = ((q + 10) *0x11000000) | ((x + 1) << 16) | (y + 1);
+                let expected = (((q + 10) *0x11000000) | ((x + 1) << 16) | (y + 1)) >>> 0;
                 if (nodebufs[q].nodes[x][y] == expected) { ++num_good; continue; }
 //                if (++num_bad > 10) continue;
                 ++num_bad;
                 if (!nodebufs[q].nodes[x][y]) continue;
                 if (++reported > 10) continue;
-                debug(`nbq[${q}][${x}][${y}] bad: got ${hex(nodebufs[q].nodes[x][y])} should be ${hex(expected)}`);
+                debug(`nbq[${q}][${x}][${y}] bad: got ${typeof nodebufs[q].nodes[x][y]}:${hex(nodebufs[q].nodes[x][y])} should be ${typeof expected}:${hex(expected)}`);
             }
             debug("good", commas(num_good), "bad", commas(num_bad));
 //process.exit();
 }
+*/
+
+/*
 function test_bufs()
 {
 //    const shbuf = new SharedArrayBuffer(NUM_UNIV * UNIV_ROWSIZE); //https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
@@ -120,8 +127,9 @@ function test_bufs()
             for (var y = 0; y < 1136; ++y)
                 if (nodebufs[q].nodes[x][y] == shm_nodebufs[q][CTLOFS + x * 1136 + y]) ++num_match;
                 else if (++num_mismatch < 10) debug(`nodebuf[${q}][${x}][${y}] mism: ${hex(shm_nodebufs[q][CTLOFS + x * 1136 + y])} should be ${hex(nodebufs[q].nodes[x][y])}`);
-    debug("match", num_match, "mismatch", num_mismatch);
+    debug("match", commas(num_match), "mismatch", commas(num_mismatch));
 }
+*/
 
 //const x = {};
 //Object.defineProperty(x, "ready",
@@ -184,7 +192,7 @@ function* main()
         vgroup: 20,
         debug: 33,
         init_color: PINK, //= 0;
-        protocol: gp.Protocols.DEV_MODE,
+        protocol: gp.Protocols.NONE, //DEV_MODE,
 //        int frtime_msec; //double fps;
     };
 //    debug("protocols", JSON.stringify(gp.Protocols));
@@ -201,20 +209,23 @@ function* main()
 //    yield wait(10000); //check if wker epoch reset affects main
 //debug("here4");
     gp.open(opts); //{screen, init_color, wh} //numfr: seq.NUMFR});
+    yield* wait4port(() => gp.isopen, ONE_SEC);
+    seq.NUMFR = Math.ceil(seq.DURATION * gp.FPS) || 5; //NOTE: need to wait for GPU port to open befpre calculating this (FPS not known until port opened)
+    debug("numfr", seq.NUMFR);
 //debug("here5");
 //TODO: add cb func or block?
 //    nodebufs[0].nodes.forEach((univ) => univ.forEach((node) => node = PINK)); //BLACK))); //start with all univ dark
 //init shm frbuf que < wkers so they will have already work to do:
 //    frctl.forEach((quent, inx) => { quent.frnum = inx; quent.ready = 0; }); //SOME_READY;
 //    debug(`frbuf quent initialized`.blue_lt);
-    yield* wait4port(true);
-    shm_dump();
-    test_pattern();
-    test_bufs();
-    if (!NUM_WKERs) warn("no workers");
+//PASS    shm_dump();
+//PASS    test_pattern();
+//PASS    test_bufs();
     debug(`launch ${plural(NUM_WKERs)} wker${plural.cached}`.blue_lt);
     for (let w = 0; w < NUM_WKERs; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
+    if (!NUM_WKERs) warn("no workers, run 1 on main thread");
     if (!NUM_WKERs) { cluster.worker = {id: 1}; yield* wker(); } //kludge: run render wker on main thread; CAUTION: only suitable for dev/debug/light-weight processing (can't starve Node event loop)
+    yield* wait4port(() => !gp.isopen || (gp.numfr >= seq.NUMFR)); //wait for GPU to finish rendering before closing port
 //debug("here6");
 //    for (let i = 1; i <= 10; ++i)
 //        setTimeout(() =>
@@ -225,27 +236,36 @@ function* main()
 //    const perf = {wait: 0, render: 0}; //wait time, render time
 //    while (gp.isopen)
 //to open: rtime ${gp.frtime}, open? ${gp.isopen}, buf[${gp.numfr % nodebufs.length}], ready ${hex(nodebufs[gp.numfr % nodebufs.length].ready)}, perf stats:`, JSON.stringify(gp.perf_stats).json_tidy);
-    yield* wait4port(false);
-    debug(`main idle (done after ${gp.numfr} frames): gpu wker ${gp.perf_stats.map((msec) => msec / (gp.numfr || 1)).join(", ")} avg msec`.cyan_lt);
+    gp.close();
+    yield* wait4port(() => !gp.isopen, ONE_SEC);
+    debug(`main idle (done after ${gp.numfr} frames): gpu wker ${gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1))).join(", ")} avg msec`.cyan_lt);
     debug(`wker perf_stats: ${spares.slice(0, 3 * NUM_WKERs).map((msec) => msec / (gp.numfr || 1)).join(", ")} avg msec`);
 }
 
 
-function* wait4port(want_state)
+function* wait4port(pred, delay_time)
 {
 //debug("here1");
-    if (want_state) want_state = "open";
+//    if (want_state) want_state = "open";
     const MAX_RETRY = 10;
-    for (let retry = 0; retry < MAX_RETRY; ++retry)
+    for (var retry = 0; /*retry < MAX_RETRY*/; ++retry)
     {
 //debug("here2", retry);
         let qent = gp.numfr % nodebufs.length; //circular queue
-        debug(`waiting[${retry}] for GPU port ${want_state || "close"}, open? ${gp.isopen}, fps ${prec(gp.FPS, 1e3)}, frtime ${gp.frtime} msec, fr# ${nodebufs[qent].frnum}, ready ${hex(nodebufs[qent].ready)} vs. ${hex(ALL_READY)}`);
-        if (!!gp.isopen == !!want_state) return;
-        yield wait_sec(1);
+//        debug(`wait#[${retry}/${MAX_RETRY}] for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${prec(gp.numfr * gp.frtime, 1e3)} msec`);
+//        if (!!gp.isopen == !!want_state) return;
+//        while (gp.numfr < frnum) //wait for GPU to finish rendering before exit (prevent main from premature exit)
+        if (pred()) { show_state(); return; }
+//        show_state();
+        yield wait_msec(delay_time || gp.frtime); //timing not critical here (render wker is 3 frames ahead of GPU or main thread is waiting for port to open/close)
     }
 //debug("here3");
-    exc(`gpu port ${want_state || "close"} timeout`);
+    exc(`GPU port '${pred}' timeout`);
+
+    function show_state()
+    {
+        debug(`waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
+    }
 }
 
 
@@ -351,21 +371,43 @@ function start_wker() //filename) //, data, opts)
 /// Wker threads:
 //
 
+function dump_nodes(quent, univ, univlen)
+{
+    debug("`dump nodes:"); // ${JSON.stringify(gp.manifest).json_tidy}`);
+    for (let ofs = 0; ofs < Math.min(gp.UNIV_MAXLEN, univlen); ofs += 16)
+        debug(`'${hex(ofs * Uint32Array.BYTES_PER_ELEMENT)}: ${nodebufs[quent].nodes[univ].slice(ofs, ofs + 16).reduce((fmtlist, nodeval) => fmtlist.push_fluent(hex(nodeval)), []).join(", ")}`);
+}
 
 function* wker() //wker_data)
 {
 //    debug("wker env", process.env);
 //    wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
     const /*cluster.worker.inx*/ wkid = cluster.worker.id; //reduce vebosity
-    const [univ_begin, univ_end] = [(wkid - 1) * WKER_UNIV, Math.min(wkid * WKER_UNIV, NUM_UNIV)];
+    const [univ_begin, univ_end] = /*[5, 7]*/ [(wkid - 1) * WKER_UNIV, Math.min(wkid * WKER_UNIV, NUM_UNIV)];
+//dump initial values:
 //univ ready bits:
 //begin  end   my
 // 0     1    0x800000
 // 0     4    0xF00000
 //20     21   0x000008
 //20     24   0x00000F
-    const my_ready = (ALL_READY >> univ_begin) & ~(ALL_READY >> univ_end); //Ready bits for all my univ
+    const my_ready = (NUM_WKERs < 2)? ALL_READY: (ALL_READY >> univ_begin) & ~(ALL_READY >> univ_end); //Ready bits for all my univ
     debug(`wker# ${wkid} started, responsible for rendering univ ${univ_begin}..${univ_end-1}, my ready bits ${hex(my_ready)}`.cyan_lt); //, "cloned data", /*process.env.*/wker_data); //multi.workerData);
+//    const my_univ = nodebufs.map((qent) => qent.nodes = qent.nodes.slice(univ_begin, univ_end)); //exclude other wkers
+    nodebufs.forEach((qent) => { qent.my_nodes = qent.nodes.slice(univ_begin, univ_end); }); //trim off univs/nodes for other wkers
+    let ani_speed = gp.NUM_UNIV * gp.UNIV_MAXLEN / seq.NUMFR; //ani_speed * numfr == #nodes (NUM_UNIV * UNIV_MAXLEN)
+
+//    dump_nodes(0, 0, 32);
+//    for (var i = 0; i < gp.UNIV_MAXLEN; ++i)
+//        nodebufs[0].nodes[i % 24][i] = hsv2rgb(.4, 1, 1);
+//    nodebufs[0].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
+//    dump_nodes(0, 0, 32);
+//    debug(gp.NUM_UNIV, gp.UNIV_MAXLEN);
+//    return;
+    //    nodebufs[2].my_nodes.forEach((univ, inx) =>
+//    {
+//        debug(`my univ[${inx}] initial vals: ${univ.slice(0, 10).reduce((fmtlist, nodeval) => fmtlist.push_fluent(hex(nodeval)), []).join(", ")}`); //kludge: typed array won't hold strings, so rebuild new array using reduce()
+//    });
 //    for (let i = 1; i <= 3; ++i)
 //        setTimeout(() => multi.parentPort.postMessage(`hello-from-wker#${multi.workerData.wker_which = i}`, {other: 123}), 6000 * i);
 //    multi.parentPort.on("message", (data) => debug("msg from main".blue_lt, data, /*arguments,*/ "his data".blue_lt, multi.workerData)); //args: {}, require, module, filename, dirname
@@ -375,17 +417,18 @@ function* wker() //wker_data)
 //    this.wait = this.render = this.unknown = this.numfr = 0;
     my_stats[0] = my_stats[1] = my_stats[2] = 0; //TODO: use DataView?
     let started = elapsed.now(), previous = started;
-    const frtime_delay = false? gp.frtime || (1000 / (gp.FPS || 1)): 500, TIMING_SLOP = 5;
-    for (var frnum = 0; frnum < seq.NUMFR; ++frnum)
+    const frtime_delay = true? gp.frtime || (1000 / (gp.FPS || 1)): 500, TIMING_SLOP = 5;
+    for (var frnum = 0; (frnum < seq.NUMFR) && gp.isopen; ++frnum)
     {
         const qent = frnum % nodebufs.length; //get next framebuf queue entry; simple, circular queue addressing
         const which_buf = `[${qent}/${nodebufs.length}]`;
-        while (nodebufs[qent].frnum != frnum) //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr
-        {
-            if (!gp.isopen) { debug("port closed".red_lt); return; }
-            debug(`wker# ${wkid} waiting for nodebuf${which_buf}: has fr#${nodebufs[qent].frnum}, ready ${hex(nodebufs[qent].ready)}, looking for fr#[${commas(frnum)}], wait ${frtime_delay} msec, GPU doing fr#${gp.numfr} ...`.green_lt);
-            yield wait_msec(frtime_delay); //msec; timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
-        }
+//        while (nodebufs[qent].frnum != frnum) //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr
+//        {
+//            if (!gp.isopen) { debug("port closed".red_lt); return; }
+//            debug(`wker# ${wkid} waiting for nodebuf${which_buf}: has fr#${nodebufs[qent].frnum}, ready ${hex(nodebufs[qent].ready)}, looking for fr#[${commas(frnum)}], wait ${frtime_delay} msec, GPU doing fr#${gp.numfr} ...`.green_lt);
+//            yield wait_msec(frtime_delay); //msec; timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
+//        }
+        yield* wait4port(() => !gp.isopen || (nodebufs[qent].frnum == frnum)); //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr))
 //        let delta = elapsed.now() - previous; perf[wkid].wait += delta; previous += delta;
 //        perf[wkid].update();
         let delta = elapsed.now() - previous;
@@ -399,11 +442,29 @@ function* wker() //wker_data)
 //NOTE: wker must set new values for *all* nodes (prev frame contents are stale from 4 frames ago)
 //to leave nodes unchanged, wker can set A = 0 (dev mode only) or copy values from prev frame
 //        nodes[2][3][4] = PALETTE[fr + 1];
-        for (let u = univ_begin; u < univ_end; ++u)
+/**/
+//        for (let u = univ_begin; u < univ_end; ++u)
+//            nodebufs[qent].nodes[u].forEach((nodeval, inx) => nodebufs[qent].nodes[u][inx] = PALETTE[frnum % PALETTE.length]);
+
+        nodebufs[qent]./*my_*/nodes.forEach((univ, uinx, all) =>
+        {
+            let color = hsv2rgb(uinx / all.length, 1.0, 0.25); //rainbow across all univ
 //CAUTION: need to copy nodes from previous frame if !changing
-            nodebufs[qent].nodes[u].forEach((nodeval, inx) => nodebufs[qent].nodes[u][inx] = PALETTE[frnum % PALETTE.length]);
+            univ.forEach((nodeval, ninx) => univ[ninx] = BLACK); //(ninx & 4)? WHITE: color); //(ninx == (frnum % gp.UNIV_MAXLEN))? WHITE: color); //PALETTE[frnum % PALETTE.length]: 0xFF004040);
+//            univ[frnum] = WHITE;
+//            for (var i = 0; i < 10; ++i) univ[i] = WHITE;
+            univ[frnum % 20] = WHITE; // * ani_speed] = WHITE;
+            debug(`fbquent[${qent}]univ[${uinx}][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[uinx][frnum % 20])}`);
+        });
+//        var y = Math.floor(frnum / gp.NUM_UNIV), x = frnum % gp.NUM_UNIV;
+//        nodebufs[qent].nodes[x][y] = WHITE;
+//        nodebufs[qent].my_nodes[0][frnum] = WHITE; // * ani_speed] = WHITE;
+//        nodebufs[qent].nodes[frnum % gp.NUM_UNIV].forEach((nodeval, ninx, univ) => univ[ninx] = WHITE);
+//    for (var i = 0; i < gp.UNIV_MAXLEN; ++i)
+//        nodebufs[0].nodes[i % 24][i] = hsv2rgb(.4, 1, 1);
+/**/
         nodebufs[qent].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
-        debug(`wker# ${wkid} rendered fr#${which_fr}] into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
+        debug(`wker# ${wkid} rendered fr#${which_fr} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
 //        delta = elapsed.now() - previous; perf[wkid].render += delta; previous += delta;
 //        perf[wkid].numfr = frnum + 1;
 //        perf[wkid].update(true);
@@ -411,11 +472,19 @@ function* wker() //wker_data)
         my_stats[1] += delta;
         previous += delta; //==now(), avoid another system call overhead
         if (previous >= frnum * frtime_delay + TIMING_SLOP) ++my_stats[2]; //overdue
+        yield wait_msec(250);
     }
 //    perf[wkid].unknown = previous - started - perf[wkid].render - perf[wkid].wait; //should be 0 or close to
 //    process.send({data}, (err) => {});
-    debug(`wker# ${wkid} idle (done), #fr ${frnum}, perf stats: ${JSON.stringify(my_stats.map((msec) => msec / (gp.numfr || 1)))} avg msec`);
+    debug(`wker# ${wkid} idle (done), #fr ${frnum}, perf stats: ${my_stats.map((msec) => msec / (gp.numfr || 1))} avg msec, wait for gpu to finish ...`.cyan_lt);
+    yield* wait4port(() => !gp.isopen || (gp.numfr >= frnum)); //wait for GPU to finish rendering before exit (prevent main from premature exit)
 }
+//while (gp.numfr < frnum)
+//{
+//    if (!gp.isopen) { debug("port closed".red_lt); return; }
+//    debug(`wker# ${wkid} waiting for gpu wker to finish fr#${frnum}, currently doing fr#${gp.numfr} ...`.green_lt);
+//    yield wait_msec(frtime_delay); //msec; timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
+//}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -616,6 +685,42 @@ class Enum
 */
 
 
+//convert color space:
+//HSV is convenient for color selection during fx gen
+//display hardware requires RGB
+//h, s, v args are 0..1
+function hsv2rgb(h, s, v)
+//based on sample code from https://stackoverflow.com/questions/3018313/algorithm-to-convert-rgb-to-hsv-and-hsv-to-rgb-in-range-0-255-for-both
+{
+    h *= 6; //[0..6]
+    const segment = h >>> 0; //(long)hh; //convert to int
+    const angle = (segment & 1)? h - segment: 1 - (h - segment); //fractional part
+//NOTE: it's faster to do the *0xff >>> 0 in here than in toargb
+    const p = ((v * (1.0 - s)) * 0xff) >>> 0;
+    const qt = ((v * (1.0 - (s * angle))) * 0xff) >>> 0;
+//redundant    var t = (v * (1.0 - (s * (1.0 - angle))) * 0xff) >>> 0;
+    v = (v * 0xff) >>> 0;
+
+    switch (segment)
+    {
+        default: //h >= 1 comes in here also
+        case 0: return toargb(v, qt, p); //[v, t, p];
+        case 1: return toargb(qt, v, p); //[q, v, p];
+        case 2: return toargb(p, v, qt); //[p, v, t];
+        case 3: return toargb(p, qt, v); //[p, q, v];
+        case 4: return toargb(qt, p, v); //[t, p, v];
+        case 5: return toargb(v, p, qt); //[v, p, q];
+    }
+}
+
+
+//convert (r, g, b) to 32-bit ARGB color:
+function toargb(r, g, b)
+{
+    return (0xff000000 | (r << 16) | (g << 8) | b) >>> 0; //force convert to uint32
+}
+
+
 //unindent a possibly multi-line string:
 function unindent(str)
 {
@@ -753,6 +858,7 @@ function NNNN_hex(val) { return (Math.floor((val / 1000) % 10) * 0x1000) | (Math
 //show info about env:
 function show_env(more_details)
 {
+    if (!cluster.isMaster) return; //don't need info for wjers
 //debug("env", process.env);
     debug(`Module '${module.filename.split(/[\\\/]/g).back}', has parent? ${!!module.parent}`.pink_lt);
     debug(`Node v${process.versions.node}, V8 v${process.versions.v8}, N-API v${process.versions.napi}`.pink_lt);
@@ -763,6 +869,7 @@ function show_env(more_details)
 
 function show_args()
 {
+    if (!cluster.isMaster) return; //don't need info for wjers
     debug(`${plural((process.argv || []).length)} arg${plural.cached}:`.blue_lt);
     (process.argv || []).forEach((arg, inx, all) => debug(`  [${inx}/${all.length}] '${arg}'`.blue_lt));
 }

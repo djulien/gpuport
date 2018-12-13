@@ -2033,6 +2033,17 @@ public: //methods
 //        static int count = 0;
 //        if (++count < 5) { printf("elapsed %d %d %d %d %d\n", now() - m_started, perf[0], perf[1], perf[2], perf[3]); fflush(stdout); }
     }
+//caller doesn't want no update texture, just wait for next frame (vsync):
+//waiting for vsync allows caller to (accurately) stay in sync with frame rate, vs. O/S wait() which is not accurate
+    void idle(elapsed_t* perf = NO_PERF, SrcLine srcline = 0)
+    {
+//just count time as part of caller delay and add it next time:
+//        if (!perf) perf = &perf_stats[0];
+//        perf[0] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
+        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
+        VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
+//        perf[3] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
+    }
 //    std::enable_if<WantPixelShmbuf_copy, void> update(const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0) //SFINAE
 //    {
 //        VOID update(Shmbuf(), rect, pitch, srcline);

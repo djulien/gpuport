@@ -50,6 +50,11 @@
 //or https://medium.com/@atulanand94/beginners-guide-to-writing-nodejs-addons-using-c-and-n-api-node-addon-api-9b3b718a9a7f
 //https://github.com/master-atul/blog-addons-example
 
+//Node.js event loop and other bkg info:
+//https://stackoverflow.com/questions/10680601/nodejs-event-loop
+// * "the Event Loop should orchestrate client requests, not fulfill them itself."
+
+//TODO: JSONStream: https://github.com/dominictarr/JSONStream
 
 //to restart wifi on ununtu:
 //sudo service network-manager restart
@@ -303,16 +308,21 @@ static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count *
 
 //typedef uint32_t elapsed_t; //20 bits is enough for 5-minute timing using msec; 32 bits is plenty
 
-inline size_t my_offsetof(const void* from, const void* to) { return to - from; } //static_cast<intptr_t>(to) - static_cast<intptr_t>(from); }
+//inline size_t my_offsetof(const uint8_t* from, const void* to)
+//{
+////static_cast<intptr_t>(to) - static_cast<intptr_t>(from); }
+//    intptr_t fromm = from, too = to;
+//    return too - fromm;
+//}
 
 
 #define IFDEBUG(yes_stmt, no_stmt)  no_stmt //yes_stmt
+#pragma message(IFDEBUG(YELLOW_MSG "Debug sizing ON" ENDCOLOR_NOLINE, GREEN_MSG "Debug sizing off" ENDCOLOR_NOLINE))
 
 //shm struct shared by bkg gpu wker thread and main/renderer threads:
 //CAUTION: don't store ptrs; they won't be valid in other procs
 //all ipc and sync occurs via this struct to allow procs/threads to run at max speed and avoid costly memory xfrs
 //#define IFDEBUG(yes_stmt, no_stmt)  no_stmt
-#pragma message(IFDEBUG(YELLOW_MSG "Debug sizing ON" ENDCOLOR_NOLINE, GREEN_MSG "Debug sizing off" ENDCOLOR_NOLINE))
 struct ShmData
 {
 //    static const bool CachedWrapper = false; //true; //BROKEN; leave turned OFF
@@ -353,7 +363,7 @@ struct ShmData
 //    using SYNCTYPE = BkgSync<MASK_TYPE, true>;
     static const int QUELEN = IFDEBUG(2, 4); //#render queue entries (circular)
     static const int SPARELEN = IFDEBUG(6, 64);
-    static const int VALIDCHK = 0xf00d1234;
+    static const uint32_t VALIDCHK = 0xf00d1234;
     static const int VERSION = 0x001812; //0.18.12
     static const key_t SHMKEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
 public: //dependent types:
@@ -465,7 +475,7 @@ public: //dependent types:
 //            ostrm << "{" << commas(sizeof(that)) << ":" << &that;
 //        if (!&that) return ostrm << " NO DATA}";
 //        if (!that.isvalid()) return ostrm << " INVALID}";
-            ostrm << "{shm " << commas(that.shmlen) << ":" << commas(that.shmkey);
+            ostrm << "{shm " << commas(that.shmlen) << ":" << std::hex << that.shmkey << std::dec;
             ostrm << ", frctl " << commas(that.frctl_len) << ":+" << commas(that.frctl_ofs);
             ostrm << ", spares " << commas(that.spares_len) << ":+" << commas(that.spares_ofs);
             ostrm << ", nodebufs " << commas(that.nodebufs_len) << ":+" << commas(that.nodebufs_ofs);
@@ -490,6 +500,7 @@ public: //dependent types:
             add_prop_uint32(spares_len)(props.emplace_back());
             add_prop_uint32(nodebufs_ofs)(props.emplace_back());
             add_prop_uint32(nodebufs_len)(props.emplace_back());
+            add_prop_uint32("sizeof_float", sizeof(double))(props.emplace_back()); //for debug frame_time; NOTE: not present in shm, just JS retval
 //            debug(9, "add %d props", props.size());
 //            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export manifest props failed");
 //            napi_thingy more_retval(env, retval);
@@ -549,7 +560,7 @@ public: //dependent types:
         }
     public: //NAPI methods
         static inline FrameControl* my(void* ptr) { return static_cast<FrameControl*>(ptr); }
-        static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Int32{}); }
+        static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Float{}); }
         static /*uint32_t*/ napi_value fps_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time? 1000.0 / my(ptr)->frame_time: 0, napi_thingy::Float{}); }
 //        static /*uint32_t*/ auto protocol_getter(void* ptr) /*const*/ { return static_cast<int32_t>(me(ptr)->protocol.value); }
 //        static void protocol_setter(FrameControl* fcptr, napi_thingy& newval) { fcptr->protocol = static_cast<Protocol>(newval.as_int32(true)); }
@@ -629,6 +640,8 @@ public: //dependent types:
             debug(12, "ready 0x%x |= 0x%x => 0x%x", sv_ready, newbits, my(ptr)->ready.load());
         }
 //??        static STATIC_WRAP(napi_ref, m_nodes_ref, = nullptr);
+        static intptr_t addrof(void* member) { return (intptr_t)member; } //kludge: bypass compiler's refusal to give address of data members
+//        size_t my_offset_of(void* member) { intptr_t ptr = member; return ptr; }
         /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx) { return my_exports(env, arybuf, inx, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV)); }
         /*static*/ napi_value my_exports(napi_env env, napi_value arybuf, size_t inx, const napi_value& retval)
         {
@@ -648,11 +661,14 @@ public: //dependent types:
 //    NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
 //            napi_thingy univ_ary(env);
 //                !NAPI_OK(napi_create_array_with_length(env, NUM_UNIV, &univ_ary.value), "Cre univ ary failed");
+//            FramebufQuent* ofs_ptr = 0;
+//            intptr_t ofs_of_nodes = &ofs_ptr->nodes[0][0];
             napi_thingy univ_ary(env, napi_thingy::Array{}, NUM_UNIV);
             for (int x = 0; x < /*wh.w*/ NUM_UNIV; ++x)
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0] + my_offsetof(this, &FramebufQuent::nodes[0][0]))); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+//                debug(33, "cre typed ary, ofs %d x %s + %d x %s + %u = %s", inx, commas(sizeof(*this)), x, commas(sizeof(nodes[0])), addrof(&nodes[0][0]) - addrof(this), commas(inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this))); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this)); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
             add_prop("nodes", univ_ary)(props.emplace_back());
@@ -675,17 +691,17 @@ public: //data members (visible to bkg wkers via shm)
 //bkg gpu wker stores private data on stack or heap
 //RPi memory is slow, so cache perf is important; use alignment to avoid spanning memory cache rows:
 //NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
-    const int32_t m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
+    const uint32_t m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
     const int32_t m_ver = VERSION; //bytes[4..7]; 1 x int32
     ManifestType m_manifest; //bytes[8..55]; 6 x uint32
     FrameControl m_frctl; //bytes[56..]; 8 x int32 + 1 x float + 5 x uint stats + 80 char (168 bytes total)
-    const int32_t m_flag1 = VALIDCHK; //bytes[]; 1 x int32
+    const uint32_t m_flag1 = VALIDCHK; //bytes[]; 1 x int32
     alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg; bytes[284..]; 64 x uint32
-    const int32_t m_flag2 = VALIDCHK; //1 x int32
+    const uint32_t m_flag2 = VALIDCHK; //1 x int32
 //    alignas(CACHELEN) struct FramebufQuent
     PreallocVector<alignas(CACHELEN) FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
 //    napi_reference m_ref = nullptr;
-    const int32_t m_tlr = VALIDCHK;
+    const uint32_t m_tlr = VALIDCHK;
 //    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
 //    InOutDebug inout2;
 public: //ctors/dtors
@@ -694,7 +710,10 @@ public: //ctors/dtors
     ~ShmData() { INSPECT(RED_MSG "dtor " << *this); }
 public: //operators
     bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
-    bool isvalid(napi_env env, SrcLine srcline = 0) const { return isvalid() || NAPI_exc("ShmData invalid" << ATLINE(srcline)); }
+    bool isvalid(napi_env env, SrcLine srcline = 0) const
+    {
+        return isvalid() || NAPI_exc("ShmData " << this << " invalid: " << !!this << std::hex << ((m_hdr < 10)? ",": ",0x") << m_hdr << ((m_flag1 < 10)? ",": ",0x") << m_flag1 << ((m_flag2 < 10)? ",0x": ",") << m_flag2 << ((m_tlr < 10)? ",0x": ",") << m_tlr << std::dec << ATLINE(srcline));
+    }
 //alloc/dealloc in shared memory:
 //this allows caller to use new + delete without special code for shm
 #if 0 //NO; need to decide earlier whether to call ctor or not
@@ -755,6 +774,12 @@ public: //operators
     }
 public: //methods:
     bool isopen() const { return (isvalid() && m_frctl.isrunning); } //(m_frctl.protocol != Protocol::CANCEL)); }
+    bool isopen(bool yesno)
+    {
+        if (!isvalid()) return false;
+//        return (isvalid() && m_frctl.isrunning); //(m_frctl.protocol != Protocol::CANCEL)); }
+        return m_frctl.isrunning = yesno;
+    }
     void init_fbque(NODEVAL color = BLACK)
     {
 //set up first round of framebufs to be processed by wker threads:
@@ -763,11 +788,11 @@ public: //methods:
         {
             it->ready.store(0);
             it->frnum = it - m_fbque.begin(); //initially set to 0, 1, 2, ...
-            it->frtime = 0; //TODO
-            it->prevfr = it->prevtime = -1; //no previous frame
+            it->frtime = it->frnum * m_frctl.frame_time; //deadline for this frame based on known frame_time; float -> int
+            it->prevtime = it->prevfr = -1; //no previous frame
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
             for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = color; //BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
-#if 1 //test pattern for js client test
+#if 1 //test pattern for js client shm test
  #pragma message("test pattern")
             for (int x = 0; x < SIZEOF(it->nodes); ++x)
                 for (int y = 0; y < SIZEOF(it->nodes[0]); ++y)
@@ -807,8 +832,8 @@ public: //methods:
             if (!cfg) exc_hard("can't get screen %d config");
             m_frctl.screen = cfg->screen;
 //        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ m_frctl.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-            debug(33, "set fr time: from cfg %f, from templ %f", cfg->frame_time() * 1e3, 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
         /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ (m_frctl.frame_time = cfg->frame_time() * 1e3) || (m_frctl.frame_time = 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
+            debug(33, "set fr time: from cfg %f, from templ %f, chose %f", cfg->frame_time() * 1e3, 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))), m_frctl.frame_time); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
             debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ", fr time %f" << ATLINE(srcline), screen, m_frctl.frame_time);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
@@ -825,8 +850,8 @@ public: //methods:
             txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
             debug(19, "txtr after reset " << txtr);
-            init_fbque(init_color); //do this *before* set running state
-            m_frctl.isrunning = true;
+            init_fbque(init_color); //do this *before* set running state, but after determining frame_time
+            isopen(true); //m_frctl.isrunning = true;
 //debug("here52" ENDCOLOR);
 //        m_txtr = txtr.release(); //kludge: xfr ownership from temp to member
 //done by main:        dirty.store(0); //first sync with client thread(s)
@@ -849,18 +874,22 @@ public: //methods:
 //        aoptr->start(); //env);
 //        try{
 //        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
-            const int delay_msec = 1000; //2 msec;
+//            const int delay_msec = 1000; //2 msec;
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
 //        let qent = frnum % frctl.length; //simple, circular queue
                 FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
                 if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
+                int wait_frames = 0;
                 while ((it->ready & ALL_UNIV) != ALL_UNIV) //wait for all wkers to render nodes (ignore unused bits); wait means wkers are running too slow
                 {
-                    debug(15, YELLOW_MSG "fr[%d/%d] buf[%d/%d] not ready: 0x%x, gpu wker wait %d msec for wkers to render ...", frnum, NUMFR, it - &m_fbque[0], SIZEOF(m_fbque), it->ready.load(), delay_msec);
-                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
+                    VOID txtr.idle(NO_PERF, SRCLINE);
+//                    debug(15, YELLOW_MSG "fr[%d/%d] buf[%d/%d] not ready: 0x%x, gpu wker wait %d msec for wkers to render ...", frnum, NUMFR, it - &m_fbque[0], SIZEOF(m_fbque), it->ready.load(), delay_msec);
+//                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
+                    ++wait_frames;
                 }
+                if (wait_frames) debug(15, YELLOW_MSG "fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -878,6 +907,7 @@ public: //methods:
 //CAUTION: potential race condition, but render wkers should be far enough ahead that it doesn't matter:
                 it->ready.store(0);
                 it->prevfr.store(it->frnum.load());
+                it->prevtime.store(it->frtime.load()); //save previous so caller can decide how to apply updates
                 it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
 //        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
 //        perf[0].numfr = frnum + 1;
@@ -908,7 +938,7 @@ public: //methods:
         else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
         m_frctl.protocol = Protocol::CANCEL;
-        m_frctl.isrunning = false;
+        isopen(false); //m_frctl.isrunning = false;
 //            aoptr->islistening(false); //listener.busy = true; //(void*)1;
 //        aoptr->stop(); //env);
 //        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
@@ -917,14 +947,27 @@ public: //methods:
 //    bkg.detach();
     }
 public: //NAPI methods:
+//    napi_ref ref = nullptr; //keep my data valid between open() and close()
     static inline ShmData* my(void* ptr) { return static_cast<ShmData*>(ptr); }
-    static napi_value isopen_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->isopen(), napi_thingy::Uint32{}); } //NOTE: no napi_create_boolean(), use uint32 instead
-//    static napi_value isopen_getter(napi_env env, void* data)
-//    {
+//expose a few little helper/debug methods also:
+    static napi_value isopen_getter(napi_env env, void* ptr) /*const*/
+    {
 //        napi_thingy retval(env);
 //        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
 //        return retval;
-//    }
+        return napi_thingy(env, my(ptr)->isopen(), napi_thingy::Boolean{});
+    }
+    static napi_value isvalid_getter(napi_env env, void* ptr) /*const*/
+    {
+        return napi_thingy(env, my(ptr)->isvalid(), napi_thingy::Boolean{});
+    }
+    static napi_value nattch_getter(napi_env env, void* ptr) /*const*/
+    {
+//        napi_thingy retval(env);
+//        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
+//        return retval;
+        return napi_thingy(env, shmnattch(ptr, SRCLINE), napi_thingy::Int32{});
+    }
 //export control data and methods for JS clients to use:
 //        static napi_value my_exports(napi_env env, napi_value exports)
 //    static napi_value my_exports(napi_env env)
@@ -951,6 +994,8 @@ public: //NAPI methods:
         add_prop("manifest", /*ManifestType::*/m_manifest.my_exports(env))(props.emplace_back()); //(*pptr++);
 //state getters/setters:
         add_getter("isopen", ShmData::isopen_getter, this)(props.emplace_back()); //(*pptr++);
+        add_getter("isvalid", ShmData::isvalid_getter, this)(props.emplace_back()); //(*pptr++);
+        add_getter("nattch", ShmData::nattch_getter, this)(props.emplace_back()); //(*pptr++);
         debug(9, "export %d more methods/props", props.size());
 //export data members in order by address (helpful when debugging against shm seg)
         my_exports += props; props.clear();
@@ -998,7 +1043,7 @@ public: //NAPI methods:
         napi_value argv[1+1], This; //allow 1 extra arg to check for extras
         size_t argc = SIZEOF(argv);
 //    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
-       !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+        !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
         if (argc > 1) NAPI_exc("expected 0-1 opts arg, got " << argc << " args");
         shmptr->isvalid(env, SRCLINE);
         if (shmptr->isopen()) NAPI_exc("GPU port is already open");
@@ -1088,6 +1133,8 @@ public: //NAPI methods:
 //??        init_fbque(); //do this before returning to caller
         shmptr->m_frctl.protocol = protocol; //this one is under caller control and passed via shm
 //        void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
+//        uint32_t ref_count;
+//        !NAPI_OK(napi_reference_ref(env, shmptr->ref, &ref_count), "Inc ref count failed");
         std::thread bkg(gpu_wker_static, shmptr, INT_MAX, screen, NO_SIZE, vgroup, init_color, &SRCLINE[0]);
 //      try {} catch {}
         bkg.detach();
@@ -1123,6 +1170,8 @@ public: //NAPI methods:
         if (argc) NAPI_exc("expected 0 args, got " << argc << " arg" << plural(argc));
         shmptr->isvalid(env, SRCLINE);
         if (!shmptr->isopen()) NAPI_exc("GPU port is not already open");
+//        uint32_t ref_count;
+//        !NAPI_OK(napi_reference_unref(env, shmptr->ref, &ref_count), "Dec ref count failed");
 //    if (argc < 1) 
 //    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
 //    char str[1024];
@@ -1187,7 +1236,7 @@ private: //helpers
         static const bool rbswap = false; //isRPi(); //R <-> G swap only matters for as-is display; for pivoted data, user can just swap I/O pins
         /*auto*/ MASK_TYPE dirty = fbquent.ready.load() | (255 * Ashift); //use dirty/ready bits as start bits
         if (shdata.m_frctl.protocol != shdata.m_frctl.prev_protocol) dirty = ALL_UNIV; //protocol/fmt changed; force all nodes to be updated (for dev/debug); wouldn't happen in prod
-        debug(19, "xfr " << xfrlen << " *3, protocol " << shdata.m_frctl.protocol); //static_cast<int>(nodebuf.protocol) << ENDCOLOR);
+        debug(19, "xfr " << commas(xfrlen) << " *3, protocol " << shdata.m_frctl.protocol); //static_cast<int>(nodebuf.protocol) << ENDCOLOR);
         switch (shdata.m_frctl.protocol.value)
         {
             default: //NONE (raw)
@@ -2957,12 +3006,14 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //    ShmData* shmptr = shmalloc_typesafe<ShmData>(ShmData::SHMKEY, 1, SRCLINE);
 //    ShmDeleter dtor = std::bind(shmfree_typesafe<ShmData>, std::placeholders::_1, SRCLINE);
 //    std::unique_ptr<ShmData, ShmDeleter> shmdata(shmptr, dtor); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
-    std::unique_ptr<ShmData> shmdata(static_cast<ShmData*>(shmalloc_debug(sizeof(ShmData), ShmData::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
+    std::unique_ptr<ShmData> shmdata(ShmData::my(shmalloc_debug(sizeof(ShmData), ShmData::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     ShmData* shmptr = shmdata.get();
     bool isnew = (shmnattch(shmptr) == 1);
-    if (isnew) new (shmptr) ShmData; //placement "new" to call ctor; NOTE: must be first time only
+    debug(5, "ModuleInit: shmptr %p, #attach %d, valid? %d, isnew? %d", shmptr, shmnattch(shmptr), shmptr->isvalid(), isnew);
+    if (isnew) new (shmptr) ShmData; //placement "new" to call ctor; CAUTION: first time only
     if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc((isnew? "alloc": "reattch") << " shmdata " << shmptr << " failed");
     napi_thingy my_exports(env, shmptr->my_exports(env, exports));
+    if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc((isnew? "alloc": "reattch") << " shmdata " << shmptr << " failed"); //paranoid/debug; check again
 //    debug(11, BLUE_MSG "aodata %p, &node[0][0[0] %p" ENDCOLOR, aoptr, &aoptr->m_nodebq[0].nodes[0][0]);
 //    inout.checkpt("cre data");
 //    aoptr->isvalid(env);
@@ -3071,31 +3122,34 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //wrap internal data with module exports object:
   // Associate the addon data with the exports object, to make sure that when the addon gets unloaded our data gets freed.
 //    void* NO_HINT = NULL; //optional finalize_hint
-    napi_ref* NO_REF = NULL; //optional ref to wrapped object
 // Free the per-addon-instance data.
 //TODO: find out why this is not being called
     napi_finalize /*std::function<void(napi_env, void*, void*)>*/ addon_final = [](napi_env env, void* shmdata, void* hint)
     {
         UNUSED(hint);
 //        GpuPortData* aoptr = static_cast<GpuPortData*>(aodata); //(GpuPortData*)data;
-        ShmData* shmptr = static_cast<ShmData*>(shmdata); //(GpuPortData*)data;
+        ShmData* shmptr = ShmData::my(shmdata); //(GpuPortData*)data;
 //    if (!env) return; //Node cleanup mode
         debug(9, RED_MSG "addon finalize: aodata %p, valid? %d, open? %d, hint %p, #nattch %d", shmptr, shmptr->isvalid(), shmptr->isopen(), hint, shmnattch(shmptr));
 //        aoptr->isvalid(env);
 //        if (aoptr->isopen()) NAPI_exc("GpuPort still open");
 //        aoptr->reset(env);
+//        !NAPI_OK(napi_delete_reference(env, shmptr->ref), "Del ref failed");
+//        shmptr->ref = nullptr;
         if (shmnattch(shmptr) == 1) shmptr->~ShmData(); //call dtor before dealloc/dettach
 //        delete shmptr; //free(addon_data);
         shmfree_debug(shmptr, SRCLINE); //dealloc/dettach
     };
 //debug(9, BLUE_MSG "here15" ENDCOLOR);
-    !NAPI_OK(napi_wrap(env, my_exports, shmptr, addon_final, /*aoptr.get()*/NO_HINT, /*&aodata->aoref*/ NO_REF), "Wrap aodata failed");
+    napi_ref* NO_REF = NULL; //optional ref to wrapped object
+    !NAPI_OK(napi_wrap(env, my_exports, shmptr, addon_final, /*aoptr.get()*/NO_HINT, /*&shmptr->ref*/ NO_REF), "Wrap shmdata failed");
   // Return the decorated exports object.
 //    napi_status status;
 //    INSPECT(CYAN_MSG "napi init: " << *aoptr, SRCLINE);
 //debug(9, BLUE_MSG "here16" ENDCOLOR);
 //    aoptr->isvalid(env);
 //debug(9, BLUE_MSG "here17" ENDCOLOR);
+    if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc((isnew? "alloc": "reattch") << " shmdata " << shmptr << " failed"); //paranoid/debug; check again
     shmdata.release(); //NAPI owns it now; finalize will clean it up
 //debug(9, BLUE_MSG "here18" ENDCOLOR);
     return my_exports;
