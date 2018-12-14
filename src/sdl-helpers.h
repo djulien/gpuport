@@ -21,7 +21,7 @@
 #include "srcline.h" //SrcLine, SRCLINE, TEMPL_ARGS
 #include "debugexc.h" //debug(), exc()
 #include "str-helpers.h" //commas()
-#include "rpi-helpers.h" //isrpi()
+#include "rpi-helpers.h" //isrpi(), vSyncer
 #include "ostrfmt.h" //FMT()
 #include "elapsed.h" //elapsed_msec(), timestamp()
 #include "shmalloc.h" //AutoShmary<>, STATIC_WRAP()
@@ -1071,7 +1071,7 @@ const inline mySDL_DisplayMode* ScreenInfo(SrcLine srcline = 0) { return ScreenI
 //        debug(RED_MSG "TODO: add streaming texture" ENDCOLOR_ATLINE(srcline));
 //        debug(RED_MSG "TODO: add shm pixels" ENDCOLOR_ATLINE(srcline));
 //using mySDL_AutoWindow_super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>; //DRY kludge
-template <bool WantRenderer = true, typename super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //2nd arg to help stay DRY; //, Uint32 INIT_COLOR = BLUE> //BLACK> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
+template <bool WantRenderer = true, bool WANT_VSYNC = true, typename super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //2nd arg to help stay DRY; //, Uint32 INIT_COLOR = BLUE> //BLACK> //, super = std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>> //super DRY kludge //, WantTexture = true, WantPixels = true> //, bool DebugInfo = true>
 class mySDL_AutoWindow: public super //mySDL_AutoWindow_super //std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
 {
     static const int LEVEL = 46;
@@ -1157,7 +1157,7 @@ public: //factory methods:
         wnd = SDL_CreateWindow(NVL(title, "GpuPort"), rect->x /*? x: SDL_WINDOWPOS_UNDEFINED*/, rect->y /*? y: SDL_WINDOWPOS_UNDEFINED*/, rect->w /*? w: DONT_CARE*/, rect->h /*? h: DONT_CARE*/, flags | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
         if (SDL_OK(wnd) && WantRenderer)
         {
-            rndr = SDL_CreateRenderer(wnd, FIRST_RENDERER_MATCH, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+            rndr = SDL_CreateRenderer(wnd, FIRST_RENDERER_MATCH, SDL_RENDERER_ACCELERATED | (WANT_VSYNC? SDL_RENDERER_PRESENTVSYNC: 0)); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
             if (!SDL_OK(rndr)) SDL_exc("cre rndr", srcline);
 //no worky:
 //to avoid letter boxing during scaling: 
@@ -1418,6 +1418,7 @@ public: //static utility methods
 //printf("hello3 %p\n", rndr); fflush(stdout);
 //no worky        VOID SDL_RaiseWindow(wnd); //kludge: compensate for multiple windows (avoids ipc for multiple threads or processes)
     }
+#if 0 //moved to txtr for more precise contol
 //    static void render(SDL_Renderer* rndr, CONST SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0)
     static void render(CONST SDL_Window* wnd, CONST SDL_Texture* txtr, const SDL_Rect* src = NO_RECT, const SDL_Rect* dest = NO_RECT, /*bool clearfb = true,*/ SrcLine srcline = 0) //{ VOID render(renderer(wnd, srcline), txtr, src, dest, /*clearfb,*/ srcline); }
     {
@@ -1434,12 +1435,14 @@ public: //static utility methods
 #endif
 //        debug(BLUE_MSG "copy %s pixels from texture %p to %s pixels in window %p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, src, dest))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
+        if (FORCE_VSYNC) m_vsync.wait();
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
 //no worky        VOID SDL_RaiseWindow(wnd); //kludge: compensate for multiple windows (avoids ipc for multiple threads or processes)
 #if 0 //api docs recommend this even if caller will update all pixels
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
 #endif        
     }
+#endif
 //    static void check(SDL_Window* wnd, SrcLine srcline = 0) { check(wnd, 0, 0, 0, NVL(srcline, SRCLINE)); }
     static void check(CONST SDL_Window* wnd, /*int want_w = 0, int want_h = 0,*/ const SDL_Point* want_xy = NO_POINT, const SDL_Size* want_wh = NO_SIZE, /*Uint32*/ SDL_Format want_fmt = NO_FORMAT, SrcLine srcline = 0)
     {
@@ -1793,7 +1796,7 @@ protected:
 //includes a few factory helper methods
 //template <bool WantPixelShmbuf = true> //, bool DebugInfo = true>
 //using mySDL_AutoTexture_super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>; //DRY kludge
-template <typename PXTYPE = Uint32, typename super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //2nd arg to help stay DRY; //, super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //super DRY kludge
+template <typename PXTYPE = Uint32, int EXTRA_STATS = 0, bool FORCE_VSYNC = true, typename super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //2nd arg to help stay DRY; //, super = std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>> //super DRY kludge
 class mySDL_AutoTexture: public super //mySDL_AutoTexture_super //std::unique_ptr<SDL_Texture, std::function<void(SDL_Texture*)>>
 {
     static const int LEVEL = 44;
@@ -1866,7 +1869,7 @@ public: //factory methods:
             SDL_Rect rect = ScreenInfo(screen, NVL(srcline, SRCLINE))->bounds; //NOTE: need to set (x, y) for multiple monitors
             SDL_Rect* want_rect = NO_RECT;
             if (want_wh) { rect.w = want_wh->w; rect.h = want_wh->h; want_rect = &rect; }
-            SDL_AutoWindow<true>/*&*/ new_wnd = SDL_AutoWindow<true>::create(NAMED{ _.screen = screen; _.rect = want_rect; if (A(init_color)) _.init_color = init_color; SRCLINE; });
+            SDL_AutoWindow<true, !FORCE_VSYNC>/*&*/ new_wnd = SDL_AutoWindow<true, !FORCE_VSYNC>::create(NAMED{ _.screen = screen; _.rect = want_rect; if (A(init_color)) _.init_color = init_color; SRCLINE; });
             wnd = new_wnd.release(); //take ownership of new window before end of scope destroys it
 //            wnd_owner = true;
         }
@@ -1965,6 +1968,11 @@ public: //methods
 //??        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
 //??        VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
     }
+    inline void clear_stats()
+    {
+        perftime(); //flush/reset perf timer
+        memset(&perf_stats, 0, sizeof(perf_stats));
+    }
     inline void fill(PXTYPE color = BLACK, SrcLine srcline = 0)
     {
         int pitch;
@@ -1978,11 +1986,14 @@ public: //methods
 //    void update(const Uint32* pixels, SrcLine srcline = 0) { update(pixels, NO_RECT, NVL(srcline, SRCLINE)); }
 //    void update(const Uint32* pixels, const SDL_Rect* rect = NO_RECT, SrcLine srcline = 0) { update(pixels, rect, 0, NVL(srcline, SRCLINE)); }
 //    static const int NUM_STATS = 4;
-    elapsed_t m_latest;
-    /*double*/ elapsed_t perf_stats[4]; //in case caller doesn't provide a place
-    static const int NUM_STATS = SIZEOF(perf_stats);
+//TODO: use external now(), elapsed()
+    elapsed_t m_latest; //time of last update (RenderPresent unless caller used this also)
+    enum {CALLER = 0, CPU_TXTR, REND_COPY, REND_PRESENT, NUM_PRESENT, NUM_STATS}; //perf_stats offsets
+    /*double*/ elapsed_t perf_stats[NUM_STATS + EXTRA_STATS]; //allow caller to store additional stats here, or to add custom stats
+//    static const int NUM_STATS = SIZEOF(perf_stats);
 //    inline double perftime(int scaled = 1) { return elapsed(m_started, scaled); }
-    inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; }
+    inline elapsed_t perftime() { elapsed_t delta = now() - m_latest; m_latest += delta; return delta; } //latest == now() after this
+    inline elapsed_t perftime_msec() { return (uint64_t)1000 * perftime() / SDL_TickFreq(); } //latest == now() after this
 //    template <typename XFR> //allow lamba function as param; see https://stackoverflow.com/questions/16111285/how-to-pass-and-execute-anonymous-function-as-parameter-in-c11
 //        VOID memcpy(pxbuf, pixels, xfrlen);
 //    using XFR = std::function<void(void* dest, const void* src, size_t len)>; //memcpy sig; //decltype(memcpy);
@@ -1996,7 +2007,7 @@ public: //methods
 //this is *the* main function; performance is important so measure it:
         if (!perf) perf = &perf_stats[0];
 //printf("here11\n"); fflush(stdout);
-        perf[0] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
+        perf[CALLER] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
 //        if (!pixels) pixels = m_shmbuf;
 //        if (!pitch) pitch = cached.bounds.w * sizeof(pixels[0]); //Uint32);
 //        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
@@ -2028,7 +2039,7 @@ public: //methods
             if (refill) refill(this); //tell caller buf is available to refill with next frame
         }
 //        if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
-        perf[1] += perftime(); //1000); //CPU-side data xfr time (msec)
+        perf[CPU_TXTR] += perftime(); //1000); //CPU-side data xfr time (msec)
 #if 0 //DRY
         VOID SDL_AutoWindow<>::render(m_wnd, txtr, NO_RECT, NO_RECT, /*false,*/ NVL(srcline, SRCLINE)); //put new texture on screen
 #else //WET to allow more detailed perf tracking
@@ -2039,10 +2050,12 @@ public: //methods
  #endif
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
 //printf("here16\n"); fflush(stdout);
-        perf[2] += perftime(); //1000); //CPU to GPU data xfr time (msec)
+        perf[REND_COPY] += perftime(); //1000); //CPU to GPU data xfr time (msec)
+        if (FORCE_VSYNC) m_vsync.wait();
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
+        ++perf[NUM_PRESENT]; //#render presents
 #endif
-        perf[3] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
+        perf[REND_PRESENT] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
 //printf("here17\n"); fflush(stdout);
 //        debug(BLUE_MSG "update times: caller %f s, txtr lock/fill/unlock %f ms, rendr copy %f ms, rendr present+sync %f ms" ENDCOLOR_ATLINE(srcline), perf[0] / 1e6, perf[1] / 1e3, perf[2] / 1e3, perf[3] / 1e3);
 //        static int count = 0;
@@ -2053,10 +2066,12 @@ public: //methods
     void idle(elapsed_t* perf = NO_PERF, SrcLine srcline = 0)
     {
 //just count time as part of caller delay and add it next time:
-//        if (!perf) perf = &perf_stats[0];
+        if (!perf) perf = &perf_stats[0];
 //        perf[0] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
+        if (FORCE_VSYNC) m_vsync.wait();
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
+        ++perf[NUM_PRESENT]; //count #render presents; gives max theoretical frame rate (vsynced)
 //        perf[3] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
     }
 //    std::enable_if<WantPixelShmbuf_copy, void> update(const SDL_Rect* rect = NO_RECT, int pitch = 0, SrcLine srcline = 0) //SFINAE
@@ -2205,6 +2220,7 @@ private: //member vars
     /*SDL_Surface*/ SDL_TextureInfo<PXTYPE> m_cached; //cached texture info to avoid lock() just to get descr; format, w, h, pitch, pixels
 //    typedef struct { SDL_Surface surf; uint32_t fmt; int acc; } SDL_CachedTextureInfo;
 //    SDL_Window* m_wnd;
+    vSyncer m_vsync;
     SDL_AutoWindow<true> m_wnd;
     const elapsed_t m_started; //measure performance
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
@@ -2402,6 +2418,7 @@ int main(int argc, char* argv[])
 #endif
 
 
+//raw SDL API test:
 //based on example code at https://wiki.libsdl.org/MigrationGuide
 //using "fully rendered frames" style
 void sdl_api_test()
@@ -2489,12 +2506,26 @@ void fullscreen_test(ARGS& args)
 
     for (auto arg : args) //int i = 0; i < args.size(); ++i)
         if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
-    debug(0, PINK_MSG << timestamp() << "fullscreen[" << screen << "] " << wh << " test start");
+    debug(0, PINK_MSG << /*timestamp() <<*/ "fullscreen[" << screen << "] " << wh << " test start");
 //    SDL_Delay(2 sec);
     /*SDL_AutoTexture<>*/ auto other_txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
     txtr = other_txtr;
     VOID txtr.clear(mixARGB(0.75, BLACK, WHITE), SRCLINE); //gray; bypass txtr and go direct to window
+#if 0
     VOID SDL_Delay((4-1) sec);
+#else
+    {
+        DebugInOut("timing test");
+        txtr.clear_stats(); //txtr.perftime(); //flush perf timer
+        for (int i = 0; i < 300; ++i) //5 sec @60 fps, 10 sec @30 fps
+            VOID txtr.idle(NO_PERF, SRCLINE);
+    }
+//    elapsed_t duration_usec = txtr.perftime(); //_msec();
+//    elapsed_t duration_msec = 1000 * duration_usec / SDL_TickFreq(); //txtr.perftime_msec();
+//    debug(0, CYAN_MSG "max frame rate (synced): %d / %f (= %f) => %4.3f fps", txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT], (double)duration_msec / 1000, (double)duration_usec / SDL_TickFreq(), (double)1000 * txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT] / duration_msec); //txtr.perftime_msec());
+    elapsed_t duration_msec = txtr.perftime_msec();
+    debug(0, CYAN_MSG "max frame rate (synced): %d / %4.3f => %4.3f fps", txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT], (double)duration_msec / 1000, (double)1000 * txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT] / duration_msec); //txtr.perftime_msec());
+#endif
 //    VOID txtr.fill(mixARGB(0.25, BLACK, WHITE), SRCLINE);
 //    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
 
@@ -2502,62 +2533,66 @@ void fullscreen_test(ARGS& args)
 //    myPixels[0][W] = RED;
 //    myPixels[0][2 * W] = GREEN;
 //    myPixels[0][3 * W] = BLUE;
-//    debug(BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
+//    debug(0, BLUE_MSG "px[1,0] = 0x%x %s, [2,0] = 0x%x %s, [3,0] = 0x%x %s" ENDCOLOR, myPixels[1][0], NVL(unmap(ColorNames, myPixels[1][0])), myPixels[2][0], NVL(unmap(ColorNames, myPixels[2][0])), myPixels[3][0], NVL(unmap(ColorNames, myPixels[3][0])));
     std::ostringstream buf;
     for (int i = 0; i < wh.w * wh.h; ++i) buf << ", [" << i << FMT("] %p") << &myPixels[0][i];
-    debug(BLUE_MSG << buf.str().substr(2) << ENDCOLOR);
+    debug(0, buf.str().substr(2));
     buf.str("");
     for (int y = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
         for (int x = 0; x < wh.w; ++x)
             buf << ", " << SDL_Point(y, x) << FMT(" %p") << &myPixels[y][x];
-    debug(BLUE_MSG << buf.str().substr(2) << ENDCOLOR);
+    debug(0, buf.str().substr(2));
     return;
 #endif
 
 //primary color test:
-    int numfr = 0;
-    elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1]; //, total_stats[SIZEOF(perf_stats)] = {0};
-    debug(0, CYAN_MSG "perf: # init/sleep (sec), # my render (msec), # upd txtr (msec), # xfr txtr (msec), # present/sync (msec)");
-    auto show_stats = [&perf_stats, &numfr](const char* msg_color = BLUE_MSG, SrcLine srcline = 0) { debug(0, msg_color << "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" << ATLINE(srcline), numfr? perf_stats[0] / numfr / 1e6: 0, numfr? perf_stats[1] / numfr / 1e3: 0, numfr? perf_stats[2] / numfr / 1e3: 0, numfr? perf_stats[3] / numfr / 1e3: 0, numfr? perf_stats[4] / numfr / 1e3: 0); };
+//    int numfr = 0;
+//    elapsed_t perf_stats[SIZEOF(txtr.perf_stats) + 1]; //, total_stats[SIZEOF(perf_stats)] = {0};
+    debug(0, CYAN_MSG "perf: [render/prep, cpu txtr bb, txtr xfr, display/vsync]");
+    auto show_stats = [/*&perf_stats, &numfr*/&txtr](const char* msg_color = BLUE_MSG, SrcLine srcline = 0)
+    {
+        const int numfr = txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT];
+        debug(0, msg_color << "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" << ATLINE(srcline), numfr? txtr.perf_stats[SDL_AutoTexture<>::CALLER] / numfr / 1e6: 0, numfr? txtr.perf_stats[SDL_AutoTexture<>::CPU_TXTR] / numfr / 1e3: 0, numfr? txtr.perf_stats[SDL_AutoTexture<>::REND_COPY] / numfr / 1e3: 0, numfr? txtr.perf_stats[SDL_AutoTexture<>::REND_PRESENT] / numfr / 1e3: 0); //, numfr? perf_stats[4] / numfr / 1e3: 0);
+    };
 
     Uint32 myPixels[H][W]; //NOTE: pixels are adjacent on inner dimension since texture is sent to GPU row by row
     const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
-    txtr.perftime(); //kludge: flush perf timer
-    VOID SDL_Delay(1 sec); //kludge: even out timer with loop
+    txtr.clear_stats(); //txtr.perftime(); //flush perf timer
+//    VOID SDL_Delay(1 sec); //kludge: even out timer with loop
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
-        perf_stats[0] += txtr.perftime();
+//        perf_stats[0] += txtr.perftime();
         SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
-        debug(0, timestamp() << "all " << wh << " pixels => 0x%x", myPixels[0][0]);
-        VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
+        debug(0, /*timestamp() <<*/ "all " << wh << " pixels => 0x%x", myPixels[0][0]);
+        VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; /*_.perf = &perf_stats[1];*/ SRCLINE; }); //, true, SRCLINE); //, sizeof(myPixels[0]); //W * sizeof (Uint32)); //no rect, pitch = row length
 //        debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
         show_stats(BLUE_MSG, SRCLINE);
     //    for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
-        ++numfr;
+//        ++numfr;
         VOID SDL_Delay(1 sec);
         if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
-//    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
+//    debug(0, CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
     show_stats(CYAN_MSG, SRCLINE);
 
 //pixel test:
-    numfr = 0;
-    for (int i = 0; i < SIZEOF(perf_stats); ++i) perf_stats[i] = 0;
+//    numfr = 0;
+//    for (int i = 0; i < SIZEOF(perf_stats); ++i) perf_stats[i] = 0;
     SDL_AutoTexture<>::fill(&myPixels[0][0], BLACK, wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = BLACK; //bypass compiler index limits
 //    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
-    txtr.perftime(); //kludge: flush perf timer
+    txtr.clear_stats(); //txtr.perftime(); //flush perf timer
     VOID SDL_Delay(0.25 sec); //kludge: even out timer with loop
     for (int y = 0 + std::max(wh.h-5, 0), c = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
         for (int x = 0 + std::max(wh.w-5, 0); x < wh.w; ++x, ++c)
         {
-            perf_stats[0] += txtr.perftime();
+//            perf_stats[0] += txtr.perftime();
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
-            debug(0, timestamp() << "0x%x => [r %d, c %d]", myPixels[y][x], y, x);
-            VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; _.perf = &perf_stats[1]; SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
+            debug(0, /*timestamp() <<*/ "0x%x => [r %d, c %d]", myPixels[y][x], y, x);
+            VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; /*_.perf = &perf_stats[1];*/ SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
 //            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
             show_stats(BLUE_MSG, SRCLINE);
 //            for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
-            ++numfr;
+//            ++numfr;
             VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }

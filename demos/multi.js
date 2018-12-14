@@ -222,8 +222,8 @@ function* main()
     debug(`main thread start`.cyan_lt);
 
     const files = glob.sync(`${folder}/*.mp3`.grab("mp3_pattern"));
-    debug(`${files.length} mp3 files found matching '${relpath(grab.mp3_pattern)}'`);
-    if (files.length != 1) return;
+    debug(0, `${files.length} mp3 files found matching '${relpath(grab.mp3_pattern)}'`.yellow_lt);
+    if (files.length)
     mp3player(files[0], function(evt, eof, data) //=> //NOTE: => functions don't have "this"
     {
 //            cb.call(123, null, 456, "abc");

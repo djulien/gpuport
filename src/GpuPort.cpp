@@ -41,6 +41,12 @@
 // rm -f  ~/.core-files/*; apport-unpack /var/crash/* ~/.core-files   #makes them readable by gdb
 // load into gdb:  gdb ./unittest ~/.core-files/CoreDump
 
+//vsync:
+// ls -l /dev/fb0
+//list groups: more /etc/group
+//which groups am i a member of:  groups
+//NO WORKY: add user to group: usermod -a -G examplegroup exampleusername
+
 //example/setup info:
 //** https://github.com/nodejs/node-addon-examples
 //https://github.com/1995parham/Napi101
@@ -526,7 +532,8 @@ public: //dependent types:
         int32_t numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         const elapsed_t started = now(); //elapsed();
-        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats;
+        elapsed_t latest = 0; //timestamp of latest loop iteration
+        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats; //NO: 1 extra slot for loop count
         char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
@@ -547,6 +554,7 @@ public: //dependent types:
             ostrm << ", previous " << that.prev_protocol; //NVL(unmap(names, that.prev_protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
             ostrm << ", debug level " << /*that.*/debug_level;
             ostrm << ", #fr " << commas(that.numfr);
+            ostrm << ", latest " << that.latest << " msec";
             ostrm << ", perf [";
 //            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
 //broken            for (const auto it: that.perf_stats)
@@ -578,6 +586,7 @@ public: //dependent types:
             if (new_level < old_level) debug_level = new_level; //dec detail afte showing debug msg (more likely to show msg that way)
         }
         static /*uint32_t*/ napi_value numfr_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->numfr, napi_thingy::Uint32{}); }
+        static /*uint32_t*/ napi_value latest_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->latest, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value exc_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->exc_reason); }
 //        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
         /*static*/ napi_value my_exports(napi_env env, const napi_value& retval)
@@ -601,6 +610,7 @@ public: //dependent types:
             add_getter("protocol", Protocol::getter, Protocol::setter, &protocol)(props.emplace_back());
             add_getter("debug_level", FrameControl::deblevel_getter, FrameControl::deblevel_setter, this)(props.emplace_back()); //(*pptr++);
             add_getter("numfr", FrameControl::numfr_getter, this)(props.emplace_back()); //(*pptr++);
+            add_getter("latest", FrameControl::latest_getter, this)(props.emplace_back()); //(*pptr++);
             napi_thingy arybuf(env, &perf_stats[0], sizeof(perf_stats));
             napi_thingy perf_typary(env, GPU_NODE_type, SIZEOF(perf_stats), arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
             add_prop("perf_stats", perf_typary)(props.emplace_back()); //(*pptr++);
@@ -926,8 +936,10 @@ public: //methods:
 //                if (!(frnum % 50)) debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
                 if (m_frctl.protocol == Protocol::CANCEL) break;
                 VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1-1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
+                m_frctl.latest = now() - started;
+//                ++m_frctl.perf_stats[0]; //moved to txtr
 //            m_frctl.numfr = frnum + 1;
-//TODO: pivot/update txtr, update screen (NON-BLOCKING)
+//TODO: pivot/update txtr, update screen (NON-BLOCKING)?
 //make frbuf available for next round of frames:
 //CAUTION: potential race condition, but render wkers should be far enough ahead that it doesn't matter:
                 it->ready.store(0);

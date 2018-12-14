@@ -579,12 +579,62 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfi
 #endif
 
 
-//from https://forums.libsdl.org/viewtopic.php?p=33010
+//based on sample code from https://forums.libsdl.org/viewtopic.php?p=33010
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
+#include <fcntl.h> //open(), close()
+#include <sys/ioctl.h> //ioctl()
 #include <linux/fb.h>
+#include <cstdlib> //atexit()
+#include <stdexcept> //std::runtime_error
 
+#include "shmalloc.h" //STATIC_WRAP
+
+
+#ifndef FBIO_WAITFORVSYNC
+ #define FBIO_WAITFORVSYNC  _IOW('F', 0x20, __u32)
+#endif
+
+
+#if 1
+//explicit call to wait for vsync:
+//various posts suggest that RPi video driver doesn't support vsync, so use this to force it
+class vSyncer
+{
+//    int fb = -1;
+//broken    static STATIC_WRAP(int, fb, = -1); //needs to be static for static close()
+    static int& fb()
+    {
+        static int m_fb = -1;
+        return m_fb;
+    }
+//    static int& fb = fb_wrapper();
+public: //ctor/dtor
+    explicit vSyncer()
+    {
+        if (fb() >= 0) return;
+        fb() = open("/dev/fb0", O_RDONLY /* O_RDWR */ );
+        if (fb() < 0) exc_hard("Couldn't open framebuffer /dev/fb0 for vsync");
+//        atexit(my_close); //make sure it gets closed; redundant? (O/S closes files at process exit anyway)
+    }
+    ~vSyncer() { my_close(); } //not needed if using atexit
+public: //methods
+    static bool wait(bool want_exc = false)
+    {
+        int arg = 0;
+        if (fb() < 0) return false;
+        if (ioctl(fb(), FBIO_WAITFORVSYNC, &arg) < 0)
+            if (want_exc) throw std::runtime_error(strerror(errno)); //let caller deal with it
+            else return false; //allow caller to ignore errors
+        return true;
+    }
+private: //helpers
+    static void my_close() //needs to be static for atexit()
+    {
+        if (fb() >= 0) close(fb());
+        fb() = -1;
+    }
+};
+#else //sample code
 int fbdev = -1;
 
 void fbopen()
@@ -611,6 +661,7 @@ void fbclose()
     close(fbdev);
     fbdev = -1; 
 }
+#endif
 
 #endif //ndef _RPI_HELPERS_H
 

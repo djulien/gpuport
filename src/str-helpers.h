@@ -185,7 +185,7 @@ int numlines(const char* str)
 const char* commas(int64_t val)
 {
     const int LIMIT = 4; //max #commas to insert
-    thread_local static std::atomic<int> ff;
+    thread_local static int ff; //std::atomic<int> ff; //use TLS to avoid the need for mutex (don't need atomic either)
     thread_local static char buf[12][16 + LIMIT]; //allow 12 simultaneous calls (across all threads)
 //    static auto_ptr<SDL_sem> acquire(SDL_CreateSemaphore(SIZE(buf)));
 //    auto_ptr<SDL_LockedSemaphore> lock_HERE(acquire.cast); //SDL_LOCK(acquire));
@@ -198,6 +198,13 @@ const char* commas(int64_t val)
     }
     return bufp;
 }
+#if 0 //TODO
+const char* commas(double val)
+{
+//TODO
+    return commas((int64_t)val);
+}
+#endif
 
 
 //#include <regex>
