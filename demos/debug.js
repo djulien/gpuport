@@ -56,9 +56,9 @@ function debug(args)
     try
     {
 //console.error("debug:" + JSON.stringify(arguments));
-        var detail = 0;
+        var msg_detail = 1; //make non-0 so msg will be hidden by default
         args = Array.from(arguments); //turn into real array
-        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") /*&& (args[1].toString().indexOf("%") != -1)*/) detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
+        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") /*&& (args[1].toString().indexOf("%") != -1)*/) msg_detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
         const parent = caller(++debug.nested || 1);
@@ -67,7 +67,8 @@ function debug(args)
         var want_detail = debug.wanted(parent.replace(/^@|:.*$/g, "")); //] || debug.wanted['*'] || -1;
 //console.log("enabled: %j, parent %s", Object.keys(want_debug), my_parent.replace(/^@|:.*$/g, ""));
 //console.log("DEBUG '%s': want %d vs current %d, discard? %d, options %j", my_parent, want_detail, detail, detail >= want_detail, want_debug);
-        if (detail >= want_detail) return; //too much detail; caller doesn't want it
+//console.log(`DEBUG: msg_det ${msg_detail} vs. ${want_detail}, keep? ${msg_detail <= want_detail}, msg '${args[0]}'`)
+        if (msg_detail > want_detail) return; //too much detail; caller doesn't want it
 
 //    if (typeof args[0] == "string")
 //    if (args[0].toString().indexOf("%") == -1)
@@ -116,7 +117,7 @@ debug.nested = 0;
 debug.wanted = function(name, level)
 {
     if (arguments.length > 1) deb_wanted[name] = level;
-    return deb_wanted[name] || deb_wanted['*'] || -1;
+    return deb_wanted[name] || deb_wanted['*'] || 0;
 }
 
 
@@ -130,12 +131,14 @@ var deb_wanted = {};
     var [, remove, name,, level] = parsed;
 //    console.log("part: \"%s\", +/- '%s', name '%s', level '%s'", part, remove, name, level);
     if (name == "*") //all on/off; clear previous options
-        deb_wanted = (remove == "-")? {}: {'*': level || Number.MAX_SAFE_INTEGER}; //remove/enable all, set default level if missing
+        deb_wanted = (remove == "-")? {}: {'*': (level || 1000)}; //Number.MAX_SAFE_INTEGER)}; //remove/enable all, set default level if missing
     else //named module
-        deb_wanted[name] = (remove == "-")? -1: level || Number.MAX_SAFE_INTEGER;
+        deb_wanted[name] = (remove == "-")? -1: (level || 1000); //Number.MAX_SAFE_INTEGER);
 });
 //tell user how to get debug msgs:
-if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*" for debug msgs.`.yellow_lt);
+if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*" to see debug msgs.`.yellow_lt);
+//console.error(`want_debug: ${JSON.stringify(deb_wanted)}`);
+//process.exit();
 
 
 /////////////////////////////////////////////////////////////////////////////////

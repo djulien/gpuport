@@ -245,8 +245,10 @@ function* main()
 //to open: rtime ${gp.frtime}, open? ${gp.isopen}, buf[${gp.numfr % nodebufs.length}], ready ${hex(nodebufs[gp.numfr % nodebufs.length].ready)}, perf stats:`, JSON.stringify(gp.perf_stats).json_tidy);
     gp.close();
     yield* wait4port(() => !gp.isopen, ONE_SEC);
-    debug(`main idle (done after ${gp.numfr} frames): gpu wker ${gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1))).join(", ")} avg msec`.cyan_lt);
-    debug(`wker perf_stats: ${spares.slice(0, 3 * NUM_WKERs).map((msec) => msec / (gp.numfr || 1)).join(", ")} avg msec`);
+//    debug(`main idle (done after ${gp.numfr} frames), gpu wker stats: ${gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1))).join(", ")} (avg msec)`.cyan_lt);
+    const stats_avg = gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1)));
+    debug(0, `main done (${commas(gp.numfr)} frames), gpu wker stats (avg msec): caller time ${stats_avg[0]}, txtr_bb+refill ${stats_avg[1]}, rndr copy ${stats_avg[2]}, rndr pres ${stats_avg[3]}`.cyan_lt);
+//    debug(`wker perf_stats: ${spares.slice(0, 3 * NUM_WKERs).map((msec) => msec / (gp.numfr || 1)).join(", ")} avg msec`);
 }
 
 
@@ -415,12 +417,15 @@ function* wker() //wker_data)
 //    setTimeout(() => { debug("wker bye".red_lt); process.exit(123); }, 15000);
 //    perf[wkid].init(); //wait = perf[wkid].render = perf[wkid].unknown = perf[wkid].numfr = 0;
     const my_stats = spares.slice((wkid - 1) * 3, wkid * 3); //post my perf stats in unused portion of shm seg for all to see
-//    this.wait = this.render = this.unknown = this.numfr = 0;
     my_stats[0] = my_stats[1] = my_stats[2] = 0; //TODO: use DataView?
-    let started = elapsed.now(), previous = started;
+//    this.wait = this.render = this.unknown = this.numfr = 0;
     const frtime_delay = true? gp.frtime || (1000 / (gp.FPS || 1)): 500, TIMING_SLOP = 5;
+    let started = elapsed.now(), previous = started;
+//debug("frtime_delay", frtime_delay);
+//if (false)
     for (var frnum = 0; (frnum < seq.NUMFR) && gp.isopen; ++frnum)
     {
+        if (previous - started >= frnum * frtime_delay + TIMING_SLOP) debug(0, `overdue[${++my_stats[2]}]: fr#${frnum}, overdue by ${commas(previous - started - frnum * frtime_delay)} msec`.red_lt); //overdue
         const qent = frnum % nodebufs.length; //get next framebuf queue entry; simple, circular queue addressing
         const which_buf = `[${qent}/${nodebufs.length}]`;
 //        while (nodebufs[qent].frnum != frnum) //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr
@@ -478,12 +483,14 @@ function* wker() //wker_data)
         delta = elapsed.now() - previous;
         my_stats[1] += delta;
         previous += delta; //==now(), avoid another system call overhead
-        if (previous >= frnum * frtime_delay + TIMING_SLOP) ++my_stats[2]; //overdue
+//        if (previous >= started + (frnum + 1) * frtime_delay + TIMING_SLOP) debug(0, `overdue[${++my_stats[2]}]: fr#${frnum}, overdue by ${commas(previous - (frnum + 1) * frtime_delay)} msec`.red_lt); //overdue
 //        yield wait_sec(0.5); //wait_msec(250);
     }
 //    perf[wkid].unknown = previous - started - perf[wkid].render - perf[wkid].wait; //should be 0 or close to
 //    process.send({data}, (err) => {});
-    debug(`wker# ${wkid} idle (done), #fr ${frnum}, perf stats: ${my_stats.map((msec) => msec / (gp.numfr || 1))} avg msec, wait for gpu to finish ...`.cyan_lt);
+//    debug(`wker# ${wkid} idle (done), #fr ${frnum}, perf stats: ${my_stats.map((msec) => msec / (gp.numfr || 1))} avg msec, wait for gpu to finish ...`.cyan_lt);
+    const stats_avg = my_stats.map((msec) => commas(msec / (gp.numfr || 1)));
+    debug(0, `wker# ${wkid} idle (done), #fr ${frnum}, perf stats (avg msec): wait for buf ${stats_avg[0]}, render ${stats_avg[1]}, #overdue ${my_stats[2]}, now waiting for gpu to finish ...`.cyan_lt);
     yield* wait4port(() => !gp.isopen || (gp.numfr >= frnum)); //wait for GPU to finish rendering before exit (prevent main from premature exit)
 }
 //while (gp.numfr < frnum)

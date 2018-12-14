@@ -74,6 +74,7 @@
 //#include "elapsed.h" //elapsed_msec(), timestamp(), now()
 #include "msgcolors.h"
 #include "debugexc.h" //debug(), exc(), INSPECT()
+#include "ostrfmt.h" //FMT()
 
 //which Node API to use?
 //V8 is older, requires more familiarity with V8
@@ -525,7 +526,7 @@ public: //dependent types:
         int32_t numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         const elapsed_t started = now(); //elapsed();
-        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) + 1> perf_stats;
+        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats;
         char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
@@ -833,6 +834,8 @@ public: //methods:
     void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
     {
         std::string exc_msg;
+        elapsed_t started = now();
+//debug(0, "elapsed " << elapsed(started));
 //        strcpy(m_frctl.exc_reason, "");
         try //TODO: let it die (for dev/debug)?
         {
@@ -890,6 +893,8 @@ public: //methods:
 //        try{
 //        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
 //            const int delay_msec = 1000; //2 msec;
+            started = now(); //reset timebase so timing stats are just for render loop
+//debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
@@ -912,10 +917,11 @@ public: //methods:
 //        const char* severity = /*((overdue < -10) || (overdue > 10))? RED_MSG:*/ PINK_MSG;
 //        debug(15, severity << "update playback: fr# %s due at %s msec, overdue %s msec, delay? %s" ENDCOLOR, commas(numfr.load()), commas(numfr.load() * m_opts.frtime_msec), commas(overdue), commas(delay));
 //        if (delay) SDL_Delay(delay); //delay if early
-                m_frctl.perf_stats[0] += txtr.perftime(); //measure caller's time (presumably for rendering); //1000); //ipc wait time (msec)
+//useless:                m_frctl.perf_stats[0] += txtr.perftime(); //measure caller's time (presumably for rendering); //1000); //ipc wait time (msec)
                 debug(15, "xfr fr[%d/%d] to gpu, protocol " << m_frctl.protocol << " ... ", frnum, NUMFR);
+//                if (!(frnum % 50)) debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
                 if (m_frctl.protocol == Protocol::CANCEL) break;
-                VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
+                VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1-1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
 //            m_frctl.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)
 //make frbuf available for next round of frames:
@@ -949,8 +955,19 @@ public: //methods:
         catch (...) { exc_msg = "??EXC??"; }
 //            std::exception_ptr excptr; //= nullptr; //init redundant (default init)
 //            excptr = std::current_exception(); //allow main thread to rethrow
-        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
-        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
+//        uint32_t usec_per_fr = m_frctl.numfr? rdiv(1000 * elapsed(started), m_frctl.numfr): 0;
+        double elapsed_sec = (double)elapsed(started) / SDL_TickFreq();
+        int elapsed_usec = elapsed_sec * 1e6;
+        int usec_per_fr = m_frctl.numfr? elapsed_usec / m_frctl.numfr: 0; //use "int" here to reduce #dec places after convert to msec
+//        debug(0, "elapsed " << elapsed_sec << " sec, " << elapsed_usec << " usec, " << msec_per_fr << " msec/fr");
+        std::ostringstream ss;
+        ss << " after " << commas(m_frctl.numfr) << FMT(" frames (%4.3f") << ((double)usec_per_fr / 1000) << " msec avg), valid? " << isvalid();
+//        ss << ", usec/fr " << usec_per_fr;
+//        ss << ", elaps " << (now() - started) << ", usec/fr " << usec_per_fr << "," << usec_per_fr64 << "," << usec_per_fr64i << "," << usec_per_fr32i;
+//        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
+//        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
+        if (exc_msg.size()) debug(0, RED_MSG "gpu wker exc: %s" << ss.str(), exc_msg.c_str());
+        else debug(0, YELLOW_MSG "gpu wker exit" << ss.str());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
         m_frctl.protocol = Protocol::CANCEL;
         isopen(false); //m_frctl.isrunning = false;
