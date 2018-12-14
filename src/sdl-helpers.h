@@ -1412,7 +1412,7 @@ public: //static utility methods
         debug(LEVEL, BLUE_MSG "set " << rect/*.size()*/ << " pixels in window to color 0x%x" << ATLINE(srcline), color);
 //printf("hello2 %p\n", rndr); fflush(stdout);
         VOID SDL_RenderPresent(rndr); //flips texture to screen
-#if 1 //api docs recommend this even if caller will update all pixels
+#if 0 //api docs recommend this even if caller will update all pixels
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
 #endif        
 //printf("hello3 %p\n", rndr); fflush(stdout);
@@ -1428,15 +1428,15 @@ public: //static utility methods
         delta = now() - times.previous; times.previous += delta; times.encode += delta;
 #endif
         SDL_Renderer* rndr = renderer(wnd, NVL(srcline, SRCLINE));
-#if 0 //not needed if entire screen is copied
-        bool clearfb = false;
+#if 1 //not needed if entire screen is copied?
+        bool clearfb = true; //false; //api docs recommend this even if caller will update all pixels
         if (clearfb && !SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render fbclear", srcline); //clear previous framebuffer
 #endif
 //        debug(BLUE_MSG "copy %s pixels from texture %p to %s pixels in window %p" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(src).c_str()), txtr, NVL(rect_desc(dest).c_str()), get());
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, src, dest))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
 //no worky        VOID SDL_RaiseWindow(wnd); //kludge: compensate for multiple windows (avoids ipc for multiple threads or processes)
-#if 1 //api docs recommend this even if caller will update all pixels
+#if 0 //api docs recommend this even if caller will update all pixels
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
 #endif        
     }
@@ -2034,6 +2034,9 @@ public: //methods
 #else //WET to allow more detailed perf tracking
 //printf("here15\n"); fflush(stdout);
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
+ #if 1 //is this needed?
+        if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
+ #endif
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
 //printf("here16\n"); fflush(stdout);
         perf[2] += perftime(); //1000); //CPU to GPU data xfr time (msec)

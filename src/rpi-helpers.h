@@ -578,6 +578,40 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
 const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfig(0, srcline); }
 #endif
 
+
+//from https://forums.libsdl.org/viewtopic.php?p=33010
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/fb.h>
+
+int fbdev = -1;
+
+void fbopen()
+{
+    if (fbdev >= 0) return;
+    fbdev = open ("/dev/fb0", O_RDONLY /* O_RDWR */ );
+    if ( fbdev < 0 ) printf( "Couldn't open /dev/fb0 for vsync\n" );
+}
+
+//call before SDL update/flip:
+#ifndef FBIO_WAITFORVSYNC
+ #define FBIO_WAITFORVSYNC  _IOW('F', 0x20, __u32)
+#endif
+void pre_update()
+{
+    if ( fbdev < 0 ) return;
+    int arg = 0;
+    ioctl( fbdev, FBIO_WAITFORVSYNC, &arg );
+}
+
+void fbclose()
+{
+    if ( fbdev < 0 ) return;
+    close(fbdev);
+    fbdev = -1; 
+}
+
 #endif //ndef _RPI_HELPERS_H
 
 
