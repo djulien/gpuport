@@ -852,7 +852,11 @@ public: //methods:
 //        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ m_frctl.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
         /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ (m_frctl.frame_time = cfg->frame_time() * 1e3) || (m_frctl.frame_time = 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
             debug(33, "set fr time: from cfg %f, from templ %f, chose %f", cfg->frame_time() * 1e3, 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))), m_frctl.frame_time); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
-            debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << *want_wh << ", fr time %f" << ATLINE(srcline), screen, m_frctl.frame_time);
+            SDL_Size zero(0, 0);
+//debug(0, "want_wh " << want_wh);
+//debug(0, "*want_wh " << (want_wh? *want_wh: zero));
+//CAUTION: null deref broken on RPi; need to check for null here
+            debug(33, CYAN_MSG "start bkg gpu wker: screen %d " << *cfg << ", want wh " << (want_wh? *want_wh: zero) << ", fr time %f" << ATLINE(srcline), screen, m_frctl.frame_time);
 //        wh.h = new_wh.h; //cache_pad32(new_wh.h); //pad univ to memory cache size for better memory perf (multi-proc only)
 //        m_debug3(m_view.h),
 //TODO: don't recreate if already exists with correct size

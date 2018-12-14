@@ -430,6 +430,7 @@ inline int mySDL_SetHint(const char* name, const char* value)
     explicit inline mySDL_Size(int neww = 0, int newh = 0): w(neww), h(newh) {} //default ctor
     explicit inline mySDL_Size(const mySDL_Size& that): w(that.w), h(that.h) {} //copy ctor
 //operators:
+//    inline bool isnull() const { return !this; } //kludge: try to fix null ptr check for gcc on RPi
 //operator overload syntax/semantics: https://en.cppreference.com/w/cpp/language/operators
 //    inline bool operator==(CONST mySDL_Size that) { return operator==(that); }
     inline bool operator==(const mySDL_Size& that) const //lhs, const mySDL_Size& rhs)
@@ -442,7 +443,18 @@ inline int mySDL_SetHint(const char* name, const char* value)
     inline bool operator!=(const mySDL_Size& that) const { return !(*this == that); } //lhs, const mySDL_Size& rhs) { return !(lhs == rhs); }
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const mySDL_Size& that) CONST
     {
-        if (!&that) return ostrm << "NO_SIZE";
+#if 0
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%p", &that);
+        uintptr_t that_addr = (uintptr_t)&that;
+printf("&data %p, %lx, %lx, ", &that, &that, that_addr);
+printf("null? %d, %d, %d, %d, %d, %d, %d\n", !strcmp(buf, "(nil)"), that.isnull(), !&that, &that == 0, &that == nullptr, &that == NULL, &that == (mySDL_Size*)NULL);
+fflush(stdout);
+//CAUTION: something is really messed on in gcc on RPi! *none* of the above checks for null work except the strcmp()
+//BROKEN on RPi        if (!&that) return ostrm << "NO_SIZE";
+//        if (that.isnull()) return ostrm << "NO_SIZE";
+#endif
+        if (!&that) return ostrm << "NO_SIZE"; //CAUTION: BROKEN on RPi
         ostrm << that.w << " x " << that.h;
         if (that.w && that.h) ostrm << " = " << commas(that.w * that.h);
         return ostrm;

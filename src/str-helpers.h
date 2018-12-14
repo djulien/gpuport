@@ -21,7 +21,7 @@
 
 
 #ifndef SIZEOF
- #define SIZEOF(thing)  int(sizeof(thing) / sizeof((thing)[0]))
+ #define SIZEOF(thing)  /*int*/(sizeof(thing) / sizeof((thing)[0])) //should be unsigned (size_t)
 #endif
 
 

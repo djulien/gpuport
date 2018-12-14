@@ -25,6 +25,7 @@
 #use "npm install --verbose" to verify these options are being passed correctly to compiler:
             "cflags":
             [
+#                "-S", #generate assembler output and stop
                 "-g", #include debug symbols
                 "-O3", #optimization
 #                "-O0", #no optimization

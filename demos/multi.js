@@ -32,8 +32,14 @@ extensions(); //hoist for use by in-line code below
 
 //console.log("here1", process.pid, "env", process.env);
 const fs = require("fs");
+const os = require('os');
 const util = require("util");
 //const buffer = require("buffer"); //needed for consts; only classes/methods are pre-included in global Node scope
+const glob = require('glob');
+const pathlib = require('path');
+const lame = require('lame'); //NOT node-lame
+const spkr = require("speaker"); //DEV? "../": "speaker"); //('yalp/my-speaker');
+const mp3len = require('./mp3len');
 const {elapsed} = require("./elapsed");
 const {debug, caller} = require("./debug");
 //const tryRequire = require("try-require"); //https://github.com/rragan/try-require
@@ -50,14 +56,15 @@ const {/*limit, listen, nodebufq, frctl, perf, nodes,*/ NUM_UNIV, UNIV_MAXLEN, s
 //debug("gp", JSON.stringify(gp).json_tidy.trunc(2000));
 debug("nodebufs", `${nodebufs.length} x ${nodebufs[0].nodes.length} x ${nodebufs[0].nodes[0].length}`, "spares", spares.length);
 gp.debug_level = debug.wanted("gpuport");
+gp.isplaying = spares.slice(-1); //keep my state in unused portion of shm seg for all to see
 
 //render control info:
 const ALL_READY = (1 << NUM_UNIV) - 1, SOME_READY = (1 << (NUM_UNIV / 2)) - 1, FIRST_READY = 1 << (NUM_UNIV - 1); //set half-ready to force sync first time
 debug(`all ready ${hex(ALL_READY)}, some ready ${hex(SOME_READY)}, first ready ${hex(FIRST_READY)}`);
 //console.log("here4");
 //const /*GpuPort*/ {limit, listen, nodebufq} = GpuPort; //require('./build/Release/gpuport'); //.node');
-const NUM_CPUs = require('os').cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
-const NUM_WKERs = 0; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
+const NUM_CPUs = os.cpus().length; //- 1; //+ 3; //leave 1 core for render and/or audio; //0; //1; //1; //2; //3; //bkg render wkers: 43 fps 1 wker, 50 fps 2 wkers on RPi
+const NUM_WKERs = 1; //Math.max(NUM_CPUs - 1, 1); //leave 1 core available for bkg gpu xfr, node event loop, etc
 debug("change this".red_lt, "change this".red);
 //    NUM_WKERs: 0, //whole-house fg render
 //  NUM_WKERs: 1, //whole-house bg render
@@ -67,10 +74,12 @@ const WKER_UNIV = NUM_WKERs? Math.ceil(NUM_UNIV / NUM_WKERs): NUM_UNIV; //#univ 
 debug(`#wkers ${NUM_WKERs}, #univ/wker ${WKER_UNIV}`.cyan_lt);
 //const QUELEN = 4;
 
+const folder = true? process.cwd(): __dirname; //if (basedir)
 //sequence/layout info:
 //const seq = tryRequire("./my-seq");
 debug("load seq here".red_lt);
-const seq = {NUMFR: 18, FRTIME: .050, DURATION: 30}; //seq len (#frames total)
+const seq = {xNUMFR: 18, xFRTIME: .050, DURATION: 30}; //30*30}; //seq len (#frames total)
+//24*1126/30 ~= 15 minutes
 const ONE_SEC = 1000; //msec
 //seq.duration_msec = seq.NUMFR * seq.FRTIME;
 //seq.gpufr = divup(seq.duration, gp.FPS);
@@ -194,7 +203,7 @@ function* main()
 //        screen: 1,
 //        screen: 0, //FIRST_SCREEN,
     //    key_t PREALLOC_shmkey = 0;
-        vgroup: 20,
+//        vgroup: 20,
 //        debug: 33,
         init_color: CYAN_DARK, //CYAN, //PINK, //= 0;
         protocol: gp.Protocols.NONE, //DEV_MODE,
@@ -211,14 +220,31 @@ function* main()
 //        hello: 1,
 //    };
     debug(`main thread start`.cyan_lt);
+
+    const files = glob.sync(`${folder}/*.mp3`.grab("mp3_pattern"));
+    debug(`${files.length} mp3 files found matching '${relpath(grab.mp3_pattern)}'`);
+    if (files.length != 1) return;
+    mp3player(files[0], function(evt, eof, data) //=> //NOTE: => functions don't have "this"
+    {
+//            cb.call(123, null, 456, "abc");
+//            debug("this", typeof this, this);
+//            debug(arguments.length, evt, eof, data);
+        ++this.count || (this.count = 1);
+        if (!(this.count % 50) && data) debug(`#wr ${commas(data.numwr)}, count ${commas(this.count)}, wrtotal ${commas(data.wrtotal)}, time ${data.wrtotal / 4 / 44100}`);
+        if (!data) debug(evt, this, `time ${this.wrtotal / 4 / 44100}`);
+        if (eof) { ++gp.isplaying[0]; debug("mp3 done".cyan_lt); } //playback(inx + 1);
+    });
+
 //    yield wait(10000); //check if wker epoch reset affects main
 //debug("here4");
     gp.open(opts); //{screen, init_color, wh} //numfr: seq.NUMFR});
     yield* wait4port(() => gp.isopen, ONE_SEC);
-    seq.NUMFR = Math.ceil(seq.DURATION * gp.FPS) || 5; //NOTE: need to wait for GPU port to open befpre calculating this (FPS not known until port opened)
-    seq.NUMFR = Math.min(seq.NUMFR, gp.NUM_UNIV * gp.UNIV_LEN);
-    debug("numfr", seq.NUMFR);
+//    seq.NUMFR = Math.ceil(seq.DURATION * gp.FPS) || 5; //NOTE: need to wait for GPU port to open befpre calculating this (FPS not known until port opened)
+//no, let mp3 determine seq play time
+//    seq.NUMFR = Math.min(seq.NUMFR, gp.NUM_UNIV * gp.UNIV_LEN);
+//    debug("numfr", seq.NUMFR);
     debug("gp", JSON.stringify(gp).json_tidy.trunc(600));
+
 //debug("here5");
 //TODO: add cb func or block?
 //    nodebufs[0].nodes.forEach((univ) => univ.forEach((node) => node = PINK)); //BLACK))); //start with all univ dark
@@ -232,7 +258,7 @@ function* main()
     for (let w = 0; w < NUM_WKERs; ++w) /*const wker =*/ start_wker(); //leave one core feel for sound + misc
     if (!NUM_WKERs) warn("no workers, run 1 on main thread");
     if (!NUM_WKERs) { cluster.worker = {id: 1}; yield* wker(); } //kludge: run render wker on main thread; CAUTION: only suitable for dev/debug/light-weight processing (can't starve Node event loop)
-    yield* wait4port(() => !gp.isopen || (gp.numfr >= seq.NUMFR)); //wait for GPU to finish rendering before closing port
+    yield* wait4port(() => !gp.isopen || (gp.isplaying[0] >= 2)); //(gp.numfr >= seq.NUMFR)); //wait for GPU to finish rendering before closing port
 //debug("here6");
 //    for (let i = 1; i <= 10; ++i)
 //        setTimeout(() =>
@@ -273,8 +299,34 @@ function* wait4port(pred, delay_time)
 
     function show_state()
     {
-        if (retry) debug(`waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
+        if (retry) debug(11, `waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
     }
+}
+
+
+function mp3player(filename, cb)
+{
+    const want_play = true;
+//    files.push.apply(files, glob.sync(pattern)); //pattern, {}); //, function (err, files)
+    const state = {};
+    cb = cb? cb.bind(state): debug;
+    fs.createReadStream(filename) //process.argv[2]) //specify mp3 file on command line
+        .pipe(grab(new lame.Decoder(), "lame"))
+        .on('format', (fmt) =>
+        {
+            debug(`mp3 '${relpath(filename)}', format ${JSON.stringify(fmt).json_tidy}`.blue_lt); //.sampleRate, format.bitDepth);
+            if (want_play) /*this*/ grab.lame.pipe(new spkr(fmt))
+                .on('progress', (data) => { Object.assign(state, data); cb(`audio progress @T+${timestamp()}: ${JSON.stringify(data).json_tidy}`, null, data); }) //{numwr: THIS.numwr, wrlen: r, wrtotal: THIS.wrtotal, buflen: (left || []).length}); //give caller some progress info
+                .on('open', () => cb(`audio open @T+${timestamp()}`)) //pbstart = elapsed(); cb("audio open"); }) // /*pbtimer = setInterval(position, 1000)*/; console.log("[%s] speaker opened".yellow_light, timescale(pbstart - started)); })
+                .on('flush', () => cb(`audio flush @T+${timestamp()}`, true)) // /*clearInterval(pbtimer)*/; console.log("[%s] speaker end-flushed".yellow_light, timescale(elapsed() - started)); })
+                .on('close', () => cb(`audio close @T+${timestamp()}`, true)); // /*clearInterval(pbtimer)*/; console.log("[%s] speaker closed".yellow_light, timescale(elapsed() - started)); });
+//            elapsed(0);
+            cb(`audio start @T+${elapsed()}`);
+            ++gp.isplaying[0]; //= true;
+            elapsed(0);
+        })
+        .on('end', () => cb(`audio decode done @T+${timestamp()}`)) //console.log("[%s] decode done!".yellow_light, timescale(elapsed() - started)); })
+        .on('error', (err) => cb(`audio ERROR: ${err} @T+${timestamp()}`, err)); //console.log("[%s] decode ERROR %s".red_light, timescale(elapsed() - started), err); });
 }
 
 
@@ -385,6 +437,11 @@ function* wker() //wker_data)
 //    debug("wker env", process.env);
 //    wker_data = JSON.parse(process.env.wker_data); //TODO: move up a level
     const /*cluster.worker.inx*/ wkid = cluster.worker.id; //reduce vebosity
+    if (!gp.isopen) exc("gpu port !open");
+    seq.NUMFR = Math.ceil(seq.DURATION * gp.FPS) || 5; //NOTE: need to wait for GPU port to open befpre calculating this (FPS not known until port opened)
+//    seq.NUMFR = Math.min(seq.NUMFR, gp.NUM_UNIV * gp.UNIV_LEN);
+    debug("numfr", seq.NUMFR);
+
     const [univ_begin, univ_end] = /*[5, 7]*/ [(wkid - 1) * WKER_UNIV, Math.min(wkid * WKER_UNIV, NUM_UNIV)];
 //dump initial values:
 //univ ready bits:
@@ -397,7 +454,7 @@ function* wker() //wker_data)
     debug(`wker# ${wkid} started, responsible for rendering univ ${univ_begin}..${univ_end-1}, my ready bits ${hex(my_ready)}`.cyan_lt); //, "cloned data", /*process.env.*/wker_data); //multi.workerData);
 //    const my_univ = nodebufs.map((qent) => qent.nodes = qent.nodes.slice(univ_begin, univ_end)); //exclude other wkers
     nodebufs.forEach((qent) => { qent.my_nodes = qent.nodes.slice(univ_begin, univ_end); }); //trim off univs/nodes for other wkers
-    let ani_speed = gp.NUM_UNIV * gp.UNIV_MAXLEN / seq.NUMFR; //ani_speed * numfr == #nodes (NUM_UNIV * UNIV_MAXLEN)
+//    let ani_speed = gp.NUM_UNIV * gp.UNIV_MAXLEN / seq.NUMFR; //ani_speed * numfr == #nodes (NUM_UNIV * UNIV_MAXLEN)
 //seq.NUMFR = 5;
 
 //    dump_nodes(0, 0, 32);
@@ -423,7 +480,7 @@ function* wker() //wker_data)
     let started = elapsed.now(), previous = started;
 //debug("frtime_delay", frtime_delay);
 //if (false)
-    for (var frnum = 0; (frnum < seq.NUMFR) && gp.isopen; ++frnum)
+    for (var frnum = 0; /*(frnum < seq.NUMFR)*/ (gp.isplaying[0] < 2) && gp.isopen; ++frnum)
     {
         if (previous - started >= frnum * frtime_delay + TIMING_SLOP) debug(0, `overdue[${++my_stats[2]}]: fr#${frnum}, overdue by ${commas(previous - started - frnum * frtime_delay)} msec`.red_lt); //overdue
         const qent = frnum % nodebufs.length; //get next framebuf queue entry; simple, circular queue addressing
@@ -434,7 +491,7 @@ function* wker() //wker_data)
 //            debug(`wker# ${wkid} waiting for nodebuf${which_buf}: has fr#${nodebufs[qent].frnum}, ready ${hex(nodebufs[qent].ready)}, looking for fr#[${commas(frnum)}], wait ${frtime_delay} msec, GPU doing fr#${gp.numfr} ...`.green_lt);
 //            yield wait_msec(frtime_delay); //msec; timing not critical here; worked ahead ~3 frames and waiting for empty nodebuf
 //        }
-        yield* wait4port(() => !gp.isopen || (nodebufs[qent].frnum == frnum)); //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr))
+        yield* wait4port(() => !gp.isopen || (gp.isplaying[0] > 1) || (nodebufs[qent].frnum == frnum)); //wait for nodebuf to become available; this means wker is running 3 frames ahead of GPU xfr))
 //        let delta = elapsed.now() - previous; perf[wkid].wait += delta; previous += delta;
 //        perf[wkid].update();
         let delta = elapsed.now() - previous;
@@ -464,9 +521,10 @@ function* wker() //wker_data)
             if (frnum) univ.forEach((nodeval, ninx) => univ[ninx] = prevbuf[ninx]); //use previous frame if no change
 //            univ[frnum % 20] = PINK_DARK; //WHITE; // * ani_speed] = WHITE;
         });
-        let x = Math.floor(frnum / gp.UNIV_LEN), y = frnum % gp.UNIV_LEN; //NUM_UNIV;
-        debug(20, `fr#${frnum} -> x ${x}, y ${y}`);
-        nodebufs[qent].nodes[x][y] = PINK_DARK;
+//        const PALETTE = [/*BLACK,*/ RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0b001, green 0b010, blue 0b100
+        let loop = Math.floor(frnum / (gp.UNIV_LEN * gp.NUM_UNIV)), x = Math.floor(frnum / gp.UNIV_LEN) % gp.NUM_UNIV, y = frnum % gp.UNIV_LEN; //NUM_UNIV;
+        debug(20, `fr#${frnum} -> loop ${loop}, x ${x}, y ${y}`);
+        nodebufs[qent].nodes[x][y] = PALETTE[loop % PALETTE.length]; //PINK_DARK;
         debug(20, `fbquent[${qent}]univ[*][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[0][frnum % 20])}`);
 //        var y = Math.floor(frnum / gp.NUM_UNIV), x = frnum % gp.NUM_UNIV;
 //        nodebufs[qent].nodes[x][y] = WHITE;
@@ -476,7 +534,7 @@ function* wker() //wker_data)
 //        nodebufs[0].nodes[i % 24][i] = hsv2rgb(.4, 1, 1);
 /**/
         nodebufs[qent].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
-        debug(10, `wker# ${wkid} rendered fr#${which_fr} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
+        debug((frnum %50)? 10: 0, `wker# ${wkid} rendered fr#${which_fr} deadline ${commas(frnum * gp.frtime)} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
 //        delta = elapsed.now() - previous; perf[wkid].render += delta; previous += delta;
 //        perf[wkid].numfr = frnum + 1;
 //        perf[wkid].update(true);
@@ -490,8 +548,8 @@ function* wker() //wker_data)
 //    process.send({data}, (err) => {});
 //    debug(`wker# ${wkid} idle (done), #fr ${frnum}, perf stats: ${my_stats.map((msec) => msec / (gp.numfr || 1))} avg msec, wait for gpu to finish ...`.cyan_lt);
     const stats_avg = my_stats.map((msec) => commas(msec / (gp.numfr || 1)));
-    debug(0, `wker# ${wkid} idle (done), #fr ${frnum}, perf stats (avg msec): wait for buf ${stats_avg[0]}, render ${stats_avg[1]}, #overdue ${my_stats[2]}, now waiting for gpu to finish ...`.cyan_lt);
-    yield* wait4port(() => !gp.isopen || (gp.numfr >= frnum)); //wait for GPU to finish rendering before exit (prevent main from premature exit)
+    debug(0, `wker# ${wkid} idle (done ${gp.isopen}, ${gp.isplaying[0]}), #fr ${frnum}, perf stats (avg msec): wait for buf ${stats_avg[0]}, render ${stats_avg[1]}, #overdue ${my_stats[2]}, now waiting for gpu to finish ...`.cyan_lt);
+    yield* wait4port(() => !gp.isopen || !gp.isplaying[0]); //(gp.numfr >= frnum)); //wait for GPU to finish rendering before exit (prevent main from premature exit)
 }
 //while (gp.numfr < frnum)
 //{
@@ -513,6 +571,45 @@ function dump_nodes(quent, univ, univlen)
 ////
 /// Misc utility/helper functions:
 //
+
+//return path relative to app dir (cwd); cuts down on verbosity
+function relpath(abspath, basedir)
+{
+    var cwd = process.cwd(); //__dirname; //save it in case it changes later
+    
+//broken?    return path.relative(basedir || cwd, abspath);
+//debug(homeify(abspath));
+//debug(homeify(basedir || cwd));
+    const shortpath = pathlib.relative(homeify(basedir || cwd), homeify(abspath).grab(2)).grab(1);
+//debug(shortpath);
+    const prefix = (grab[2] && (grab[1] != grab[2]))? "./": "";
+//debug(prefix);
+//    debug(`relpath: abs '${abspath}', base '${basedir || cwd}' => prefix '${prefix}' + shortpath '${shortpath}'`.blue_lt);
+    return prefix + shortpath;
+
+    function homeify(abspath)
+    {
+        var homedir = os.homedir();
+        if (homedir.slice(-1) != "/") homedir += "/";
+//debug("home-1", abspath);
+//debug("home-2", homedir);
+//debug("home-3", abspath.indexOf(homedir));
+//might have sym link so relax position check:
+//        return !abspath.indexOf(homedir)? "~/" + abspath.slice(homedir.length): abspath;
+        const ofs = abspath.indexOf(homedir);
+        return (ofs != -1)? "~/" + abspath.slice(ofs + homedir.length): abspath;
+    }
+}
+
+
+function timestamp()
+{
+    var timestamp = elapsed().toString(); //util.format("[%f] ", elapsed() / 1e3)
+    if (timestamp.length < 4) timestamp = ("0000" + timestamp).slice(-4);
+    timestamp = `${timestamp.slice(0, -3)}.${timestamp.slice(-3)}`;
+    return timestamp;
+}
+
 
 //set up 3D and 2D arrays of nodes in shared memory:
 //addressing: nodes[quent within framebuf queue][univ][node within univ]
@@ -886,6 +983,8 @@ function show_env(more_details)
     debug(`Node v${process.versions.node}, V8 v${process.versions.v8}, N-API v${process.versions.napi}`.pink_lt);
     debug(`${(process.env.NODE_ENV == "production")? "Prod": "Dev"} mode, ${plural(NUM_CPUs)} CPU${plural.cached}`.pink_lt);
     if (more_details) debug("Node", process.versions);
+//    debug(`node.js version: ${JSON.stringify(process.versions, null, 2)}`.cyan_lt);
+    debug(`spkr api ${spkr.api_version}, name '${spkr.name}', rev ${spkr.revision}, \ndesc '${spkr.description}'`.cyan_lt);
     show_args();
 }
 
@@ -906,6 +1005,17 @@ function plural(ary, suffix)
 }
 function plurals(ary) { return plural(ary, "s"); }
 function plurales(ary) { return plural(ary, "es"); }
+
+
+//inline grabber:
+//convenience for grabbing and reusing values from within nested expr
+function grab(thingy, label)
+{
+//debug("args", arguments);
+    grab[label] = thingy;
+//    debug(`grab[${label}] <- '${thingy}'`);
+    return thingy; //fluent
+};
 
 
 function quit(msg, code)
@@ -955,11 +1065,13 @@ function extensions()
     if (!Array.prototype.hasOwnProperty("back")) //polyfill
         Object.defineProperty(Array.prototype, "back", { get() { return this[this.length - 1]; }});
     Array.prototype.push_fluent = function push_fluent(args) { this.push.apply(this, arguments); return this; };
+    Array.prototype.unshift_fluent = function(args) { this.unshift.apply(this, arguments); return this; };
     String.prototype.splitr = function splitr(sep, repl) { return this.replace(sep, repl).split(sep); } //split+replace
     String.prototype.unindent = function unindent(prefix) { unindent.svprefx = ""; return this.replace(prefix, (match) => match.substr((unindent.svprefix || (unindent.svprefix = match)).length)); } //remove indents
     String.prototype.quote = function quote(quotype) { quotype || (quotype = '"'); return `${quotype}${this/*.replaceAll(quotype, `\\${quotype}`)*/}${quotype}`; }
 //below are mainly for debug:
 //    if (!String.prototype.echo)
+    String.prototype.grab = function(inx) { return grab(this, inx); }
     String.prototype.echo = function echo(args) { args = Array.from(arguments); args.push(this.escnl); console.error.apply(null, args); return this; } //fluent to allow in-line usage
     String.prototype.trunc = function trunc(maxlen) { maxlen || (maxlen = 120); return (this.length > maxlen)? this.slice(0, maxlen) + ` ... (${commas(this.length - maxlen)})`: this; }
     String.prototype.replaceAll = function replaceAll(from, to) { return this.replace(new RegExp(from, "g"), to); } //NOTE: caller must esc "from" string if contains special chars
@@ -972,7 +1084,8 @@ console.error("TODO: fix json_tidy #s".red_lt);
 //            nonempty: { get() { return this.replace(/^\s*\r?\n/gm , ""); }}, //strip empty lines
 //            escre: { get() { return this.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }}, //escape all RE special chars
         json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/[0-9.]{5,}/g, (val) => (val.indexOf(".") != -1)? `0x${(val >>> 0).toString(16)}`: val); }}, //tidy up JSON for readability
-//        quoted: { get() { return quote(this/*.toString()*/); }, },
+//        json_tidy: { get() { return this.replace(/,"/g, ", \"").replace(/"(.*?)":/g, "$1: ").replace(/\d{5,}/g, (val) => `0x${(val >>> 0).toString(16)}`); }}, //tidy up JSON for readability
+        //        quoted: { get() { return quote(this/*.toString()*/); }, },
 //        quoted1: { get() { return quote(this/*.toString()*/, "'"); }, },
 //        unquoted: { get() { return unquote(this/*.toString()*/); }, },
 //        unparen: { get() { return unparen(this/*.toString()*/); }, },

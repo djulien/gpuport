@@ -50,7 +50,7 @@
 //#include <type_traits> //std::remove_const<>
 
 #include "msgcolors.h" //*_MSG, ENDCOLOR_*
-#include "elapsed.h" //timestamp()
+//#include "elapsed.h" //timestamp()
 #include "srcline.h" //SrcLine, SRCLINE
 #include "str-helpers.h" //NVL(), plural(), commas(), NNNN_hex()
 #include "ostrfmt.h" //FMT()
@@ -207,7 +207,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
         hdrptr->size = size; //- IFHEAPHDR(0, sizeof(ShmHdr));
         hdrptr->usrptr = IFHEAPHDR(memptr, hdrptr + 1);
         hdrptr->marker = ShmHdr::SHM_VALID ^ (false? 1: 0);
-        debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmalloc: get LOCAL size " << commas(size + extralen) << " (hdr " << extralen << ") => " << FMT(" addr %p") << hdrptr->usrptr << " (hdr " << hdrptr << ")" << ATLINE(srcline));
+        debug(SHM_LEVEL, CYAN_MSG << /*timestamp() <<*/ "shmalloc: get LOCAL size " << commas(size + extralen) << " (hdr " << extralen << ") => " << FMT(" addr %p") << hdrptr->usrptr << " (hdr " << hdrptr << ")" << ATLINE(srcline));
     }
     else
     {
@@ -232,7 +232,7 @@ void* shmalloc(size_t size, key_t key = 0, /*bool* existed = 0,*/ SrcLine srclin
         hdrptr->size = shminfo.shm_segsz - extralen; //- sizeof(ShmHdr);
         hdrptr->usrptr = IFHEAPHDR(shmptr, hdrptr + 1); //read/write access
         hdrptr->marker = ShmHdr::SHM_VALID ^ (existed? 1: 0);
-        debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size + extralen) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << extralen << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << hdrptr->usrptr << ATLINE(srcline));
+        debug(SHM_LEVEL, CYAN_MSG << /*timestamp() <<*/ "shmalloc: cre shmget key " << FMT("0x%lx") << key << ", size " << commas(size + extralen) << " (" << commas(shminfo.shm_segsz) << " padded, hdr " << extralen << "), existed? " << existed << ", #att " <<  shminfo.shm_nattch << " => " << FMT("id 0x%lx") << shmid << FMT(", addr %p") << hdrptr->usrptr << ATLINE(srcline));
     }
     hdrptr->numents = 0; //no type info; added by type-safe wrappers
 //    err_ret(ptr + 1, 0);
@@ -319,7 +319,7 @@ int shmfree(const void* addr, SrcLine srcline = 0) //CAUTION: data members not v
 //    }
     }
     IFHEAPHDR(hdrs.erase(hdrptr - &hdrs[0] + hdrs.begin()), 0); //static_cast<ShmHdr*>(memptr));
-    debug(SHM_LEVEL, CYAN_MSG << timestamp() << "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ATLINE(srcline));
+    debug(SHM_LEVEL, CYAN_MSG << /*timestamp() <<*/ "shmfree: ptr " << addr << FMT(", key 0x%lx") << svhdr.key << ", size " << commas(svhdr.size) << ", #attch " << shminfo.shm_nattch << ATLINE(srcline));
     err_ret(shminfo.shm_nattch, 0); //return #procs still using memory
 }
 #undef err_ret
