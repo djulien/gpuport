@@ -6,8 +6,15 @@
 
 
 "use strict";
+//require("./demos/multi");
+//const chproc = require("child_process");
+//chproc.fork(__dirname + "/demos/multi", process.argv);
+//process.exit();
+/////////////////////////////////////////////////////////////////////////////////
 require("magic-globals"); //__file, __line, __stack, __func, etc
 require("colors").enabled = true; //for console output; https://github.com/Marak/colors.js/issues/127
+console.error("hello".green_lt);
+process.exit();
 const pathlib = require("path"); //NOTE: called it something else to reserve "path" for other var names
 //TODO? const log4js = require('log4js'); //https://github.com/log4js-node/log4js-node
 const /*{ createSharedBuffer, detachSharedBuffer }*/ sharedbuf = require('shared-buffer'); //https://www.npmjs.com/package/shared-buffer
@@ -148,6 +155,7 @@ const opts =
 const SEQLEN = 10; //* opts.fps; //10 sec total
 //const WANT_GP = false; //true; //false;
 //const false_listen = false;
+//OBSOLETE
 const gp = listen && listen(opts, (frnum, nodes, frinfo) =>
 {
     const more = (frnum < SEQLEN);

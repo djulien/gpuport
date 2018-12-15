@@ -598,6 +598,11 @@ const ScreenConfig* getScreenConfig(SrcLine srcline = 0) { return getScreenConfi
 #if 1
 //explicit call to wait for vsync:
 //various posts suggest that RPi video driver doesn't support vsync, so use this to force it
+//NOTE: need sudo or be a member of video group to use this
+//list groups: more /etc/group
+//which groups am i a member of:  groups
+//add user to group: usermod -aG video "$USER"
+//**need to log out and back in or "su username -"; see https://unix.stackexchange.com/questions/277240/usermod-a-g-group-user-not-work
 class vSyncer
 {
 //    int fb = -1;
@@ -613,7 +618,7 @@ public: //ctor/dtor
     {
         if (fb() >= 0) return;
         fb() = open("/dev/fb0", O_RDONLY /* O_RDWR */ );
-        if (fb() < 0) exc_hard("Couldn't open framebuffer /dev/fb0 for vsync");
+        if (fb() < 0) exc_hard("Couldn't open /dev/fb0 (framebuffer) for vsync (no perms?)");
 //        atexit(my_close); //make sure it gets closed; redundant? (O/S closes files at process exit anyway)
     }
     ~vSyncer() { my_close(); } //not needed if using atexit

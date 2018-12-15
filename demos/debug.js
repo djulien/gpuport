@@ -58,7 +58,7 @@ function debug(args)
 //console.error("debug:" + JSON.stringify(arguments));
         var msg_detail = 1; //make non-0 so msg will be hidden by default
         args = Array.from(arguments); //turn into real array
-        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") /*&& (args[1].toString().indexOf("%") != -1)*/) msg_detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
+        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args.length > 1) /*&& (args[1].toString().indexOf("%") != -1)*/) msg_detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
         const parent = caller(++debug.nested || 1);
@@ -105,7 +105,7 @@ function debug(args)
 //    debug.busy = false;
         if (timestamp.length < 4) timestamp = ("0000" + timestamp).slice(-4);
         timestamp = `[[${timestamp.slice(0, -3)}.${timestamp.slice(-3)}]] `;
-        fmt = fmt.slice(0, first_ofs) + timestamp + fmt.slice(first_ofs, last_ofs) + `  @${parent}` + fmt.slice(last_ofs);
+        fmt = fmt.slice(0, first_ofs) + timestamp + fmt.slice(first_ofs, last_ofs) + `  ${msg_detail}@${parent}` + fmt.slice(last_ofs);
 //console.log("result", `${fmt.length}:'${fmt.replace(/\x1b/g, "\\x1b")}'`);
 //    }
 //    return console.error.apply(console, fmt); //args); //send to stderr in case stdout is piped
@@ -116,7 +116,8 @@ function debug(args)
 debug.nested = 0;
 debug.wanted = function(name, level)
 {
-    if (arguments.length > 1) deb_wanted[name] = level;
+    if (!isNaN(name)) [name, level] = ["*", name];
+    if (/*arguments.length > 1*/ !isNaN(level)) deb_wanted[name] = level;
     return deb_wanted[name] || deb_wanted['*'] || 0;
 }
 

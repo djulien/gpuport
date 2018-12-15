@@ -186,7 +186,7 @@ const char* commas(int64_t val)
 {
     const int LIMIT = 4; //max #commas to insert
     thread_local static int ff; //std::atomic<int> ff; //use TLS to avoid the need for mutex (don't need atomic either)
-    thread_local static char buf[12][16 + LIMIT]; //allow 12 simultaneous calls (across all threads)
+    thread_local static char buf[12][16 + LIMIT]; //allow 12 simultaneous calls (each thread if using TLS)
 //    static auto_ptr<SDL_sem> acquire(SDL_CreateSemaphore(SIZE(buf)));
 //    auto_ptr<SDL_LockedSemaphore> lock_HERE(acquire.cast); //SDL_LOCK(acquire));
 

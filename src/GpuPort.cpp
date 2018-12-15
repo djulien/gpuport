@@ -42,10 +42,12 @@
 // load into gdb:  gdb ./unittest ~/.core-files/CoreDump
 
 //vsync:
+//NOTE: need sudo or be a member of video group to use this
 // ls -l /dev/fb0
 //list groups: more /etc/group
 //which groups am i a member of:  groups
-//NO WORKY: add user to group: usermod -a -G examplegroup exampleusername
+//add user to group: usermod -aG video "$USER"
+//**need to log out and back in or "su username -"; see https://unix.stackexchange.com/questions/277240/usermod-a-g-group-user-not-work
 
 //example/setup info:
 //** https://github.com/nodejs/node-addon-examples
@@ -337,7 +339,7 @@ struct ShmData
     using NODEVAL = Uint32; //data type for node colors (ARGB)
     static const napi_typedarray_type GPU_NODE_type = napi_uint32_array; //NOTE: must match NODEVAL type
     using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
-    using TXTR = SDL_AutoTexture<XFRTYPE>;
+    using TXTR = SDL_AutoTexture<XFRTYPE, 0, true>;
     static const int CACHELEN = 64; //RPi 2/3 reportedly have 32/64 byte cache rows; use larger size to accomodate both
 //settings that must match h/w:
 //TODO: move some of this to run-time or extern #include
@@ -532,8 +534,8 @@ public: //dependent types:
         int32_t numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
         const elapsed_t started = now(); //elapsed();
-        elapsed_t latest = 0; //timestamp of latest loop iteration
-        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats; //NO: 1 extra slot for loop count
+        elapsed_t /*decltype(TXTR::latest)*/ latest = 0; //timestamp of latest loop iteration
+        PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats; //NO: 1 extra slot for loop count, but still want a local copy
         char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
 //put nodes last in case caller overruns boundary:
 //TODO: use alignof() for node rows
@@ -552,7 +554,7 @@ public: //dependent types:
             ostrm << ", frame_time " << that.frame_time << " msec";
             ostrm << ", protocol " << that.protocol; //NVL(unmap(names, that.protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
             ostrm << ", previous " << that.prev_protocol; //NVL(unmap(names, that.prev_protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
-            ostrm << ", debug level " << /*that.*/debug_level;
+            ostrm << ", debug level " << /*that.*/debug_level; //TODO: put a copy in shm
             ostrm << ", #fr " << commas(that.numfr);
             ostrm << ", latest " << that.latest << " msec";
             ostrm << ", perf [";
@@ -562,9 +564,9 @@ public: //dependent types:
 //            for (const /*std::remove_reference<decltype(that.perf_stats[0])>*/ elapsed_t* it = &that.perf_stats[0]; it != &that.perf_stats[SIZEOF(perf_stats)]; ++it)
 //            {
 //                debug(0, "perf[%u/%u] %u", it - that.perf_stats.cbegin(), that.perf_stats.cend() - that.perf_stats.cbegin(), *it);
-                ostrm << &", "[(it == that.perf_stats.cbegin())? 2: 0] << (that.numfr? *it / that.numfr: 0); //std::max(that.numfr, 1));
+                ostrm << &", "[(it == that.perf_stats.cbegin())? 2: 0] << (that.numfr? (double)*it / that.numfr: (double)0); //std::max(that.numfr, 1));
 //            }
-            ostrm << " avg msec]";
+            ostrm << "]";
             if (that.exc_reason[0]) ostrm << ", exc '" << that.exc_reason << "'";
             ostrm << ", age " << commas(elapsed(that.started)) << " msec";
             return ostrm << "}";
@@ -620,12 +622,32 @@ public: //dependent types:
 //            return retval;
             return napi_thingy(env, retval) += props;
         }
+        static napi_value my_exports_perfinx(napi_env env) { return my_exports_perfinx(env, napi_thingy(env, napi_thingy::Object{})); }
+        static napi_value my_exports_perfinx(napi_env env, const napi_value& retval)
+        {
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
+            vector_cxx17<my_napi_property_descriptor> props;
+    //        add_prop("NONE", static_cast<int32_t>(Protocol::NONE))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("DEV_MODE", static_cast<int32_t>(Protocol::DEV_MODE))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("WS281X", static_cast<int32_t>(Protocol::WS281X))(enum_props.emplace_back()); //(*pptr++);
+    //        add_prop("CANCEL", static_cast<int32_t>(Protocol::CANCEL))(enum_props.emplace_back()); //(*pptr++);
+//            for (auto& it: static_Names) //it.first, it.second
+            for (auto it = TXTR::static_PerfNames().cbegin(); it != TXTR::static_PerfNames().cend(); ++it) //it->first, it->second
+                add_prop_uint32(it->second, it->first)(props.emplace_back()); //(*pptr++);
+    //        debug(9, "add %d props", props.size());
+//            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export protocol enum props failed");
+//            napi_thingy more_retval(env, retval);
+//            more_retval += props;
+//            return more_retval;
+            return napi_thingy(env, retval) += props;
+        }
     };
     alignas(CACHELEN) struct FramebufQuent
     {
 //        /*alignas(CACHELEN)*/ struct
 //        {
-        std::atomic<int32_t> frnum, prevfr;
+        std::atomic<int32_t> frnum; //, prevfr;
         std::atomic<elapsed_t> frtime, prevtime;
         std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
 //        } frinfo; //per-frame state info
@@ -642,7 +664,7 @@ public: //dependent types:
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const FramebufQuent& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
 //            HERE(7);
-            ostrm << "{fr# " << commas(that.frnum.load()) << ", prev " << commas(that.prevfr.load());
+            ostrm << "{fr# " << commas(that.frnum.load()); //<< ", prev " << commas(that.prevfr.load());
             ostrm << ", fr time " << commas(that.frtime.load()) << ", prev " << commas(that.prevtime.load()) << " msec";
             ostrm << ", ready 0x" << std::hex << that.ready.load() << std::dec;
             SDL_Size wh(SIZEOF(nodes), SIZEOF(nodes[0]));
@@ -654,6 +676,7 @@ public: //dependent types:
         static /*uint32_t*/ /*auto*/ napi_value frnum_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frnum.load(), napi_thingy::Int32{}); }
 //        static /*uint32_t*/ /*auto*/ napi_value frnum_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frnum.load()); }
         static /*uint32_t*/ /*auto*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frtime.load(), napi_thingy::Uint32{}); }
+        static /*uint32_t*/ /*auto*/ napi_value prevtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->prevtime.load(), napi_thingy::Uint32{}); }
         static /*uint32_t*/ /*auto*/ napi_value ready_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->ready.load(), napi_thingy::Uint32{}); } //MASK_TYPE
         static void ready_setter(const napi_thingy& newval, void* ptr)
         {
@@ -678,6 +701,7 @@ public: //dependent types:
 //            napi_thingy arybuf(env, &m_fbque[0], sizeof(m_fbque));
             add_getter("frnum", FramebufQuent::frnum_getter, this)(props.emplace_back());
             add_getter("frtime", FramebufQuent::frtime_getter, this)(props.emplace_back());
+            add_getter("prevtime", FramebufQuent::prevtime_getter, this)(props.emplace_back());
             add_getter("ready", FramebufQuent::ready_getter, FramebufQuent::ready_setter, this)(props.emplace_back());
 //            for (auto& it = m_fbque.begin(); it != m_fbque.end(); ++it)
 //            {
@@ -783,6 +807,7 @@ public: //operators
         ostrm << ", manifest " << that.m_manifest;
         ostrm << ", frctl " << that.m_frctl;
         ostrm << ", is open? " << that.isopen();
+        ostrm << ", #attch " << shmnattch(&that); //.m_manifest.shmkey);
         ostrm << ", fbque [";
 //broken        for (const auto it: that.m_fbque)
         for (/*const*/ auto it = that.m_fbque.cbegin(); it != that.m_fbque.cend(); ++it)
@@ -813,8 +838,8 @@ public: //methods:
         {
             it->ready.store(0);
             it->frnum = it - m_fbque.begin(); //initially set to 0, 1, 2, ...
-            it->frtime = it->frnum * m_frctl.frame_time; //deadline for this frame based on known frame_time; float -> int
-            it->prevtime = it->prevfr = -1; //no previous frame
+            it->prevtime = it->frtime = 0; //it->frnum * m_frctl.frame_time; //deadline for this frame based on known frame_time; float -> int
+//            it->prevtime = it->prevfr = -1; //no previous frame
 //NOTE: loop (1 write/element) is more efficient than memcpy (1 read + 1 write / element)
             for (int i = 0; i < SIZEOF_2D(it->nodes); ++i) it->nodes[0][i] = color; //BLACK; //clear *entire* buf in case h < max and caller wants linear (1D) addressing
 #if 0 //test pattern for js client shm test
@@ -879,7 +904,7 @@ public: //methods:
 //        m_txtr = newtxtr; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
             TXTR::XFR xfr = std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE); //protocol bit-banger shim
 //TODO: refill not needed?
-            txtr.perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
+            txtr.clear_stats(); //perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
 //}
             debug(19, "bkg gpu txtr " << txtr);
             init_fbque(init_color); //do this *before* set running state, but after determining frame_time
@@ -915,15 +940,15 @@ public: //methods:
 //        let qent = frnum % frctl.length; //simple, circular queue
                 FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
                 if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
-                int wait_frames = 0;
+//                int wait_frames = 0;
                 while ((it->ready & ALL_UNIV) != ALL_UNIV) //wait for all wkers to render nodes (ignore unused bits); wait means wkers are running too slow
                 {
-                    VOID txtr.idle(NO_PERF, SRCLINE);
+                    VOID txtr.idle(NO_PERF, SRCLINE); //wait for next vsync
 //                    debug(15, YELLOW_MSG "fr[%d/%d] buf[%d/%d] not ready: 0x%x, gpu wker wait %d msec for wkers to render ...", frnum, NUMFR, it - &m_fbque[0], SIZEOF(m_fbque), it->ready.load(), delay_msec);
 //                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
-                    ++wait_frames;
+//                    ++wait_frames;
                 }
-                if (wait_frames) debug(15, YELLOW_MSG "qpu wker fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
+//                if (wait_frames) debug(15, YELLOW_MSG "qpu wker fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -936,15 +961,15 @@ public: //methods:
 //                if (!(frnum % 50)) debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
                 if (m_frctl.protocol == Protocol::CANCEL) break;
                 VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1-1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
-                m_frctl.latest = now() - started;
+                it->prevtime.store(it->frtime.load()); //save previous so caller can decide how to apply updates
+                it->frtime = m_frctl.latest = txtr.m_latest; //just echo txtr; //now() - started;
 //                ++m_frctl.perf_stats[0]; //moved to txtr
 //            m_frctl.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)?
 //make frbuf available for next round of frames:
 //CAUTION: potential race condition, but render wkers should be far enough ahead that it doesn't matter:
                 it->ready.store(0);
-                it->prevfr.store(it->frnum.load());
-                it->prevtime.store(it->frtime.load()); //save previous so caller can decide how to apply updates
+//                it->prevfr.store(it->frnum.load());
                 it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
 //        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
 //        perf[0].numfr = frnum + 1;
@@ -998,24 +1023,9 @@ public: //NAPI methods:
 //    napi_ref ref = nullptr; //keep my data valid between open() and close()
     static inline ShmData* my(void* ptr) { return static_cast<ShmData*>(ptr); }
 //expose a few little helper/debug methods also:
-    static napi_value isopen_getter(napi_env env, void* ptr) /*const*/
-    {
-//        napi_thingy retval(env);
-//        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
-//        return retval;
-        return napi_thingy(env, my(ptr)->isopen(), napi_thingy::Boolean{});
-    }
-    static napi_value isvalid_getter(napi_env env, void* ptr) /*const*/
-    {
-        return napi_thingy(env, my(ptr)->isvalid(), napi_thingy::Boolean{});
-    }
-    static napi_value nattch_getter(napi_env env, void* ptr) /*const*/
-    {
-//        napi_thingy retval(env);
-//        !NAPI_OK(napi_create_int32(env, static_cast<ShmData*>(data)->isopen(), &retval.value), "Get uint32 getval failed");
-//        return retval;
-        return napi_thingy(env, shmnattch(ptr, SRCLINE), napi_thingy::Int32{});
-    }
+    static napi_value isopen_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->isopen(), napi_thingy::Boolean{}); }
+    static napi_value isvalid_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->isvalid(), napi_thingy::Boolean{}); }
+    static napi_value nattch_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, shmnattch(ptr, SRCLINE), napi_thingy::Int32{}); }
 //export control data and methods for JS clients to use:
 //        static napi_value my_exports(napi_env env, napi_value exports)
 //    static napi_value my_exports(napi_env env)
@@ -1038,6 +1048,7 @@ public: //NAPI methods:
         add_prop_uint32("UNIV_MAXLEN", UNIV_MAXLEN_pad)(props.emplace_back()); //give caller actual row len for correct node addressing
 //expose Protocol types (enum consts):
         add_prop("Protocols", Protocol::my_exports(env))(props.emplace_back());
+        add_prop("PerfStats", FrameControl::my_exports_perfinx(env))(props.emplace_back());
 //shm data structs:
         add_prop("manifest", /*ManifestType::*/m_manifest.my_exports(env))(props.emplace_back()); //(*pptr++);
 //state getters/setters:
@@ -1286,20 +1297,21 @@ private: //helpers
         if (shdata.m_frctl.protocol != shdata.m_frctl.prev_protocol) dirty = ALL_UNIV; //protocol/fmt changed; force all nodes to be updated (for dev/debug); wouldn't happen in prod
         debug(19, "xfr " << commas(xfrlen) << " *3, protocol " << shdata.m_frctl.protocol); //static_cast<int>(nodebuf.protocol) << ENDCOLOR);
 //        if (debug_level <= 80)
-#if 1
-        debug(80, "xfr_bb: " << shdata.m_frctl.wh);
+#define DUMP_LEVEL  80
+#if MAX_DEBUG_LEVEL >= DUMP_LEVEL //dump
+        debug(DUMP_LEVEL, "xfr_bb: " << shdata.m_frctl.wh);
         int yy = shdata.m_frctl.wh.h;
         while ((yy > 1) /*&& (fbquent.nodes[*][yy - 1] == fbquent.nodes[*][yy - 2])*/) //--yy;
             for (int x = 0; x < NUM_UNIV; ++x)
                 if (fbquent.nodes[x][yy - 1] != fbquent.nodes[x][yy - 2]) { yy = -yy; break; }
-                else if (x == NUM_UNIV - 1) --yy;
+                else if (x == NUM_UNIV - 1) --yy; //truncate repeating rows
         if (yy < 0) yy = -yy; //kludge: restore unique len after outer loop break
         for (int y = 0; y < /*shdata.m_frctl.wh.h*/ yy; ++y) //outer loop = node# within each universe
         {
             std::ostringstream ss;
             ss << "[" << y << "/" << shdata.m_frctl.wh.h << "]:'" << std::hex << &"0x"[(y * NUM_UNIV < 10)? 2: 0] << (y * NUM_UNIV);
             int xx = NUM_UNIV;
-            while ((xx > 1) && (fbquent.nodes[xx - 1][y] == fbquent.nodes[xx - 2][y])) --xx;
+            while ((xx > 1) && (fbquent.nodes[xx - 1][y] == fbquent.nodes[xx - 2][y])) --xx; //truncate repeating cells
             for (int x = 0; x < /*NUM_UNIV*/ xx; ++x) //inner loop = universe#
             {
                 ss << (x? ", ": ": ") << &"0x"[(fbquent.nodes[x][y] < 10)? 2: 0] << fbquent.nodes[x][y];
@@ -1309,9 +1321,9 @@ private: //helpers
             }
             if (xx < NUM_UNIV) ss << " ... x " << (NUM_UNIV - xx);
             ss << std::dec;
-            debug(80, ss.str());
+            debug(DUMP_LEVEL, ss.str());
         }
-        if (yy < shdata.m_frctl.wh.h) debug(80, " ::: x " << (shdata.m_frctl.wh.h - yy));
+        if (yy < shdata.m_frctl.wh.h) debug(DUMP_LEVEL, " ::: x " << (shdata.m_frctl.wh.h - yy));
 #endif
         switch (shdata.m_frctl.protocol.value)
         {
