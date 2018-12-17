@@ -27,6 +27,7 @@
   "homepage": "https://github.com/djulien/gpuport",
   "main": "./index.js",
   "scripts": {
+    "dj-notes": "'npm update' to update pkgs, 'npm test' to recompile, 'npm install' to install deps",
     "xtest": "node-gyp rebuild && mocha --reporter spec",
     "xbuild": "node-gyp rebuild --verbose",
     "xclean": "node-gyp clean",
@@ -51,7 +52,10 @@
     "colors": "git+https://github.com/djulien/colors.js.git",
     "magic-globals": "^0.9.1",
     "shared-buffer": "^1.2.0",
-    "try-require": "^1.2.1"
+    "shebang-utils": "git+https://github.com/djulien/shebang-utils.git",
+    "through2": "^3.0.0",
+    "try-require": "^1.2.1",
+    "xregexp": "^4.2.0"
   },
   "devDependencies": {
     "glob": "^7.1.3",

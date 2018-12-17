@@ -9,7 +9,8 @@ require('colors').enabled = true; //for console output colors
 const tryRequire = require("try-require"); //https://github.com/rragan/try-require
 const cluster = tryRequire("cluster") || {isMaster: true}; //https://nodejs.org/api/cluster.html; //http://learnboost.github.com/cluster
 const sharedbuf = tryRequire('shared-buffer'); //|| {}; //https://www.npmjs.com/package/shared-buffer
-//const {debug} = require('./debug') || {debug: console.error}; //CAUTION: recursive require(), so defer until elapsed() is called
+//const {debug} = require('./debug'); //|| {debug: console.error}; //CAUTION: recursive require(), so defer until elapsed() is called
+let debug = console.error; //kludge: (cyclic require) give initial dummy function and then fill in later
 //if (debug/*.enabled*/) debugger;
 //const {debug} = require('./debug');
 //console.log("debug", debug);
@@ -40,10 +41,11 @@ sharedbuf.createSharedBuffer_retry = function(key, bytelen, create)
 //#msec elapsed already:
 //caller can back-date using < 0, or skip ahead using > 0
 //NOTE: elapsed times are all relative, so local vs. UTC is irrelevant
-const elapsed = 
-module.exports.elapsed =
+//const elapsed = 
+//module.exports.elapsed =
 function elapsed(reset)
 {
+//    console.error(`elapsed IN ${__fili}`);
     if (arguments.length || !elapsed.epoch) //!isNaN(elapsed.epoch)) //epoch will always be num (Uint32Array[]), but shouldn't ever be 0
     {
 //        debugger;
@@ -55,6 +57,7 @@ function elapsed(reset)
 //n/a Uint32Array[]    if (isNaN(elapsed.epoch)) throw "set epoch before calling elapsed()".red_lt;
 //CAUTION: calls to debug() are recursive:
 //    debug(`elapsed(): now 0x${hex(elapsed.now())} - epoch 0x${hex(elapsed.epoch)} = diff ${elapsed.now() - elapsed.epoch}`);
+//console.error(`elapsed OUT ${__fili}`);
     return elapsed.now() - elapsed.epoch;
 }
 
@@ -98,8 +101,10 @@ elapsed.resume = function()
 
 //CAUTION: debug <-> elapsed circular dependency
 //place debug() import *after* elapsed() export to avoid undef imports
-const {debug} = require('./debug') || {debug: console.error}; //CAUTION: recursive require()
+//debugger;
+//const {debug} = require('./debug') || {debug: console.error}; //CAUTION: cyclic require()
 //if (debug/*.enabled*/) debugger;
+//console.error(require("./debug"));
 
 
 //define shared memory for epoch so all procs are in sync:
@@ -198,5 +203,10 @@ if (!module.parent)
 
     function done(retval) { console.log(`done: retval ${retval}`.cyan_lt); }
 }
+
+
+//exports and cyclic imports:
+module.exports.elapsed = elapsed;
+debug = require('./debug').debug; //kludge: resolve cyclic dependency after in-line init above done; //CAUTION: cyclic require(), so return a dummy function if real one is not available yet
 
 //eof

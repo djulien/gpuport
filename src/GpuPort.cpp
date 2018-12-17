@@ -339,7 +339,7 @@ struct ShmData
     using NODEVAL = Uint32; //data type for node colors (ARGB)
     static const napi_typedarray_type GPU_NODE_type = napi_uint32_array; //NOTE: must match NODEVAL type
     using XFRTYPE = Uint32; //data type for bit banged node bits (ARGB)
-    using TXTR = SDL_AutoTexture<XFRTYPE, 0, true>;
+    using TXTR = SDL_AutoTexture<XFRTYPE, 0, true>; //false>;
     static const int CACHELEN = 64; //RPi 2/3 reportedly have 32/64 byte cache rows; use larger size to accomodate both
 //settings that must match h/w:
 //TODO: move some of this to run-time or extern #include
@@ -904,7 +904,8 @@ public: //methods:
 //        m_txtr = newtxtr; //kludge: G++ thinks m_txtr is a ref so assign create() to temp first
             TXTR::XFR xfr = std::bind(xfr_bb, std::ref(*this), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, SRCLINE); //protocol bit-banger shim
 //TODO: refill not needed?
-            txtr.clear_stats(); //perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
+            txtr.clear_stats(&m_frctl.perf_stats[0]); //perftime(); //kludge: flush perf timer, but leave a little overhead so first-time results are realistic
+//            elapsed_t first_caller_correction;
 //}
             debug(19, "bkg gpu txtr " << txtr);
             init_fbque(init_color); //do this *before* set running state, but after determining frame_time
@@ -934,7 +935,7 @@ public: //methods:
 //            const int delay_msec = 1000; //2 msec;
             started = now(); //reset timebase so timing stats are just for render loop
 //debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
-            for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //int i = 0; i < 5; ++i)
+            for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //no-CAUTION: numfr pre-inc to account for clear_stats() at end of first iter; //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
 //        let qent = frnum % frctl.length; //simple, circular queue
@@ -971,6 +972,17 @@ public: //methods:
                 it->ready.store(0);
 //                it->prevfr.store(it->frnum.load());
                 it->frnum += SIZEOF(m_fbque); //tell wkers which frame to render next;//QUELEN; //NOTE: do this last (wkers look for this)
+//                m_frctl.numfr = frnum; //pre-inc
+//kludge: try to compensate for first iteration likely had extra startup overhead or had extra time for prep:
+//                if (!frnum) memset(&m_frctl.perf_stats[0], 0, sizeof(m_frctl.perf_stats)); //clear special case values; //TXTR::CALLER] = 0;
+//                else if (frnum == 1) //duplicate second iteration values for first iteration
+//                    for (int i = 0; i < SIZEOF(m_frctl.perf_stats); ++i) m_frctl.perf_stats[i] *= 2;
+//RPi seems to take 2 iterations to stabilize, so apply kludge to first 3 frames:
+                if (frnum && (frnum < 3)) //use this iteration values for previous iteration
+                    for (int i = 0; i < SIZEOF(m_frctl.perf_stats); ++i)
+                        m_frctl.perf_stats[i] = (frnum + 1) * (m_frctl.perf_stats[i] - txtr.perf_stats[i]);
+                if (frnum < 2) //leave suspect edge case stats in place, just make a copy to compare against next iter
+                    memcpy(&txtr.perf_stats[0], &m_frctl.perf_stats[0], sizeof(m_frctl.perf_stats));
 //        delta = elapsed.now() - previous; perf[0].render += delta; previous += delta;
 //        perf[0].numfr = frnum + 1;
 //        perf[0].update(true);

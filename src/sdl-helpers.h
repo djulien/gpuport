@@ -507,7 +507,7 @@ fflush(stdout);
 //const SDL_Rect& NO_RECT = *(SDL_Rect*)0; //&NO_RECT == 0
 //SDL_Rect NO_RECT; //dummy value (settable)
 #define NO_RECT  (SDL_Rect*)NULL //static_cast<SDL_Rect*>(NULL)
-
+const SDL_Rect DEFAULT_RECT(SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DONT_CARE, DONT_CARE);
 
 inline void mySDL_GetWindowRect(CONST SDL_Window* wnd, SDL_Rect* rect)
 {
@@ -1968,10 +1968,11 @@ public: //methods
 //??        SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
 //??        VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
     }
-    inline void clear_stats()
+    inline void clear_stats(elapsed_t* perf = NO_PERF)
     {
+        if (!perf) perf = &perf_stats[0];
         perftime(); //flush/reset perf timer
-        memset(&perf_stats, 0, sizeof(perf_stats));
+        memset(/*&perf_stats*/ perf, 0, sizeof(perf_stats));
     }
     inline void fill(PXTYPE color = BLACK, SrcLine srcline = 0)
     {
@@ -2033,9 +2034,11 @@ public: //methods
             size_t xfrlen = m_cached.wh.h * m_cached.pitch;
             if (!xfr) exc_hard("no xfr cb"); //{ xfr = memcpy; xfrlen /= 3; } //kludge: txtr is probably 3x node size so avoid segv
 //printf("here12\n"); fflush(stdout);
-#if 0 //NOTE: wiki says this is slow, and to use streaming texture lock/unlock instead
+#if 1 //NOTE: wiki says this is slow, and to use streaming texture lock/unlock instead
+            PXTYPE pixelbuf[xfrlen / sizeof(PXTYPE)]; //m_cached.wh.w * m_cached.wh.h];
+            xfr(pixelbuf, pixels, xfrlen); //m_cached.wh.h * m_cached.pitch); //perfect fwd to memcpy; //, NVL(srcline, SRCLINE));
 //https://wiki.libsdl.org/SDL_UpdateTexture?highlight=%28%5CbCategoryAPI%5Cb%29%7C%28SDLFunctionTemplate%29
-        if (!SDL_OK(SDL_UpdateTexture(txtr, rect, pixels, cached.pitch))) SDL_exc("update texture", srcline);
+            if (!SDL_OK(SDL_UpdateTexture(txtr, rect, pixelbuf, m_cached.pitch))) SDL_exc("update texture", srcline);
 #else
             int pitch;
             void* txtrbuf;
@@ -2058,13 +2061,13 @@ public: //methods
 #else //WET to allow more detailed perf tracking
 //printf("here15\n"); fflush(stdout);
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
- #if 0 //is this needed?
+ #if 1 //is this needed? updating all pixels, so probably not needed; however, SDL documentation recommends clear even if updating all pixels
         if (!SDL_OK(SDL_RenderClear(rndr))) SDL_exc("render clear", srcline);
  #endif
         if (!SDL_OK(SDL_RenderCopy(rndr, txtr, NO_RECT, NO_RECT))) SDL_exc("render fbcopy", srcline); //copy texture to video framebuffer
 //printf("here16\n"); fflush(stdout);
         perf[REND_COPY] += perftime(); //1000); //CPU to GPU data xfr time (msec)
-        if (FORCE_VSYNC) m_vsync.wait(); //CAUTION: waits up to 1 frame time (~33 msec @30 FPS
+        if (FORCE_VSYNC) m_vsync.wait(); //CAUTION: waits up to 1 frame time (~17 msec @60 FPS)
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
         ++perf[NUM_PRESENT]; //#render presents
 #endif
@@ -2082,7 +2085,7 @@ public: //methods
         if (!perf) perf = &perf_stats[0];
 //        perf[0] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
         SDL_Renderer* rndr = SDL_AutoWindow<>::renderer(m_wnd, NVL(srcline, SRCLINE));
-        if (FORCE_VSYNC) m_vsync.wait(); //CAUTION: waits up to 1 frame time (~33 msec @30 FPS
+        if (FORCE_VSYNC) m_vsync.wait(); //CAUTION: waits up to 1 frame time (~17 msec @60 FPS)
         VOID SDL_RenderPresent(rndr); //update screen; NOTE: blocks until next V-sync (if SDL_RENDERER_PRESENTVSYNC is on)
         ++perf[NUM_IDLE]; //count #render presents; gives max theoretical frame rate (vsynced)
 //        perf[3] += perftime(); //1000); //vsync wait time (idle time, in msec); should align with fps
@@ -2431,7 +2434,7 @@ int main(int argc, char* argv[])
 #endif
 
 
-//raw SDL API test:
+//mostly bare SDL API test (minimal helpers):
 //based on example code at https://wiki.libsdl.org/MigrationGuide
 //using "fully rendered frames" style
 void sdl_api_test()
@@ -2443,8 +2446,20 @@ void sdl_api_test()
 //    SDL_Window* sdlWindow = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 0, 0, SDL_WINDOW_FULLSCREEN_DESKTOP);
     SDL_Window* sdlWindow;
     SDL_Renderer* sdlRenderer;
-    const int W = 4, H = 5; //W = 3 * 24, H = 64; //1111;
+//    const int W = 4, H = 5; //W = 3 * 24, H = 64; //1111;
+    const int vgroup = 10, W = 3 * 24, H = 1024 / vgroup;
+#if 0 //boxed; doesn't cover screen
     if (!SDL_OK(SDL_CreateWindowAndRenderer(DONT_CARE, DONT_CARE, SDL_WINDOW_FULLSCREEN_DESKTOP, &sdlWindow, &sdlRenderer))) SDL_exc("cre wnd & rndr");
+#else //full screen coverage
+    const int screen = FIRST_SCREEN;
+    SDL_Rect rect = true? ScreenInfo(screen)->bounds: DEFAULT_RECT; //NOTE: need to set (x, y) for multiple monitors
+//    rect.w = W; rect.h = H;
+    const Uint32 WANT_VSYNC = true, flags = SDL_WINDOW_FULLSCREEN_DESKTOP; //false? SDL_WINDOW_FULLSCREEN_DESKTOP: 0;
+    sdlWindow = SDL_CreateWindow("SDL API test", rect.x /*: SDL_WINDOWPOS_UNDEFINED*/, rect.y /*: SDL_WINDOWPOS_UNDEFINED*/, rect.w /*: DONT_CARE*/, rect.h /*: DONT_CARE*/, flags | SDL_WINDOW_SHOWN); //std::forward<ARGS>(args) ...), //no-perfect fwd
+    if (!SDL_OK(sdlWindow)) SDL_exc("cre wnd");
+    sdlRenderer = SDL_CreateRenderer(sdlWindow, FIRST_RENDERER_MATCH, SDL_RENDERER_ACCELERATED | (WANT_VSYNC? SDL_RENDERER_PRESENTVSYNC: 0)); //use SDL_RENDERER_PRESENTVSYNC to get precise refresh timing
+    if (!SDL_OK(sdlRenderer)) SDL_exc("cre rndr");
+#endif
     debug(0, "wnd renderer %p already set? %d", SDL_GetRenderer(sdlWindow), (SDL_GetRenderer(sdlWindow) == sdlRenderer));
     if (!SDL_OK(SDL_RenderSetLogicalSize(sdlRenderer, W, H))) SDL_exc("set render logical size"); //use GPU to scale up to full screen
     if (!SDL_OK(SDL_SetRenderDrawColor(sdlRenderer, R_G_B_A(mixARGB(0.5, BLACK, WHITE))))) SDL_exc("set render draw color");
@@ -2460,7 +2475,7 @@ void sdl_api_test()
 //    for (int x = 0; x < W; ++x)
 //        for (int y = 0; y < H; ++y)
 //            myPixels[y][x] = BLACK;
-#if 1 //check if 1D index can be used instead of (X,Y); useful for fill() loops
+#if 0 //check if 1D index can be used instead of (X,Y); useful for fill() loops
     myPixels[0][W] = RED;
     myPixels[0][2 * W] = GREEN;
     myPixels[0][3 * W] = BLUE;
@@ -2475,17 +2490,18 @@ void sdl_api_test()
         if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
         if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
         if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-        debug(0, "set all %d pixels to 0x%x %s ", W * H, palette[c], NVL(unmap(ColorNames, palette[c])));
+        debug(0, "set all %s pixels to 0x%x %s ", commas(W * H), palette[c], NVL(unmap(ColorNames, palette[c])));
         VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
-        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         VOID SDL_Delay(1 sec);
+        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
     }
 
-//pixel test:
+//pixel/flicker test:
     for (int i = 0; i < W * H; ++i) myPixels[0][i] = BLACK;
-    for (int y = 0 + std::max(H-5, 0), c = 0; y < H; ++y) //fill in GPU xfr order (for debug/test only)
-        for (int x = 0 + std::max(W-5, 0); x < W; ++x, ++c)
+    const SDL_Point STARTXY = true? SDL_Point(std::max(W-5, 0), std::max(H-5, 0)): SDL_Point(0, 0);
+    for (int y = 0 + STARTXY.y, c = 0; y < H; ++y) //fill in GPU xfr order (for debug/test only)
+        for (int x = 0 + STARTXY.x; x < W; ++x, ++c)
 //    for (int x = 0 + W-3; x < W; ++x)
 //        for (int y = 0 + H-3; y < H; ++y)
         {
@@ -2494,11 +2510,11 @@ void sdl_api_test()
             if (!SDL_OK(SDL_UpdateTexture(sdlTexture, NULL, myPixels, sizeof(myPixels[0])))) SDL_exc("update texture"); //W * sizeof (Uint32)); //no rect, pitch = row length
             if (!SDL_OK(SDL_RenderClear(sdlRenderer))) SDL_exc("render clear"); //clear previous framebuffer
             if (!SDL_OK(SDL_RenderCopy(sdlRenderer, sdlTexture, NULL, NULL))) SDL_exc("render copy"); //copy texture to video framebuffer
-            debug(0, "set pixel[%d, %d] to 0x%x %s ", x, y, myPixels[y][x], NVL(unmap(ColorNames, myPixels[y][x])));
+            if (!(c % 100)) debug(0, "set pixel[%d, %d] to 0x%x %s ", x, y, myPixels[y][x], NVL(unmap(ColorNames, myPixels[y][x])));
             VOID SDL_RenderPresent(sdlRenderer); //put new texture on screen; no retval to check
 
+            if (false) VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
-            VOID SDL_Delay(0.25 sec);
         }
     
     VOID SDL_DestroyTexture(sdlTexture);
@@ -2516,15 +2532,17 @@ void wrapper_api_test(ARGS& args)
     TXTR txtr(TXTR::NullOkay{});
 
     int screen = 0; //default
-    const int W = 4, H = 5;
+//    const int W = 4, H = 5;
+    const int W = 24, H = 1111;
     const SDL_Size wh(W, H); //int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
 
     for (auto arg : args) //int i = 0; i < args.size(); ++i)
         if (!arg.find("-s")) screen = atoi(arg.substr(2).c_str());
     debug(0, PINK_MSG << /*timestamp() <<*/ "fullscreen[" << screen << "] " << wh << " test start");
 //    SDL_Delay(2 sec);
+    SDL_Size view(3 * W, H);
 //    /*SDL_AutoTexture<>*/ auto other_txtr(SDL_AutoTexture</*true*/>::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
-    /*SDL_AutoTexture<>*/ auto other_txtr(TXTR::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.screen = screen; SRCLINE; }));
+    /*SDL_AutoTexture<>*/ auto other_txtr(TXTR::create(NAMED{ /*_.wnd = wnd; _.w = W; _.h = H;*/ _.wh = &wh; _.view_wh = &view; _.screen = screen; SRCLINE; }));
     txtr = other_txtr;
     VOID txtr.clear(mixARGB(0.75, BLACK, WHITE), SRCLINE); //gray; bypass txtr and go direct to window
 #if 0
@@ -2579,6 +2597,7 @@ void wrapper_api_test(ARGS& args)
     for (int c = 0; c < SIZEOF(palette); ++c)
     {
         VOID SDL_Delay(1 sec); //at top of loop for caller time consistency
+        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
 //        perf_stats[0] += txtr.perftime();
         SDL_AutoTexture<>::fill(&myPixels[0][0], palette[c], wh.w * wh.h); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
 //        debug(0, /*timestamp() <<*/ "all " << wh << " pixels => 0x%x", myPixels[0][0]);
@@ -2587,7 +2606,6 @@ void wrapper_api_test(ARGS& args)
         if (c) show_stats(BLUE_MSG, SRCLINE);
     //    for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
 //        ++numfr;
-        if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         if (!c) txtr.clear_stats(); //exclude first iteration in case it has extra startup time; //txtr.perftime(); //flush perf timer
     }
 //    debug(0, CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / numfr / 1e6, perf_stats[1] / numfr / 1e3, perf_stats[2] / numfr / 1e3, perf_stats[3] / numfr / 1e3, perf_stats[4] / numfr / 1e3);
@@ -2600,20 +2618,21 @@ void wrapper_api_test(ARGS& args)
 //    VOID txtr.update(NAMED{ SRCLINE; }); //txtr.perftime(); //kludge: flush perf timer
     txtr.clear_stats(); //txtr.perftime(); //flush perf timer
 //    VOID SDL_Delay(0.25 sec); //kludge: even out timer with loop
-    for (int y = 0 + std::max(wh.h-5, 0), c = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
-        for (int x = 0 + std::max(wh.w-5, 0); x < wh.w; ++x, ++c)
+    const bool full = true;
+    for (int y = !full? std::max(wh.h-5, 0): 0, c = 0; y < wh.h; ++y) //fill in GPU xfr order (for debug/test only)
+        for (int x = !full? std::max(wh.w-5, 0): 0; x < wh.w; ++x, ++c)
         {
-            VOID SDL_Delay(0.25 sec); //at top of loop for caller time consistency
+            if (!full) VOID SDL_Delay(0.25 sec); //at top of loop for caller time consistency
+            if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
 //            perf_stats[0] += txtr.perftime();
             myPixels[y][x] = palette[c % SIZEOF(palette)]; //NOTE: inner dimension = X due to order of GPU data xfr
 //            debug(0, /*timestamp() <<*/ "0x%x => [r %d, c %d]", myPixels[y][x], y, x);
             VOID txtr.update(NAMED{ _.pixels = &myPixels[0][0]; _.xfr = memcpy; /*_.perf = &perf_stats[1];*/ SRCLINE; }); //, true, SRCLINE); //W * sizeof (Uint32)); //no rect, pitch = row length
 //            debug(BLUE_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, perf_stats[0] / 1e6, perf_stats[1] / 1e3, perf_stats[2] / 1e3, perf_stats[3] / 1e3, perf_stats[4] / 1e3);
-            show_stats(BLUE_MSG, SRCLINE);
+            if (!(c % 100)) show_stats(BLUE_MSG, SRCLINE);
 //            for (int i = 0; i < SIZEOF(perf_stats); ++i) total_stats[i] += perf_stats[i];
 //            ++numfr;
-//            VOID SDL_Delay(0.25 sec);
-            if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
+//            if (!full) VOID SDL_Delay(0.25 sec);
         }
 //    debug(CYAN_MSG "perf: [%4.3f s, %4.3f ms, %4.3f ms, %4.3f ms, %4.3f ms]" ENDCOLOR, total_stats[0] / numfr / 1e6, total_stats[1] / numfr / 1e3, total_stats[2] / numfr / 1e3, total_stats[3] / numfr / 1e3, total_stats[4] / numfr / 1e3);
     show_stats(CYAN_MSG, SRCLINE);

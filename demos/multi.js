@@ -271,7 +271,7 @@ function* main()
 //        ++this.count || (this.count = 1); //== numwr+2 so drop it
             if (data) { gp.audiostate = AudioStates.Started; Object.assign(this, data); } //save for later
             if (eof || !((/*this.count*/ (data || {}).numwr || 1) % 50) /*&& data*/) debug(`#wr ${commas(this.numwr)}, wrtotal ${commas(this.wrtotal)}, time ${prec(this.timestamp, 1e3)}`.pink_lt); //wrtotal / 4 / 44100, 1e3)}`.pink_lt); //count ${commas(this.count)}, 
-//            if (!data) debug(evt, this, `time ${this.wrtotal / 4 / 44100}`);
+            if (!data) debug(evt, this, `time ${this.timestamp}`.pink_lt); //wrtotal / 4 / 44100}`.pink_lt);
             if (eof) { gp.audiostate = AudioStates.Done; debug("mp3 done".cyan_lt); } //playback(inx + 1);
             return gp.moreaudio; //(/*gp.audiostate != AudioStates.Started*/ !gp.NUMFR) || (gp.numfr < gp.NUMFR); //!data || !gp.isdone; //cancel audio playback if Gpu port closes
         });
@@ -303,13 +303,14 @@ function* main()
     if (!NUM_WKERs) { warn("no workers, run 1 on main thread"); yield* wker(); } //kludge: run render wker on main thread; CAUTION: only suitable for dev/debug/light-weight processing (can't starve Node event loop)
 //    if (!NUM_WKERs) { cluster.worker = {id: 1}; yield* wker(); } //kludge: run render wker on main thread; CAUTION: only suitable for dev/debug/light-weight processing (can't starve Node event loop)
 //    yield wait_sec(1); //kludge: give wkers some time to get ready
-    setInterval((THIS) => //NOTE: arrow function doesn't have "this"
+    let stats_timer = setInterval((THIS) => //NOTE: arrow function doesn't have "this"
     {
 //        debug(0, `gpu wker perf: `.yellow_lt);
         const numfr = gp.perf_stats[gp.PerfStats.NUM_PRESENT];
-        if (!++THIS.count) { debug(0, "perf: [caller, txtr bb, txtr xfr, upd+vsync]".cyan_lt); THIS.count = 1; } //, #sampl]"); //show legend
-        debug(0, "perf: [%f ms, %f ms, %f ms, %f ms]", numfr? prec(gp.perf_stats[gp.PerfStats.CALLER] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.CPU_TXTR] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.REND_COPY] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.REND_PRESENT] / numfr / 1e3, 1e3): 0); //, txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT]); //, numfr? perf_stats[4] / numfr / 1e3: 0);
-    }, ONE_SEC, {}).unref(); //provide container for local cb data
+        if (!++THIS.count) { debug(0, "perf: [upd+idle: caller, txtr bb, txtr xfr, upd+vsync]".cyan_lt); THIS.count = 1; } //, #sampl]"); //show legend
+        const idle_count = gp.perf_stats[gp.PerfStats.NUM_IDLE]? `+${commas(gp.perf_stats[gp.PerfStats.NUM_IDLE])}`: "";
+        debug(0, "perf: [%s%s: %f ms, %f ms, %f ms, %f ms]".cyan_lt, commas(gp.perf_stats[gp.PerfStats.NUM_PRESENT]), idle_count, numfr? prec(gp.perf_stats[gp.PerfStats.CALLER] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.CPU_TXTR] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.REND_COPY] / numfr / 1e3, 1e3): 0, numfr? prec(gp.perf_stats[gp.PerfStats.REND_PRESENT] / numfr / 1e3, 1e3): 0); //, txtr.perf_stats[SDL_AutoTexture<>::NUM_PRESENT]); //, numfr? perf_stats[4] / numfr / 1e3: 0);
+    }, ONE_SEC, {}); //.unref(); //provide container for local cb data
     yield* wait4port(() => !gp.morevideo); //isdone); //!gp.isopen || ((gp.audiostate == AudioStates.Done) || (gp.numfr >= gp.NUMFR)); //(gp.numfr >= seq.NUMFR)); //wait for GPU to finish rendering before closing port
 //debug("here6");
 //    for (let i = 1; i <= 10; ++i)
@@ -321,12 +322,13 @@ function* main()
 //    const perf = {wait: 0, render: 0}; //wait time, render time
 //    while (gp.isopen)
 //to open: rtime ${gp.frtime}, open? ${gp.isopen}, buf[${gp.numfr % nodebufs.length}], ready ${hex(nodebufs[gp.numfr % nodebufs.length].ready)}, perf stats:`, JSON.stringify(gp.perf_stats).json_tidy);
+    clearInterval(stats_timer);
     if (gp.isopen) gp.close();
     yield* wait4port(() => !gp.isopen, ONE_SEC);
 //    debug(`main idle (done after ${gp.numfr} frames), gpu wker stats: ${gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1))).join(", ")} (avg msec)`.cyan_lt);
     const stats_avg = gp.perf_stats.map((msec) => commas(msec / (gp.numfr || 1)));
     debug(0, `main done (${commas(gp.numfr)} frames), gpu wker stats (avg msec): caller time ${stats_avg[0]}, txtr_bb+refill ${stats_avg[1]}, rndr copy ${stats_avg[2]}, rndr pres ${stats_avg[3]}`.cyan_lt);
-//    debug(`wker perf_stats: ${spares.slice(0, 3 * NUM_WKERs).map((msec) => msec / (gp.numfr || 1)).join(", ")} avg msec`);
+//    debug(`wker perf_stats: ${spares.slice(0, 3 * NUM_WKERs).map((msec) => msec / (gp.numfr || 1)).join(", "")} avg msec`);  `//vscode bug
 }
 
 
@@ -387,7 +389,7 @@ function mp3player(filename, cb)
                 .on('close', () => cb(`audio close @T+${timestamp()}`, true)); // /*clearInterval(pbtimer)*/; console.log("[%s] speaker closed".yellow_light, timescale(elapsed() - started)); });
 //            elapsed(0);
             cb(`audio start @T+${elapsed()}`); //, null, {});
-            elapsed(0); //use audio start as timebase
+//            elapsed(0); //use audio start as timebase
         })
         .on('end', () => cb(`audio decode end @T+${timestamp()}`)) //console.log("[%s] decode done!".yellow_light, timescale(elapsed() - started)); })
         .on('error', (err) => cb(`audio decode ERROR: ${err} @T+${timestamp()}`, err)); //console.log("[%s] decode ERROR %s".red_light, timescale(elapsed() - started), err); });
@@ -541,6 +543,7 @@ function* wker() //wker_data)
 //    this.wait = this.render = this.unknown = this.numfr = 0;
     const frtime_delay = true? gp.frtime || (1000 / (gp.FPS || 1)): ONE_SEC, TIMING_SLOP = 5; //msec
     let started = elapsed.now(), previous = started;
+//    gp.caller_started();
 //debug("frtime_delay", frtime_delay);
 //if (false)
     for (var frnum = 0; /*(frnum < seq.NUMFR)*/ /*(gp.isplaying[0] < 2) && gp.isopen*/ gp.morevideo; ++frnum)
@@ -598,6 +601,7 @@ function* wker() //wker_data)
 //    for (var i = 0; i < gp.UNIV_MAXLEN; ++i)
 //        nodebufs[0].nodes[i % 24][i] = hsv2rgb(.4, 1, 1);
 /**/
+//        yield wait_msec(50);
         nodebufs[qent].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
         debug((frnum % 50)? 10: 0, `wker# ${wkid} rendered fr#${which_fr} deadline ${commas(frnum * gp.frtime)} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
 //        delta = elapsed.now() - previous; perf[wkid].render += delta; previous += delta;
