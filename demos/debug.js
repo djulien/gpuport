@@ -48,9 +48,11 @@ const DEFAULT_LEVEL = 33;
 //module.exports.wanted =
 function wanted(name, msg_level)
 {
-    if (!isNaN(name)) [name, msg_level] = [debug.parent, name]; //shuffle optional args
+    if (!isNaN(name)) { ++debug.nested; [name, msg_level] = [debug.parent, name]; --debug.nested; } //shuffle optional args
+if (wanted.after && (name.substr(0, 5) == "debug")) { var y = debug.parent; console.error(debug.parent); return y.func(); } //throw "bad name".red_lt;
     const wanted_level = detail(name);
-//console.log(`debug.wanted(name '${name}', msg ${msg_level}): <= wanted ${wanted_level}? ${msg_level <= wanted_level} @${__fili.drop_dirname}`);
+if (arguments.length < 2) console.log(`wanted(${name}, ${msg_level}), det levels ${JSON.stringify(detail.levels)} : <= ${wanted_level}? ${msg_level <= wanted_level}`);
+//console.log(`debug.wanted(name '${name}', msg ${msg_level}): from ${JSON.stringify(detail.levels)} <= wanted ${wanted_level}? ${msg_level <= wanted_level} @${__fili.drop_dirname}`);
     return msg_level <= wanted_level;
 }
 
@@ -63,9 +65,11 @@ function detail(name, new_level)
 {
     if (!detail.levels) detail.levels = {};
     if (!isNaN(name)) [name, new_level] = [debug.parent, name]; //shuffle optional args
+//    name = name.replace(/:\d+$/, ""); //drop line#; TODO: why is this needed?
+if (wanted.after && ~name.indexOf(":")) { var x; return x.func(); } //throw "bad name".red_lt;
     if (new_level === true) new_level = DEFAULT_LEVEL;
     if (new_level === false) new_level = NONE_LEVEL;
-    if (typeof new_level != "undefined") //arguments.length > 1) //set new level
+    if (new_level != void(0) /*typeof new_level != "undefined"*/) //arguments.length > 1) //set new level
     {
         if (name == "*") detail.levels = !isNaN(new_level)? {"*": new_level}: {}; //NOTE: overrides all settings; //DEFAULT_LEVEL}; //-1
         else if (!isNaN(new_level)) detail.levels[name] = new_level;
@@ -102,6 +106,7 @@ function detail(name, new_level)
 //tell user how to set debug options:
 if (!process.env.DEBUG) console.error(`Prefix with "DEBUG=${__file}" or "DEBUG=*" to see debug info.`.yellow_lt);
 debug("initial debug levels", JSON.stringify(detail.levels));
+wanted.after = true;
 //console.error(`want_debug: ${JSON.stringify(ALL)}`);
 //process.exit();
 
@@ -130,7 +135,7 @@ function caller(depth)
         if (parent.indexOf("node_modules") != -1) continue; //exclude npm pkgs
 //        if (stack.getFileName() == __filename) return true;
 //if (!debug.nested--) break;
-        if (!depth--) return /*console.log(`caller[${svdepth}] = ${parent} @${__fili.drop_dirname}`),*/ parent;
+        if (!depth--) return caller.stack_frame = __stack[i], /*console.log(`caller[${svdepth}] = ${parent} @${__fili.drop_dirname}`),*/ parent;
     }
     throw `no caller[${svdepth}]? ${__stack.map((val, inx, all) => `[${inx}/${all.length}] ${pathlib.basename(val.getFileName())}:${val.getLineNumber()}`).join(", ")} @${__fili.drop_dirname}`.red_lt;
 }
@@ -152,12 +157,13 @@ function debug(args)
 //TODO: need a more precise way to specify msg debug level:
 //this function is already varargs, so using first arg is probably the most reliable approach
         args = Array.from(arguments); //turn into real array
-        if (/*(args.length >= 1) &&*/ (typeof args[0] == "number") && (args.length > 1) /*&& (args[1].toString().indexOf("%") != -1)*/) msg_detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
+        if (/*(args.length >= 1) &&*/ /*typeof args[0] == "number"*/ !isNaN(args[0]) && (args.length > 1) /*&& (args[1].toString().indexOf("%") != -1)*/) msg_detail = /*args[0];*/ args.shift(); //optional first arg = debug detail level
 //    if ((args.length < 1) || (typeof args[0] != "string")) args.unshift("%j"); //placeholder for fmt
 //??    else if (args[0].toString().indexOf("%") == -1) args.unshift("%s"); //placeholder for fmt
 //        ++debug.nested || (debug.nested = 1);
         const parent = caller(++debug.nested || 1);
-        const want_msg = wanted(parent, msg_detail);
+//Sconsole.error("stack frame", JSON.stringify(caller.stack_frame), "parent", parent);
+        const want_msg = wanted(parent.replace(/:.*$/, ""), msg_detail);
 //        const svnested = debug.nested;
         debug.nested = 0; //reset for next time
         if (!want_msg) return; //console.log(`!msg[${svnested}] '${args[0]}' @${__fili.drop_dirname}`);
