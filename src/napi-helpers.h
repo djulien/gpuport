@@ -21,6 +21,10 @@
 #endif
 
 
+#ifndef SIZEOF
+ #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
+#endif
+
 //accept variable # 2-4 macro args:
 #ifndef UPTO_2ARGS
  #define UPTO_2ARGS(skip1, skip2, use3, ...)  use3
@@ -688,5 +692,21 @@ public: //methods
 
 
 #endif //ndef _NAPI_HELPERS_H
+
+
+///////////////////////////////////////////////////////////////////////////////
+////
+/// Unit test
+//
+
+#ifdef WANT_UNIT_TEST
+#undef WANT_UNIT_TEST //prevent recursion
+
+void unit_test(ARGS& args)
+{
+    throw "no unit tests; use Node.js run-time instead";
+}
+
+#endif //def WANT_UNIT_TEST
 
 //eof

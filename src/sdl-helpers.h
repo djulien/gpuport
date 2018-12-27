@@ -17,14 +17,16 @@
 #include <algorithm> //std::max()
 #include <sstream> //std::ostringstream
 
-#include "msgcolors.h" //*_MSG, ENDCOLOR, ENDCOLOR_ATLINE()
-#include "srcline.h" //SrcLine, SRCLINE, TEMPL_ARGS
-#include "debugexc.h" //debug(), exc()
+//#include "msgcolors.h" //*_MSG, ENDCOLOR, ENDCOLOR_ATLINE()
+//#include "srcline.h" //SrcLine, SRCLINE, TEMPL_ARGS
+//#include "debugexc.h" //debug(), exc()
 #include "str-helpers.h" //commas()
 #include "rpi-helpers.h" //isrpi(), vSyncer
-#include "ostrfmt.h" //FMT()
-#include "elapsed.h" //elapsed_msec(), timestamp()
+//#include "ostrfmt.h" //FMT()
+//#include "elapsed.h" //elapsed_msec(), timestamp()
 #include "shmalloc.h" //AutoShmary<>, STATIC_WRAP()
+//#include "color.h" //limit<>; must come after SDL.h?
+#include "logging.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -219,7 +221,8 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 //#include <SDL_opengl.h>
 //#include <GL/gl.h>
 //#endif
-#include <SDL_endian.h> //SDL_BYTE_ORDER
+//#include <SDL_endian.h> //SDL_BYTE_ORDER
+#include "rgb-helpers.h" //limit<>; must come after SDL.h?
 
 //friendlier names for SDL special param values:
 //#define UNUSED  0
@@ -247,6 +250,7 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 
 
 //timing stats:
+//TODO: move to elapsed.h
 #define now()  SDL_Ticks() //nsec -> usec
 //inline uint64_t now() { return SDL_Ticks(); }
 #define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
@@ -664,153 +668,6 @@ std::ostream& operator<<(std::ostream& ostrm, const SDL_RendererInfo& rinfo)
 //    return ostrm.str();
     return ostrm;
 }
-
-
-////////////////////////////////////////////////////////////////////////////////
-////
-/// (A)RGB color defs
-//
-
-//(A)RGB primary colors:
-//NOTE: consts below are processor-independent (hard-coded for ARGB msb..lsb)
-//internal SDL_Color is RGBA
-//use later macros to adjust in-memory representation based on processor endianness (RGBA vs. ABGR)
-//#pragma message("Compiled for ARGB color format (hard-coded)")
-#define RED  0xFFFF0000 //fromRGB(255, 0, 0) //0xFFFF0000
-#define GREEN  0xFF00FF00 //fromRGB(0, 255, 0) //0xFF00FF00
-#define BLUE  0xFF0000FF //fromRGB(0, 0, 255) //0xFF0000FF
-#define YELLOW  (RED | GREEN) //0xFFFFFF00
-#define CYAN  (GREEN | BLUE) //0xFF00FFFF
-#define MAGENTA  (RED | BLUE) //0xFFFF00FF
-#define PINK  MAGENTA //easier to spell :)
-#define BLACK  (RED & GREEN & BLUE) //0xFF000000 //NOTE: needs Alpha
-#define WHITE  (RED | GREEN | BLUE) //fromRGB(255, 255, 255) //0xFFFFFFFF
-//other ARGB colors (debug):
-//#define SALMON  0xFF8080
-//#define LIMIT_BRIGHTNESS  (3*212) //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
-
-
-//set in-memory byte order according to architecture of host processor:
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN //Intel (PCs)
- #pragma message("SDL big endian")
- #define Rmask  0xFF000000
- #define Gmask  0x00FF0000
- #define Bmask  0x0000FF00
- #define Amask  0x000000FF
-//#define Abits(a)  (clamp(a, 0, 0xFF) << 24)
-//#define Rbits(a)  (clamp(r, 0, 0xFF) << 16)
-//#define Gbits(a)  (clamp(g, 0, 0xFF) << 8)
-//#define Bbits(a)  clamp(b, 0, 0xFF)
-// #define Amask(color)  ((color) & 0xFF000000)
-// #define Rmask(color)  ((color) & 0x00FF0000)
-// #define Gmask(color)  ((color) & 0x0000FF00)
-// #define Bmask(color)  ((color) & 0x000000FF)
-// #define A(color)  (((color) >> 24) & 0xFF)
-// #define R(color)  (((color) >> 16) & 0xFF)
-// #define G(color)  (((color) >> 8) & 0xFF)
-// #define B(color)  ((color) & 0xFF)
-// #define toARGB(a, r, g, b)  ((clamp(toint(a), 0, 255) << 24) | (clamp(toint(r), 0, 255) << 16) | (clamp(toint(g), 0, 255) << 8) | clamp(toint(b), 0, 255))
-
-#elif SDL_BYTEORDER == SDL_LIL_ENDIAN //ARM (RPi)
-// #pragma message("SDL li'l endian")
- #define Rmask  0x000000FF
- #define Gmask  0x0000FF00
- #define Bmask  0x00FF0000
- #define Amask  0xFF000000
-// #define Amask(color)  ((color) & 0xFF000000)
-// #define Rmask(color)  ((color) & 0x00FF0000)
-// #define Gmask(color)  ((color) & 0x0000FF00)
-// #define Bmask(color)  ((color) & 0x000000FF)
-// #define A(color)  (((color) >> 24) & 0xFF)
-// #define R(color)  (((color) >> 16) & 0xFF)
-// #define G(color)  (((color) >> 8) & 0xFF)
-// #define B(color)  ((color) & 0xFF)
-// #define toARGB(a, r, g, b)  ((clamp(toint(a), 0, 255) << 24) | (clamp(toint(r), 0, 255) << 16) | (clamp(toint(g), 0, 255) << 8) | clamp(toint(b), 0, 255))
-
-#else
- #error message("Unknown SDL endian")
-#endif
-
-
-//color manipulation:
-//NOTE: these are mainly meant for use with compile-time consts (arithmetic performed once at compile time)
-//could be used with vars also (hopefully compiler optimizes using byte instructions)
-#define Rshift  (Rmask / 0xFF)
-#define Gshift  (Gmask / 0xFF)
-#define Bshift  (Bmask / 0xFF)
-#define Ashift  (Amask / 0xFF)
-#define fromRGB(r, g, b)  ((255 * Ashift) | (clamp(r, 0, 255) * Rshift) | (clamp(g, 0, 255) * Gshift) | (clamp(b, 0, 255) * Bshift))
-#define fromARGB(a, r, g, b)  ((clamp(a, 0, 255) * Ashift) | (clamp(r, 0, 255) * Rshift) | (clamp(g, 0, 255) * Gshift) | (clamp(b, 0, 255) * Bshift))
-
-#define A(color)  (((color) / Ashift) & 0xFF)
-#define R(color)  (((color) / Rshift) & 0xFF)
-#define G(color)  (((color) / Gshift) & 0xFF)
-#define B(color)  (((color) / Bshift) & 0xFF)
-
-#define Abits(color)  ((color) & Amask)
-#define Rbits(color)  ((color) & Rmask)
-#define Gbits(color)  ((color) & Gmask)
-#define Bbits(color)  ((color) & Bmask)
-
-#define R_G_B(color)  R(color), G(color), B(color)
-#define A_R_G_B(color)  A(color), R(color), G(color), B(color)
-#define R_G_B_A(color)  R(color), G(color), B(color), A(color)
-#define B_G_R(color)  B(color), G(color), R(color)
-#define A_B_G_R(color)  A(color), B(color), G(color), R(color)
-#define B_G_R_A(color)  B(color), G(color), R(color), A(color)
-
-#define mixARGB_2ARGS(dim, val)  mixARGB_3ARGS(dim, val, Abits(val)) //preserve Alpha
-#define mixARGB_3ARGS(blend, c1, c2)  fromARGB(mix(blend, A(c1), A(c2)), mix(blend, R(c1), R(c2)), mix(blend, G(c1), G(c2)), mix(blend, B(c1), B(c2))) //uses floating point
-#define mixARGB_4ARGS(num, den, c1, c2)  fromARGB(mix(num, den, A(c1), A(c2)), mix(num, den, R(c1), R(c2)), mix(num, den, G(c1), G(c2)), mix(num, den, B(c1), B(c2))) //use fractions to avoid floating point at compile time
-#define mixARGB(...)  UPTO_4ARGS(__VA_ARGS__, mixARGB_4ARGS, mixARGB_3ARGS, mixARGB_2ARGS, mixARGB_1ARG) (__VA_ARGS__)
-#define dimARGB  mixARGB_2ARGS
-
-//#define R_G_B_A_masks(color)  Rmask(color), Gmask(color), Bmask(color), Amask(color)
-
-//convert color ARGB <-> ABGR format:
-//OpenGL seems to prefer ABGR format, but ARGB order is more readable (for me)
-//convert back with same function & 0xffffff
-//TODO: drop alpha setting?
-//??	if (!Amask(color) /*&& (color & 0xffffff)*/) color |= 0xff000000; //RGB present but no alpha; add full alpha to force color to show
-#define ARGB2ABGR(color)  ((color) & (Amask | Gmask) | (R(color) * Bshift) | (B(color) * Rshift)) //swap R <-> B
-//#define SWAP32(uint32)  ((Amask(uint32) >> 24) | (Rmask(uint32) >> 8) | (Gmask(uint32) << 8) | (Bmask(uint32) << 24))
-
-
-//limit brightness:
-//NOTE: A bits are dropped/ignored
-template<int MAXBRIGHT = pct(50/60), typename COLOR = Uint32> //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
-COLOR limit(COLOR color)
-{
-    /*using*/ static const int BRIGHTEST = 3 * 255 * MAXBRIGHT / 100;
-    if (!MAXBRIGHT || (MAXBRIGHT >= 100)) return color; //R(BRIGHTEST) + G(BRIGHTEST) + B(BRIGHTEST) >= 3 * 255)) return color; //no limit
-//#pragma message "limiting R+G+B brightness to " TOSTR(LIMIT_BRIGHTNESS)
-    unsigned int r = R(color), g = G(color), b = B(color);
-    unsigned int sum = r + g + b; //max = 3 * 255 = 765
-    if (sum <= BRIGHTEST) return color;
-//reduce brightness, try to preserve relative colors:
-    r = rdiv(r * BRIGHTEST, sum);
-    g = rdiv(g * BRIGHTEST, sum);
-    b = rdiv(b * BRIGHTEST, sum);
-    color = /*Abits(color) |*/ (r * Rshift) | (g * Gshift) | (b * Bshift); //| Rmask(r) | Gmask(g) | Bmask(b);
-//printf("REDUCE: 0x%x, sum %d, R %d, G %d, B %d => r %d, g %d, b %d, 0x%x\n", sv, sum, R(sv), G(sv), B(sv), r, g, b, color);
-    return color;
-}
-
-
-//const uint32_t PALETTE[] = {RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE};
-
-//readable names (mainly for debug msgs):
-const std::map<Uint32, const char*> ColorNames =
-{
-    {RED, "Red"},
-    {GREEN, "Green"},
-    {BLUE, "Blue"},
-    {YELLOW, "Yellow"},
-    {CYAN, "Cyan"},
-    {MAGENTA, "Pink/Magenta"},
-    {WHITE, "White"},
-    {BLACK, "Black"},
-};
 
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -2289,11 +2146,14 @@ private: //member vars
 #include <iostream> //std::cout
 #include <sstream> //std::ostringstream
 
-#include "msgcolors.h"
-#include "srcline.h"
-#include "elapsed.h"
+//#include "msgcolors.h"
+//#include "srcline.h"
+//#include "elapsed.h"
+//#include "color.h"
+#include "logging.h"
 
 #include "sdl-helpers.h"
+#include "rgb-helpers.h" //limit<>; must come after SDL.h
 
 const elapsed_t m_started1 = now(); //use const to not reset after each read
 inline double perftime1(int scaled = 1) { return elapsed(m_started1) / scaled; }
@@ -2533,7 +2393,7 @@ void wrapper_api_test(ARGS& args)
 
     int screen = 0; //default
 //    const int W = 4, H = 5;
-    const int W = 24, H = 1111;
+    const int W = 24, H = 1111/50;
     const SDL_Size wh(W, H); //int W = 4, H = 5; //W = 3 * 24, H = 32; //1111;
 
     for (auto arg : args) //int i = 0; i < args.size(); ++i)
@@ -2700,8 +2560,6 @@ void gl_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256));
-    debug(0, FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE));
     debug(0, *ScreenInfo(SRCLINE));
 
 //    timer_test();

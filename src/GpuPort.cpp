@@ -58,6 +58,14 @@
 //or https://medium.com/@atulanand94/beginners-guide-to-writing-nodejs-addons-using-c-and-n-api-node-addon-api-9b3b718a9a7f
 //https://github.com/master-atul/blog-addons-example
 
+//framebuffer info:
+// ** https://www.google.com/search?client=ubuntu&channel=fs&q=how+to+use+hardware+acceleration+to+draw+image+to+framebuffer+linux&ie=utf-8&oe=utf-8
+// ** https://github.com/denghongcai/node-framebuffer
+// https://github.com/DirectFB/directfb
+// blit perf: https://theosperiment.wordpress.com/2015/10/07/blitting-around/
+// https://github.com/bitbank2/bbgfx
+
+
 //Node.js event loop and other bkg info:
 //https://stackoverflow.com/questions/10680601/nodejs-event-loop
 // * "the Event Loop should orchestrate client requests, not fulfill them itself."
@@ -74,15 +82,21 @@
 #include <string> //std::string
 #include <map> //std::map<>
 #include <limits.h> //INT_MAX
+#include <bitset> //std::bitset<>
 
-#define MAX_DEBUG_LEVEL  100
+#define MAX_DEBUG_LEVEL  100 //set this before debug() is included via nested #includes
 #include "str-helpers.h" //unmap(), NNNN_hex(), vector_cxx17<>
-#include "thr-helpers.h" //thrnx()
+//#include "thr-helpers.h" //thrinx()
+//can't get rid of flicker; use framebuf instead: 
 #include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
+//#include "fb-helpers.h" //AutoTexture, SDL shims
+#include "rpi-helpers.h" //ScreenConfig, getScreenConfig()
 //#include "elapsed.h" //elapsed_msec(), timestamp(), now()
-#include "msgcolors.h"
-#include "debugexc.h" //debug(), exc(), INSPECT()
-#include "ostrfmt.h" //FMT()
+//#include "msgcolors.h" //MSG_*, ATLINE()
+//#include "debugexc.h" //debug(), exc(), INSPECT()
+//#include "ostrfmt.h" //FMT()
+#include "logging.h"
+#include "rgb-helpers.h" //must come after sdl-helpers
 
 //which Node API to use?
 //V8 is older, requires more familiarity with V8
@@ -144,130 +158,6 @@ public:
 #endif
 
 
-//#include <iostream>
-//#include <vector>
-#include <algorithm>
-#include <iterator>
-#include <initializer_list>
-//#include <cassert>
-
-//fixed-content/length vector:
-//NOTE: don't store any member data except the list of values (or put extra data elsewhere in heap)
-template <typename TYPE, size_t SIZE>
-class PreallocVector
-{
-//public:
-//    static const key_t KEY = 0xbeef0000 | NNNN_hex(SIZE); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
-//    struct shdata
-//    {
-//    int count = 0;
-    TYPE m_list[SIZE];
-//    std::mutex mutex;
-public: //ctors/dtors
-//    str_map(KEYTYPE key, VALTYPE val) {}
-    explicit PreallocVector() {}
-//initializer list example: https://en.cppreference.com/w/cpp/utility/initializer_list
-    explicit PreallocVector(std::initializer_list<TYPE> initl): m_list(initl) {}
-public: //operators:
-    inline TYPE& operator[](int inx) { return m_list[inx]; } //TODO: bounds checking?
-    inline const TYPE& operator[](int inx) const { return m_list[inx]; }
-public: //iterators
-//no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
-//no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
-#if 0
-//see example at https://gist.github.com/jeetsukumaran/307264
-    template <typename ITER_TYPE> //keep it DRY; use templ param to select "const"
-    class iter
-    {
-    public:
-        typedef std::iterator self_type;
-//        typedef const_iterator self_type;
-        typedef ITER_TYPE value_type;
-        typedef ITER_TYPE& reference;
-        typedef ITER_TYPE* pointer;
-        typedef std::forward_iterator_tag iterator_category;
-        typedef int difference_type;
-        inline std::iterator(pointer ptr): ptr_(ptr) {}
-//        const_iterator(pointer ptr) : ptr_(ptr) { }
-        inline self_type operator++() { self_type i = *this; ++ptr_; return i; }
-        inline self_type operator++(int junk) { ++ptr_; return *this; }
-        inline reference operator*() { return *ptr_; }
-//        const reference operator*() { return *ptr_; }
-        inline pointer operator->() { return ptr_; }
-//        const pointer operator->() { return ptr_; }
-        inline bool operator==(const self_type& rhs) { return (ptr_ == rhs.ptr_); }
-        inline bool operator!=(const self_type& rhs) { return (ptr_ != rhs.ptr_); }
-    private:
-        pointer ptr_;
-    };
-    using my_iter = iter<TYPE>;
-    using my_const_iter = iter<const TYPE>;
-#elif 0
-//https://lorenzotoso.wordpress.com/2016/01/13/defining-a-custom-iterator-in-c/
-    class my_iter: public std::iterator</*Category*/ std::output_iterator_tag, /*class T*/ TYPE> //, class Distance = ptrdiff_t, class Pointer = T*, class Reference = T&
-    {
-    public:
-        explicit inline my_iter(PreallocVector& Container, size_t index = 0): m_ptr(&Container[index]) {}
-        inline TYPE operator*() const { return *m_ptr; }
-        inline iterator& operator++() { return *m_ptr++; }
-        inline iterator operator++(int junk) { return *++m_ptr; }
-    private:
-//        size_t nIndex = 0;
-//        CustomContainer& Container;
-        TYPE* m_ptr;
-    };
-#elif 0 //broken
-//http://cpp-tip-of-the-day.blogspot.com/2014/05/building-custom-iterators.html
-//custom iterators need to implement:
-//ctors, copy ctor, assignment op, inc, dec, deref
-//complete list is at: http://www.cplusplus.com/reference/iterator/iterator/
-    template<typename ITER_TYPE = TYPE>
-    class my_iter
-    {
-    public: //ctors/dtors
-        explicit inline my_iter(PreallocVector& vec, size_t inx = 0): m_ptr(&vec[inx]) {}
-        inline my_iter(const my_iter& that): m_ptr(that.m_ptr) {} //copy ctor
-        inline my_iter(ITER_TYPE* that): m_ptr(that) {} //custom copy ctor for post++ op
-    public: //operators
-        inline my_iter& operator=(const my_iter& that) { m_ptr = that.m_ptr; return *this; }
-//        inline size_t operator-(const TYPE* that) const { return m_ptr - that.m_ptr; }
-        friend size_t operator-(const my_iter& lhs, const my_iter& rhs) { return lhs.m_ptr - rhs.m_ptr; }
-        inline bool operator==(const my_iter& that) const { return (that.m_ptr == m_ptr); } //*this == that
-        inline bool operator!=(const my_iter& that) const { return !(that.m_ptr == m_ptr); } //!(*this == that)
-//        inline my_iter& operator=(TYPE* that) { m_ptr = that; return *this; }
-        inline my_iter& operator++() { ++m_ptr; return *this; } //pre-inc; TODO: bounds check?
-        inline my_iter operator++(int) { my_iter pre_inc(m_ptr++); return pre_inc; } //post-inc
-        inline ITER_TYPE& operator*() { return *m_ptr; } //deref op; eg: (*it).member
-        inline ITER_TYPE* operator->() { return m_ptr; } //deref op; eg: it->member
-    private: //data members
-        ITER_TYPE* m_ptr;
-    };
-#endif
-public: //methods:
-    inline size_t size() const { return SIZE; }
-#if 0 //broken
-//no worky    using my_iter = typename std::vector<TYPE>::iterator; //just reuse std::vector<> iterator
-//no worky    using my_const_iter = typename std::vector<TYPE>::const_iterator;
-    inline /*auto*/ /*TYPE* */ my_iter<TYPE> begin() /*const*/ { return my_iter<TYPE>(&m_list[0]); }
-    inline /*auto*/ /*TYPE* */ my_iter<const TYPE> cbegin() const { return my_iter<const TYPE>(m_list[0]); }
-//    vector<string>::iterator iter;
-    inline /*auto*/ /*TYPE* */ my_iter<TYPE> end() /*const*/ { return my_iter<TYPE>(&m_list[SIZE]); }
-    inline /*auto*/ /*TYPE* */ my_iter<const TYPE> cend() const { return my_iter<const TYPE>(m_list[SIZE]); }
-#else
-    inline TYPE* begin() { return &m_list[0]; }
-    inline TYPE* end() { return &m_list[SIZE]; }
-    inline const TYPE* cbegin() const { return &m_list[0]; }
-    inline const TYPE* cend() const { return &m_list[SIZE]; }
-#endif
-//    void push_back(/*const*/ TYPE& new_item)
-//    {
-////TODO: reserve(), capacity(), grow(), etc
-//        if (count >= SIZEOF(list)) exc_hard("FixedSmhVector<" << SIZE << "> no room");
-//        list[count++] = new_item; //TODO: emplace?
-//    }
-};
-
-
 ////////////////////////////////////////////////////////////////////////////////
 ////
 /// Gpu Port main code:
@@ -309,10 +199,10 @@ public: //methods:
 
 
 #include "shmalloc.h" //AutoShmary<>, cache_pad(), WithShmHdr<>
-template<typename TYPE>
-static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count * sizeof(TYPE)) / sizeof(TYPE); }
-#undef cache_pad
-#define cache_pad  cache_pad_typed //kludge; override macro
+//template<typename TYPE>
+//static constexpr size_t cache_pad_typed(size_t count) { return cache_pad(count * sizeof(TYPE)) / sizeof(TYPE); }
+//#undef cache_pad
+//#define cache_pad  cache_pad_typed //kludge; override macro
 
 
 //typedef uint32_t elapsed_t; //20 bits is enough for 5-minute timing using msec; 32 bits is plenty
@@ -354,8 +244,8 @@ struct ShmData
     static const int HTOTAL = 1536; //total x res including blank/sync (might be contrained by GPU); 
     static const int FPS = 30; //target #frames/sec
 //derived settings:
-    static const int UNIV_MAXLEN_raw = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ; above values give ~1128
-    static const int UNIV_MAXLEN_pad = IFDEBUG(4, cache_pad<NODEVAL>(UNIV_MAXLEN_raw)); //1132 for above values; padded for better memory cache performance
+    static const int UNIV_MAXLEN = VRES_CONSTRAINT(CLOCK, HTOTAL, FPS); //max #nodes per univ; above values give ~1128
+//    static const int UNIV_MAXLEN_pad = IFDEBUG(4, cache_pad<NODEVAL>(UNIV_MAXLEN_raw)); //1132 for above values; padded for better memory cache performance
 //    static const SDL_Size max_wh(NUM_UNIV, UNIV_MAXLEN_pad);
     typedef typename std::conditional<(NUM_UNIV <= 32), uint32_t, std::bitset<NUM_UNIV>>::type MASK_TYPE;
 //    using MASK_TYPE = uint32_t; //using UNIV_MASK = XFRTYPE; //cross-univ bitmaps
@@ -374,8 +264,10 @@ struct ShmData
     static const int SPARELEN = IFDEBUG(6, 64);
     static const uint32_t VALIDCHK = 0xf00d1234;
     static const int VERSION = 0x001812; //0.18.12
-    static const key_t SHMKEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
+//    static const key_t SHMKEY = 0xfeed0000 | NNNN_hex(UNIV_MAXLEN_pad); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
 public: //dependent types:
+//data format (protocol) selector:
+//currently only WS281X and a dev mode are supported, but new fmts/protocols could be added
 //    enum class Protocol: int32_t { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
     struct Protocol //kludge: enum class can't have members, so use struct to encapsulate operators and methods
     {
@@ -472,10 +364,11 @@ public: //dependent types:
 //CAUTION: don't make these static; they need to be placed as members directly within object instance (in memory)
 //NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
 //TODO? sizeof(key_t), sizeof(uint32_t), sizeof(size_t), sizeof(double);
-        const /*key_t*/ uint32_t shmkey = SHMKEY, shmlen = sizeof(ShmData); //shmkey demoted to here for completeness
+        const /*key_t*/ uint32_t shmkey = FramebufQuent::SHMKEY, shmlen = sizeof(ShmData); //shmkey demoted to here for completeness
         const /*size_t*/ uint32_t frctl_ofs = offsetof(ShmData, m_frctl), frctl_len = sizeof(m_frctl);
         const /*size_t*/ uint32_t spares_ofs = offsetof(ShmData, m_spare), spares_len = sizeof(m_spare);
         const /*size_t*/ uint32_t nodebufs_ofs = offsetof(ShmData, m_fbque), nodebufs_len = sizeof(m_fbque);
+//        const /*size_t*/ uint32_t msgs_ofs = offsetof(ShmData, m_msglog), msgs_len = sizeof(m_msglog);
     public: //operators
         STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ManifestType& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
         {
@@ -488,6 +381,7 @@ public: //dependent types:
             ostrm << ", frctl " << commas(that.frctl_len) << ":+" << commas(that.frctl_ofs);
             ostrm << ", spares " << commas(that.spares_len) << ":+" << commas(that.spares_ofs);
             ostrm << ", nodebufs " << commas(that.nodebufs_len) << ":+" << commas(that.nodebufs_ofs);
+//            ostrm << ", msgs " << commas(that.msgs_len) << ":+" << commas(that.msgs_ofs);
             return ostrm << "}";
         }
     public: //NAPI methods
@@ -509,6 +403,8 @@ public: //dependent types:
             add_prop_uint32(spares_len)(props.emplace_back());
             add_prop_uint32(nodebufs_ofs)(props.emplace_back());
             add_prop_uint32(nodebufs_len)(props.emplace_back());
+//            add_prop_uint32(msgs_ofs)(props.emplace_back());
+//            add_prop_uint32(msgs_len)(props.emplace_back());
             add_prop_uint32("sizeof_float", sizeof(double))(props.emplace_back()); //for debug frame_time; NOTE: not present in shm, just JS retval
 //            debug(9, "add %d props", props.size());
 //            !NAPI_OK(napi_define_properties(env, retval, props.size(), props.data()), "export manifest props failed");
@@ -518,6 +414,8 @@ public: //dependent types:
             return napi_thingy(env, retval) += props;
         }
     };
+//overall frame control info:
+//this is state info that is not frame-specific
     /*alignas(CACHELEN)*/ struct FrameControl //ShmInfo
     {
 //NOTE: force storage types here so sizes don't depend on compiler or arch; Intel was using a mix of uin64_t and 32, making it awkward for external readers
@@ -537,8 +435,6 @@ public: //dependent types:
         elapsed_t /*decltype(TXTR::latest)*/ latest = 0; //timestamp of latest loop iteration
         PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats; //NO: 1 extra slot for loop count, but still want a local copy
         char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
-//put nodes last in case caller overruns boundary:
-//TODO: use alignof() for node rows
     public: //ctors/dtors
         explicit FrameControl(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {} // HERE(3); }
     public: //operators
@@ -643,7 +539,102 @@ public: //dependent types:
             return napi_thingy(env, retval) += props;
         }
     };
-    alignas(CACHELEN) struct FramebufQuent
+#if 0
+//debug/diagnostic msgs:
+//don't want anything slowing down gpu_wker (file or console output could cause screen flicker),
+// so log messages are stored in shm and another process can read them if interested
+//circular fifo is used; older msgs will be overwritten; no memory mgmt overhead
+    struct MsgLog
+    {
+        std::atomic<int32_t> latest;
+//        struct
+//        {
+//TODO: structured msg info?
+//            elapsed_t timestamp;
+//            char msg[120]; //free-format text (null terminated)
+//        } log[100];
+        char msgs[100][120];
+    public: //ctors/dtors
+        MsgLog()
+        {
+            latest = 0; //not really needed (log is circular), but it's nicer to start in a predictable state
+            for (int i = 0; i < SIZEOF(msgs); ++i)
+            {
+//                log[i].timestamp = 0;
+                msgs[i][0] = '\0';
+            }
+        }
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const MsgLog& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        {
+//            HERE(7);
+            ostrm << "{" << commas(SIZEOF(that.msgs)) << " msgs";
+            ostrm << ", most recent[" << commas(that.latest) << "/" << commas(SIZEOF(msgs)) << "] "; //<< " at " << commas(that.log[that.latest].timestamp) << " msec";
+            ostrm << strlen(that.msgs[that.latest]) << ": '" << that.msgs[that.latest] << "'";
+            return ostrm << "}";
+        }
+    public: //methods
+//TODO: move to separate shm seg and combine with debug()
+        void log(/*int level, SrcLine srcline,*/ const char* fmt, ...)
+        {
+            int inx = latest++;
+//TODO: add structured info
+//            strncpy(msgs[inx], new_msg, SIZEOF(msgs[inx]));
+            va_list args;
+            va_start(args, fmt);
+            size_t fmtlen = vsnprintf(msgs[inx], sizeof(msgs[inx]), fmt, args);
+            va_end(args);
+//show warning if fmtbuf too short:
+            if (fmtlen >= sizeof(msgs[inx])) fmtlen = sizeof(msgs[inx]) - 20 + snprintf(&msgs[inx][sizeof(msgs[inx]) - 20], 20, " >> %s ...", commas(fmtlen));
+//            msgs[inx][SIZEOF(msgs[inx] - 1)] = '\0'; //add null termintor in case msg was truncated
+        }
+    public: //NAPI methods
+        static inline MsgLog* my(void* ptr) { return static_cast<MsgLog*>(ptr); }
+        static napi_value latest_getter(napi_env env, void* ptr) { return napi_thingy(env, my(ptr)->latest.load(), napi_thingy::Int32{}); }
+        static napi_value toString_NAPI(napi_env env, napi_callback_info info)
+        {
+            if (!env) return NULL; //Node cleanup mode?
+            DebugInOut("toString_napi");
+
+            ShmData* shmptr;
+            napi_value argv[0+1], This; //allow 1 extra arg to check for extras
+            size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+            !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+            if (argc) NAPI_exc("expected 0 args, got " << argc << " arg" << plural(argc));
+            shmptr->isvalid(env, SRCLINE);
+            return napi_thingy(env, shmptr->m_msglog.msgs[shmptr->m_msglog.latest]); //, napi_thingy::String{});
+        }
+        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); } //napi_value arybuf, napi_thingy::Array{}, NUM_UNIV)); }
+        /*static*/ napi_value my_exports(napi_env env, const napi_value& retval)
+        {
+            vector_cxx17<my_napi_property_descriptor> props;
+//            exports = module_exports(env, exports); //include previous exports
+//            napi_thingy retval(env, napi_thingy::Object{});
+//            vector_cxx17<my_napi_property_descriptor> props;
+//            !NAPI_OK(napi_create_array_with_length(env, QUELEN, &retval.value), "Cre que ary failed");
+//            napi_thingy arybuf(env, &m_fbque[0], sizeof(m_fbque));
+            add_getter("latest", MsgLog::latest_getter, this)(props.emplace_back());
+            napi_thingy msg_ary(env, napi_thingy::Array{}, SIZEOF(msgs));
+            for (int i = 0; i < SIZEOF(msgs); ++i)
+            {
+//TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
+//                debug(33, "cre typed ary, ofs %d x %s + %d x %s + %u = %s", inx, commas(sizeof(*this)), x, commas(sizeof(nodes[0])), addrof(&nodes[0][0]) - addrof(this), commas(inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this))); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+//                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ SIZEOF(nodes[0]) /*UNIV_MAXLEN_pad*/ /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this)); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy msg_obj(env, napi_thingy::Object{});
+                vector_cxx17<my_napi_property_descriptor> msg_props;
+//expose toString() method; don't want static copy of msg
+                add_method("toString", MsgLog::toString_NAPI, this)(msg_props.emplace_back());
+                msg_obj += msg_props;
+                !NAPI_OK(napi_set_element(env, msg_ary, i, msg_obj), "Cre msg typary failed");
+            }
+            add_prop("msgs", msg_ary)(props.emplace_back());
+            return napi_thingy(env, retval) += props;
+        }
+    };
+#endif
+//put nodes last in case caller overruns boundary:
+    /*alignas(CACHELEN)*/ struct FramebufQuent
     {
 //        /*alignas(CACHELEN)*/ struct
 //        {
@@ -652,7 +643,10 @@ public: //dependent types:
         std::atomic<MASK_TYPE> ready; //per-univ Ready/dirty bits
 //        } frinfo; //per-frame state info
 //        uint8_t pad[];
-        /*alignas(CACHELEN)*/ NODEVAL nodes[NUM_UNIV][UNIV_MAXLEN_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+//        typedef /*alignas(CACHELEN)*/ NODEVAL UNIV[UNIV_MAXLEN]; //align univ to cache for better mem perf across cpus
+//align univ to cache for better mem perf across cpus:
+        alignas(CACHELEN) NODEVAL nodes[NUM_UNIV][rndup(UNIV_MAXLEN, CACHELEN)]; //_pad]; //node color values (max size); might not all be used; rows (univ) padded for better memory cache perf with multiple CPUs
+        static const key_t SHMKEY = 0xFEED0000 | NNNN_hex(SIZEOF(nodes[0])); //0; //show size (padded) in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
     public: //ctors/dtors
 //        FramebufQuent() //: frnum(0), prevfr(0), frtime(0), prevtime(0), ready(0) //need to init to avoid "deleted function" errors
 //        {
@@ -717,7 +711,7 @@ public: //dependent types:
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
 //                debug(33, "cre typed ary, ofs %d x %s + %d x %s + %u = %s", inx, commas(sizeof(*this)), x, commas(sizeof(nodes[0])), addrof(&nodes[0][0]) - addrof(this), commas(inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this))); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
-                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ UNIV_MAXLEN_pad /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this)); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
+                napi_thingy node_typary(env, GPU_NODE_type, /*wh.h*/ SIZEOF(nodes[0]) /*UNIV_MAXLEN_pad*/ /*_raw*/, arybuf, inx * sizeof(*this) + x * sizeof(nodes[0]) + addrof(&nodes[0][0]) - addrof(this)); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
                 !NAPI_OK(napi_set_element(env, univ_ary, x, node_typary), "Cre inner node typary failed");
             }
             add_prop("nodes", univ_ary)(props.emplace_back());
@@ -748,6 +742,8 @@ public: //data members (visible to bkg wkers via shm)
     alignas(CACHELEN) uint32_t m_spare[SPARELEN]; //leave room for caller-defined data within same shm seg; bytes[284..]; 64 x uint32
     const uint32_t m_flag2 = VALIDCHK; //1 x int32
 //    alignas(CACHELEN) struct FramebufQuent
+//    PreallocVector<MsgLog, LOGLEN> m_msglog; //circular queue of nodebufs + perf stats
+//    MsgLog m_msglog;
     PreallocVector<alignas(CACHELEN) FramebufQuent, QUELEN> m_fbque; //circular queue of nodebufs + perf stats
 //    napi_reference m_ref = nullptr;
     const uint32_t m_tlr = VALIDCHK;
@@ -808,6 +804,7 @@ public: //operators
         ostrm << ", frctl " << that.m_frctl;
         ostrm << ", is open? " << that.isopen();
         ostrm << ", #attch " << shmnattch(&that); //.m_manifest.shmkey);
+//        ostrm << ", msglog " << that.m_msglog;
         ostrm << ", fbque [";
 //broken        for (const auto it: that.m_fbque)
         for (/*const*/ auto it = that.m_fbque.cbegin(); it != that.m_fbque.cend(); ++it)
@@ -935,21 +932,23 @@ public: //methods:
 //            const int delay_msec = 1000; //2 msec;
             started = now(); //reset timebase so timing stats are just for render loop
 //debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
+            log(12, "gpu_wkr start playback loop");
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //no-CAUTION: numfr pre-inc to account for clear_stats() at end of first iter; //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
 //        let qent = frnum % frctl.length; //simple, circular queue
                 FramebufQuent* it = &m_fbque[frnum % SIZEOF(m_fbque)]; //CAUTION: circular queue
                 if (it->frnum != frnum) exc_hard("frbuf que addressing messed up: got fr#%d, wanted %d", it->frnum.load(), frnum); //main is only writer; this shouldn't happen!
-//                int wait_frames = 0;
+                int wait_frames = 0;
                 while ((it->ready & ALL_UNIV) != ALL_UNIV) //wait for all wkers to render nodes (ignore unused bits); wait means wkers are running too slow
                 {
                     VOID txtr.idle(NO_PERF, SRCLINE); //wait for next vsync
 //                    debug(15, YELLOW_MSG "fr[%d/%d] buf[%d/%d] not ready: 0x%x, gpu wker wait %d msec for wkers to render ...", frnum, NUMFR, it - &m_fbque[0], SIZEOF(m_fbque), it->ready.load(), delay_msec);
 //                    SDL_Delay(delay_msec); //2 msec); //timing is important; don't wait longer than needed
-//                    ++wait_frames;
+                    ++wait_frames;
                 }
 //                if (wait_frames) debug(15, YELLOW_MSG "qpu wker fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
+                if (wait_frames) log(15, "gpu_wkr fr[%d] waited %d", frnum, wait_frames);
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -964,6 +963,7 @@ public: //methods:
                 VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1-1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
                 it->prevtime.store(it->frtime.load()); //save previous so caller can decide how to apply updates
                 it->frtime = m_frctl.latest = txtr.m_latest; //just echo txtr; //now() - started;
+                if (!(frnum % 120)) log(15, "gpu_wkr fr[%d] rendered", frnum);
 //                ++m_frctl.perf_stats[0]; //moved to txtr
 //            m_frctl.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)?
@@ -1019,6 +1019,7 @@ public: //methods:
 //        ss << ", elaps " << (now() - started) << ", usec/fr " << usec_per_fr << "," << usec_per_fr64 << "," << usec_per_fr64i << "," << usec_per_fr32i;
 //        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
 //        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
+        log(15, "gpu_wkr exit %s", ss.str());
         if (exc_msg.size()) debug(0, RED_MSG "gpu wker exc: %s" << ss.str(), exc_msg.c_str());
         else debug(0, YELLOW_MSG "gpu wker exit" << ss.str());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
@@ -1057,7 +1058,7 @@ public: //NAPI methods:
         add_prop_uint32(VERSION)(props.emplace_back()); //(*pptr++);
 //        add_prop_uint32(SHMKEY)(props.emplace_back()); //(*pptr++);
         add_prop_uint32(NUM_UNIV)(props.emplace_back()); //(*pptr++);
-        add_prop_uint32("UNIV_MAXLEN", UNIV_MAXLEN_pad)(props.emplace_back()); //give caller actual row len for correct node addressing
+        add_prop_uint32("UNIV_MAXLEN", SIZEOF(m_fbque[0].nodes[0]) /*UNIV_MAXLEN_pad*/)(props.emplace_back()); //give caller actual row len for correct node addressing
 //expose Protocol types (enum consts):
         add_prop("Protocols", Protocol::my_exports(env))(props.emplace_back());
         add_prop("PerfStats", FrameControl::my_exports_perfinx(env))(props.emplace_back());
@@ -1080,6 +1081,7 @@ public: //NAPI methods:
         napi_thingy spare_arybuf(env, &m_spare[0], sizeof(m_spare));
         napi_thingy spare_typary(env, GPU_NODE_type, SIZEOF(m_spare), spare_arybuf); //UNIV_MAXLEN * sizeof(NODEVAL)); //sizeof(nodes[0][0]));
         add_prop("spares", spare_typary)(props.emplace_back()); //(*pptr++);
+//        add_prop("msglog", m_msglog.my_exports(env))(props.emplace_back());
         napi_thingy node_arybuf(env, &m_fbque[0], sizeof(m_fbque));
         napi_thingy fbque_ary(env, napi_thingy::Array{}, SIZEOF(m_fbque));
 //        for (auto& fbquent: m_fbque)
@@ -1289,7 +1291,7 @@ private: //helpers
 //            int wh = xfrlen; //TODO
 //        SDL_Size nodes_wh(NUM_UNIV, gp.m_wh.h);
 
-        if (/*!shdata.m_frctl.wh.w || !shdata.m_frctl.wh.h ||*/ !xfrlen || (shdata.m_frctl.wh.w != NUM_UNIV /*SIZEOF(bbdata)*/) || (xfrlen != shdata.m_frctl.wh.h * sizeof(bbdata) /*gp.m_wh./-*datalen<XFRTYPE>()*-/ w * sizeof(XFRTYPE)*/)) exc_hard("xfr size mismatch: nodebuf " << shdata.m_frctl.wh << " vs. " << SDL_Size(NUM_UNIV, UNIV_MAXLEN_pad) << ", byte count " << commas(xfrlen) << " vs, " << commas(shdata.m_frctl.wh.h * sizeof(bbdata)));
+        if (/*!shdata.m_frctl.wh.w || !shdata.m_frctl.wh.h ||*/ !xfrlen || (shdata.m_frctl.wh.w != NUM_UNIV /*SIZEOF(bbdata)*/) || (xfrlen != shdata.m_frctl.wh.h * sizeof(bbdata) /*gp.m_wh./-*datalen<XFRTYPE>()*-/ w * sizeof(XFRTYPE)*/)) exc_hard("xfr size mismatch: nodebuf " << shdata.m_frctl.wh << " vs. " << SDL_Size(NUM_UNIV, SIZEOF(fbquent.nodes[0]) /*UNIV_MAXLEN_pad*/) << ", byte count " << commas(xfrlen) << " vs, " << commas(shdata.m_frctl.wh.h * sizeof(bbdata)));
         if (nodes != &fbquent.nodes[0][0]) exc_hard("&nodes[0][0] " << nodes << " != &fbquent.nodes[0][0] " << &fbquent.nodes[0][0]);
 //        SDL_Size wh_bb(NUM_UNIV, H_PADDED), wh_txtr(XFRW/*_PADDED*/, xfrlen / XFRW/*_PADDED*/ / sizeof(XFRTYPE)); //NOTE: txtr w is XFRW_PADDED, not XFRW
 //        if (!(count++ % 100))
@@ -3106,7 +3108,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //    ShmData* shmptr = shmalloc_typesafe<ShmData>(ShmData::SHMKEY, 1, SRCLINE);
 //    ShmDeleter dtor = std::bind(shmfree_typesafe<ShmData>, std::placeholders::_1, SRCLINE);
 //    std::unique_ptr<ShmData, ShmDeleter> shmdata(shmptr, dtor); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
-    std::unique_ptr<ShmData> shmdata(ShmData::my(shmalloc_debug(sizeof(ShmData), ShmData::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
+    std::unique_ptr<ShmData> shmdata(ShmData::my(shmalloc_debug(sizeof(ShmData), ShmData::FramebufQuent::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     ShmData* shmptr = shmdata.get();
     bool isnew = (shmnattch(shmptr) == 1);
     debug(5, "ModuleInit: shmptr %p, #attach %d, valid? %d, isnew? %d", shmptr, shmnattch(shmptr), shmptr->isvalid(), isnew);

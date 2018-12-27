@@ -27,7 +27,8 @@
   "homepage": "https://github.com/djulien/gpuport",
   "main": "./index.js",
   "scripts": {
-    "dj-notes": "'npm update' to update pkgs, 'npm test' to recompile, 'npm install' to install deps",
+    "dj-notes": "'npm scripts' to list scripts, 'npm update' to update pkgs, 'npm test' to recompile, 'npm install' to install deps",
+    "fbtest": "ls; gcc -std=c++11 demos/fbtest.cpp -o demos/fbtest",
     "xtest": "node-gyp rebuild && mocha --reporter spec",
     "xbuild": "node-gyp rebuild --verbose",
     "xclean": "node-gyp clean",

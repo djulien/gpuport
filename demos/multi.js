@@ -39,10 +39,10 @@ const glob = require('glob');
 const pathlib = require('path');
 const lame = require('lame'); //NOT node-lame
 const spkr = require("speaker"); //DEV? "../": "speaker"); //('yalp/my-speaker');
-const mp3len = require('./mp3len');
+//const mp3len = require('./mp3len');
 const {elapsed} = require("./elapsed"); //TODO: move into GpuPort or move debug out
 const {debug, caller} = require("./debug");
-debug.wanted(100);
+debug.detail = 100; //wanted(100);
 //const tryRequire = require("try-require"); //https://github.com/rragan/try-require
 //const multi = tryRequire('worker_threads'); //NOTE: requires Node >= 10.5.0; https://nodejs.org/api/worker_threads.html
 //const {fork} = require("child_process"); //https://nodejs.org/api/child_process.html
@@ -53,7 +53,7 @@ const folder = true? process.cwd(): __dirname; //where to look for run-time file
 //sequence/layout info:
 //const seq = tryRequire("./my-seq");
 debug("TODO: load seq here".red_lt);
-const seq = {xNUMFR: 18, xFRTIME: .050, DURATION: 15*2, TRUNC_AUDIO: true}; //30*30}; //seq len (#frames total); playback goes longer of audio + seq duration
+const seq = {xNUMFR: 18, xFRTIME: .050, DURATION: 15*2*4*2, TRUNC_AUDIO: true}; //30*30}; //seq len (#frames total); playback goes longer of audio + seq duration
 //24*1126/30 ~= 15 minutes
 //seq.duration_msec = seq.NUMFR * seq.FRTIME;
 //seq.gpufr = divup(seq.duration, gp.FPS);
@@ -117,9 +117,12 @@ Object.defineProperties(gp, objmap(
     },
 }, (prop, name) => { if (!cluster.isMaster) delete prop.set; return prop; })); //remove setters for wkers; NOTE: "null" doesn't work here
 //}.map((prop) => Object.assign(prop, !cluster.isMaster? {set: null}: {})); //remove setters for wkers
-const DEB_LEVEL = 9; //9;
-debug.wanted(DEB_LEVEL);
-gp.debug_level = DEB_LEVEL; //100;
+//if (false)
+{
+    const DEB_LEVEL = 0; //9; //9;
+    debug.detail = DEB_LEVEL; //.wanted(DEB_LEVEL);
+    gp.debug_level = DEB_LEVEL; //100;
+}
 //elapsed(-100); //kludge: set pre-playback timestamp to allow time before playback (for debug/log and playback triggers)
 
 //gp.xyz = 5;
@@ -239,10 +242,10 @@ function* main()
 //        screen: 1,
 //        screen: 0, //FIRST_SCREEN,
     //    key_t PREALLOC_shmkey = 0;
-        vgroup: 10, //dev/debug only
+//        vgroup: 10, //dev/debug only
 //        debug: 33,
         init_color: CYAN_DARK, //CYAN, //PINK, //= 0;
-        protocol: gp.Protocols.NONE, //DEV_MODE,
+        protocol: gp.Protocols.DEV_MODE, //NONE, //DEV_MODE,
 //        int frtime_msec; //double fps;
     };
 //    debug("protocols", JSON.stringify(gp.Protocols));
@@ -353,7 +356,7 @@ function* wait4port(pred, delay_time)
 
     function show_state()
     {
-        if (retry) debug(11, `waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
+if(false)        if (retry) debug(11, `waited ${retry}/${MAX_RETRY} for GPU port '${pred}', state: open? ${gp.isopen}, fr# ${commas(gp.numfr)}, frtime ${commas(prec(gp.numfr * gp.frtime, 1e3))} msec`);
     }
 }
 
@@ -567,7 +570,7 @@ function* wker() //wker_data)
 
         let which_fr = `[${commas(/*nodebufs[qent].*/frnum)}/${commas(gp.NUMFR)}]`;
 //        if (nodebufs[qent].ready & my_ready) exc(`fr#${which_fr} in quent ${qent} ready ${hex(nodebufs[qent].ready)} already has my ready bits: ${hex(my_ready)}`);
-        debug(10, `wker# ${wkid} will render fr#${which_fr} univs ${hex(my_ready)} into nodebuf${which_buf}, ready ${hex(nodebufs[qent].ready)}, ${(nodebufs[qent].ready & my_ready)? "already done?!".red_lt: ""} ...`);
+if(false)        debug(10, `wker# ${wkid} will render fr#${which_fr} univs ${hex(my_ready)} into nodebuf${which_buf}, ready ${hex(nodebufs[qent].ready)}, ${(nodebufs[qent].ready & my_ready)? "already done?!".red_lt: ""} ...`);
 //TODO: render
 //NOTE: wker must set new values for *all* nodes (prev frame contents are stale from 4 frames ago)
 //to leave nodes unchanged, wker can set A = 0 (dev mode only) or copy values from prev frame
@@ -591,9 +594,9 @@ function* wker() //wker_data)
         });
 //        const PALETTE = [/*BLACK,*/ RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE]; //red 0b001, green 0b010, blue 0b100
         let loop = Math.floor(frnum / (gp.UNIV_LEN * gp.NUM_UNIV)), x = Math.floor(frnum / gp.UNIV_LEN) % gp.NUM_UNIV, y = frnum % gp.UNIV_LEN; //NUM_UNIV;
-        debug(20, `fr#${frnum} -> loop ${loop}, x ${x}, y ${y}`);
+if(false)        debug(20, `fr#${frnum} -> loop ${loop}, x ${x}, y ${y}`);
         nodebufs[qent].nodes[x][y] = PALETTE[loop % PALETTE.length]; //PINK_DARK;
-        debug(20, `fbquent[${qent}]univ[*][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[0][frnum % 20])}`);
+if(false)        debug(20, `fbquent[${qent}]univ[*][${frnum % 20}] = white: ${hex(nodebufs[qent].nodes[0][frnum % 20])}`);
 //        var y = Math.floor(frnum / gp.NUM_UNIV), x = frnum % gp.NUM_UNIV;
 //        nodebufs[qent].nodes[x][y] = WHITE;
 //        nodebufs[qent].my_nodes[0][frnum] = WHITE; // * ani_speed] = WHITE;
@@ -603,7 +606,7 @@ function* wker() //wker_data)
 /**/
 //        yield wait_msec(50);
         nodebufs[qent].ready /*|=*/ = my_ready; //kludge: "=" here means "|="; this allows atomic updates (needed if multiple wker threads are updating ready bits)
-        debug((frnum % 50)? 10: 0, `wker# ${wkid} rendered fr#${which_fr} deadline ${commas(frnum * gp.frtime)} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
+if(false)        debug((frnum % 50)? 10: 0, `wker# ${wkid} rendered fr#${which_fr} deadline ${commas(frnum * gp.frtime)} into nodebuf${which_buf} with color ${hex(PALETTE[frnum % PALETTE.length])}, ready now ${hex(nodebufs[qent].ready)} ...`);
 //        delta = elapsed.now() - previous; perf[wkid].render += delta; previous += delta;
 //        perf[wkid].numfr = frnum + 1;
 //        perf[wkid].update(true);

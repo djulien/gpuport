@@ -15,6 +15,8 @@
 //#include "srcline.h"
 //#include "msgcolors.h"
 //#include "debugexc.h"
+#include "logging.h"
+
 
 #ifndef STATIC
  #define STATIC //dummy keyword for readability
@@ -29,6 +31,7 @@
 #endif
 
 
+#if 0 //moved to logging.h
 inline auto /*std::thread::id*/ thrid()
 {
 //TODO: add pid for multi-process uniqueness?
@@ -49,6 +52,8 @@ int thrinx(const std::thread::id/*auto*/& myid = thrid())
     ids.push_back(myid);
     return newinx;
 }
+#endif
+
 #if 0
 inline bool operator==(const std::thread::id& lhs, const std::thread::id& rhs)
 {
@@ -74,9 +79,9 @@ public:
 
 
 //put down here to avoid cyclic #include errors (debugexc uses thrid() and thrinx()):
-#include "srcline.h"
-#include "msgcolors.h"
-#include "debugexc.h"
+//#include "srcline.h"
+//#include "msgcolors.h"
+//#include "debugexc.h"
 
 //sync with bkg thread:
 //NOTE: std::mutex, std::condition_variable in shm *cannot* be used across processes (read that Posix ipc not implemented in stl)
@@ -193,13 +198,21 @@ public:
 
 //#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 //#include "sdl-helpers.h"
-#include "msgcolors.h"
-#include "debugexc.h"
-#include "srcline.h"
-#include "sdl-helpers.h" //SDL_Delay()
-#include "elapsed.h" //timestamp()
+//#include "msgcolors.h"
+//#include "debugexc.h"
+//#include "srcline.h"
+//#include "sdl-helpers.h" //SDL_Delay()
+//#include "elapsed.h" //timestamp()
+#include "logging.h"
 
 #include "thr-helpers.h"
+
+
+#define sec  *1000
+#define msec  *1
+#define usec  /1000
+#define sleep(delay)  usleep((delay) * 1000) //msec => usec
+
 
 std::string info()
 {
@@ -226,7 +239,7 @@ void fg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int which)
         for (int bit = 1; which & ~(bit - 1); bit <<= 1)
             if (which & bit)
             {
-                SDL_Delay(bit * 0.25 sec);
+                sleep(bit * 0.25 sec); //SDL_Delay(bit * 0.25 sec);
                 bs.fetch_or(bit, SRCLINE); // |= bit;
             }
         debug(0, CYAN_MSG << info() << "FG now wait for 0");
@@ -247,7 +260,7 @@ void bg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
         debug(0, CYAN_MSG << info() << "BKG wait for %d", want);
         bs.wait(want, NULL, true, SRCLINE);
         debug(0, CYAN_MSG << info() << "BKG got %d, now reset to 0", want);
-        SDL_Delay(0.5 sec);
+        sleep(0.5 sec); //SDL_Delay(0.5 sec);
         bs.store(0, SRCLINE);
     }
 }

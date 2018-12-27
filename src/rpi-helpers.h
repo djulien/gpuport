@@ -3,6 +3,9 @@
 /// RPi helpers (runnable on non-RPi machines):
 //
 
+//see example userland source code at: https://github.com/raspberrypi/userland.git
+
+
 #if !defined(_RPI_HELPERS_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
 #define _RPI_HELPERS_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 
@@ -21,9 +24,10 @@
 #include <unistd.h> //close()
 #include <sys/ioctl.h> //ioctl()
 
-#include "debugexc.h" //debug()
-#include "srcline.h" //SrcLine, SRCLINE
-#include "ostrfmt.h" //FMT()
+//#include "debugexc.h" //debug()
+//#include "srcline.h" //SrcLine, SRCLINE
+//#include "ostrfmt.h" //FMT()
+#include "logging.h"
 
 
 #ifndef STATIC
@@ -681,9 +685,10 @@ void fbclose()
 
 //#include <SDL.h> //<SDL2/SDL.h> //CAUTION: must #include before other SDL or GL header files
 //#include "sdl-helpers.h"
-#include "msgcolors.h"
-#include "debugexc.h"
-#include "srcline.h"
+//#include "msgcolors.h"
+//#include "debugexc.h"
+//#include "srcline.h"
+#include "logging.h"
 
 #include "rpi-helpers.h"
 

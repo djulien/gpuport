@@ -18,8 +18,8 @@ OPT=3  #3 = max; 0 = none
 #CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
 CFLAGS="`sdl2-config --cflags` -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14 -x c++"
 CLIBS="`sdl2-config --libs`" #-lGL
-if [ -f "/boot/config.txt" ]; then
-    CFLAGS="${CFLAGS} -DRPI_NO_X"
+if [ -f "/boot/config.txt" ]; then #RPi
+    CFLAGS="${CFLAGS} -DRPI_NO_X -j4"
 else
     CLIBS="${CLIBS} -lX11 -lXxf86vm"
 fi

@@ -49,12 +49,13 @@
 //#include <mutex>
 //#include <type_traits> //std::remove_const<>
 
-#include "msgcolors.h" //*_MSG, ENDCOLOR_*
+//#include "msgcolors.h" //*_MSG, ENDCOLOR_*
 //#include "elapsed.h" //timestamp()
-#include "srcline.h" //SrcLine, SRCLINE
+//#include "srcline.h" //SrcLine, SRCLINE
 #include "str-helpers.h" //NVL(), plural(), commas(), NNNN_hex()
-#include "ostrfmt.h" //FMT()
-#include "debugexc.h" //debug(), TEMPL_ARGS; //CAUTION: cyclic #include; put this one last
+//#include "ostrfmt.h" //FMT()
+//#include "debugexc.h" //debug(), TEMPL_ARGS; //CAUTION: cyclic #include; put this one last
+#include "logging.h"
 
 
 #ifndef STATIC
@@ -455,8 +456,9 @@ public:
 #include <vector>
 #include <mutex>
 
-#include "msgcolors.h"
-#include "srcline.h"
+//#include "msgcolors.h"
+//#include "srcline.h"
+#include "logging.h"
 
 
 const key_t KEY_NONE = -2;
@@ -671,8 +673,9 @@ public:
 #undef WANT_UNIT_TEST //prevent recursion, #include non-test part of file
 
 #define MAX_DEBUG_LEVEL  100
-#include "debugexc.h" //debug()
-#include "msgcolors.h" //*_MSG, ENDCOLOR_*
+//#include "debugexc.h" //debug()
+//#include "msgcolors.h" //*_MSG, ENDCOLOR_*
+#include "logging.h"
 
 #include "shmalloc.h" //shmalloc(), shmfree(), AutoShmary<>, static_wrap<>
 
