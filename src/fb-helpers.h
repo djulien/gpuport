@@ -43,6 +43,7 @@
 
 #define CONST  //should be "const" but isn't
 #define STATIC  //should be "static" but isn't
+#define VOID
 
 #define SIZEOF(thing)  (sizeof(thing) / sizeof((thing)[0]))
 
@@ -691,6 +692,7 @@ typedef FB::elapsed_t elapsed_t;
 //    return /*std::chrono::*/duration_cast</*std::chrono::*/milliseconds>(/*std::chrono::*/system_clock::now().time_since_epoch()).count();
 //}
 //from https://stackoverflow.com/questions/19555121/how-to-get-current-timestamp-in-milliseconds-since-1970-just-the-way-java-gets
+#if 0
 int64_t now() //msec
 {
     using namespace std::chrono;
@@ -712,6 +714,7 @@ inline elapsed_t elapsed(const elapsed_t& started) //, int scaled = 1) //Freq = 
 //    started += delta; //reset to now() each time called
     return /*scaled? (double)delta * scaled / SDL_TickFreq():*/ delta; //return actual time vs. #ticks
 }
+#endif
 
 void SDL_Delay(int delay_msec)
 {

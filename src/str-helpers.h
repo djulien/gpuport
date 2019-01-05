@@ -90,15 +90,16 @@ inline const char* strend(const char* str)
 inline size_t strrofs(const char* str, char ch)
 {
     const char* bp = strrchr(str, ch);
+//if (!bp) printf("!strrofs('%s', '%c')\n", str, ch);
     return bp? bp - str: -1;
 }
 
 
-const char* strnstr(const char* str, const char* substr, size_t cmplen)
+/*const*/ char* strnstr(/*const*/ char* str, const char* substr, size_t cmplen)
 {
     for (;;)
     {
-        const char* found = strchr(str++, *substr);
+        /*const*/ char* found = strchr(str++, *substr);
         if (!found || !strncmp(found, substr, cmplen)) return found; //return no or full match
     }
 }

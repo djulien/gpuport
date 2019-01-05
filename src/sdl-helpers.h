@@ -249,9 +249,13 @@ typedef InheritEnum< NewFruit, Fruit > MyFruit;
 #define sec  *1000
 
 
+//#define WANT_TIMER
+
 //timing stats:
 //TODO: move to elapsed.h
-#define now()  SDL_Ticks() //nsec -> usec
+#ifdef WANT_TIMER
+ #define now()  SDL_Ticks() //nsec -> usec
+#endif
 //inline uint64_t now() { return SDL_Ticks(); }
 #define SDL_Ticks()  (SDL_GetPerformanceCounter() / 1000) //nsec -> usec
 #define SDL_TickFreq()  (SDL_GetPerformanceFrequency() / 1000) //high res timer, ticks/sec
@@ -270,7 +274,7 @@ inline double elapsed(const elapsed_t& started, int scaled = 1) //Freq = #ticks/
 //    started += delta; //reset to now() each time called
     return scaled? (double)delta * scaled / SDL_TickFreq(): delta; //return actual time vs. #ticks
 }
-#else
+#elif defined(WANT_TIMER)
 inline elapsed_t elapsed(elapsed_t& started) //, int scaled = 1) //Freq = #ticks/second
 {
     elapsed_t delta = now() - started; //nsec
@@ -291,6 +295,8 @@ inline double elapsed(const elapsed_t& started, int scale)
 {
     return (double)elapsed(started) / scale;
 }
+//#else
+// #pragma message("define now(), elapsed() here")
 #endif
 //inline double elapsed_usec(uint64_t started)
 //{
@@ -696,6 +702,7 @@ void SDL_GetDrawableSize_chk(CONST SDL_Window* wnd, SDL_Size* wh, SrcLine srclin
 //
 
 typedef Uint32  SDL_SubSystemFlags;
+inline double elapsed(elapsed_t epoch, int scale) { return (double)(now() - epoch) / scale; } //shim
 
 //SDL_init wrapper class:
 //will only init as needed

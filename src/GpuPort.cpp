@@ -87,9 +87,12 @@
 #define MAX_DEBUG_LEVEL  100 //set this before debug() is included via nested #includes
 #include "str-helpers.h" //unmap(), NNNN_hex(), vector_cxx17<>
 //#include "thr-helpers.h" //thrinx()
-//can't get rid of flicker; use framebuf instead: 
-#include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
-//#include "fb-helpers.h" //AutoTexture, SDL shims
+//can't get rid of flicker; use framebuf instead:
+#if 0
+ #include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
+#else
+ #include "fb-helpers.h" //AutoTexture, SDL shims
+#endif
 #include "rpi-helpers.h" //ScreenConfig, getScreenConfig()
 //#include "elapsed.h" //elapsed_msec(), timestamp(), now()
 //#include "msgcolors.h" //MSG_*, ATLINE()
@@ -450,7 +453,7 @@ public: //dependent types:
             ostrm << ", frame_time " << that.frame_time << " msec";
             ostrm << ", protocol " << that.protocol; //NVL(unmap(names, that.protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
             ostrm << ", previous " << that.prev_protocol; //NVL(unmap(names, that.prev_protocol)/*ProtocolName(that.protocol)*/, "??PROTOCOL??");
-            ostrm << ", debug level " << /*that.*/debug_level; //TODO: put a copy in shm
+            ostrm << ", debug level " << /*that.*/detail(); //debug_level; //TODO: put a copy in shm
             ostrm << ", #fr " << commas(that.numfr);
             ostrm << ", latest " << that.latest << " msec";
             ostrm << ", perf [";
@@ -474,14 +477,14 @@ public: //dependent types:
         static /*uint32_t*/ napi_value frtime_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->frame_time, napi_thingy::Float{}); }
 //        static /*uint32_t*/ auto protocol_getter(void* ptr) /*const*/ { return static_cast<int32_t>(me(ptr)->protocol.value); }
 //        static void protocol_setter(FrameControl* fcptr, napi_thingy& newval) { fcptr->protocol = static_cast<Protocol>(newval.as_int32(true)); }
-        static inline /*uint32_t*/ napi_value deblevel_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, /*my(ptr)->*/debug_level, napi_thingy::Int32{}); }
+        static inline /*uint32_t*/ napi_value deblevel_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, /*my(ptr)->debug_level*/ detail(), napi_thingy::Int32{}); }
         static void deblevel_setter(const napi_thingy& newval, void* ptr)
         {
 //            /*my(ptr)->*/debug_level = new_level;
-            int new_level = newval.as_int32(true), old_level = debug_level;
-            if (new_level > old_level) debug_level = new_level; //inc detail before showing debug msg (more likely to show msg that way)
+            int new_level = newval.as_int32(true), old_level = detail(); //debug_level;
+            if (new_level > old_level) detail(new_level); //debug_level = new_level; //inc detail before showing debug msg (more likely to show msg that way)
             debug(44, "debug level %d -> %d", old_level, new_level);
-            if (new_level < old_level) debug_level = new_level; //dec detail afte showing debug msg (more likely to show msg that way)
+            if (new_level < old_level) detail(new_level); //debug_level = new_level; //dec detail afte showing debug msg (more likely to show msg that way)
         }
         static /*uint32_t*/ napi_value numfr_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->numfr, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value latest_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->latest, napi_thingy::Uint32{}); }
@@ -932,7 +935,7 @@ public: //methods:
 //            const int delay_msec = 1000; //2 msec;
             started = now(); //reset timebase so timing stats are just for render loop
 //debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
-            log(12, "gpu_wkr start playback loop");
+            debug(12, "gpu_wkr start playback loop");
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //no-CAUTION: numfr pre-inc to account for clear_stats() at end of first iter; //int i = 0; i < 5; ++i)
 //        for (auto it = fbque.begin(true); info.Protocol != CANCEL; ++it) //CAUTION: circular queue
             {
@@ -948,7 +951,7 @@ public: //methods:
                     ++wait_frames;
                 }
 //                if (wait_frames) debug(15, YELLOW_MSG "qpu wker fr[%d/%d] waited %s frame times (%s msec) for buf[%d/%d] ready", frnum, NUMFR, commas(wait_frames), commas(wait_frames * m_frctl.frame_time), it - &m_fbque[0], SIZEOF(m_fbque));
-                if (wait_frames) log(15, "gpu_wkr fr[%d] waited %d", frnum, wait_frames);
+                if (wait_frames) debug(15, "gpu_wkr fr[%d] waited %d", frnum, wait_frames);
 //            delta = elapsed.now() - previous; perf_stats[0] += delta; previous += delta;
 //TODO: tweening for missing/!ready frames?
 //        static const decltype(m_frinfo.elapsed_msec()) TIMING_SLOP = 5; //allow +/-5 msec
@@ -963,7 +966,7 @@ public: //methods:
                 VOID txtr.update(NAMED{ _.pixels = /*&m_xfrbuf*/ &it->nodes[0][0]; _.perf = &m_frctl.perf_stats[1-1]; _.xfr = xfr; /*_.refill = refill;*/ SRCLINE; });
                 it->prevtime.store(it->frtime.load()); //save previous so caller can decide how to apply updates
                 it->frtime = m_frctl.latest = txtr.m_latest; //just echo txtr; //now() - started;
-                if (!(frnum % 120)) log(15, "gpu_wkr fr[%d] rendered", frnum);
+                if (!(frnum % 120)) debug(15, "gpu_wkr fr[%d] rendered", frnum);
 //                ++m_frctl.perf_stats[0]; //moved to txtr
 //            m_frctl.numfr = frnum + 1;
 //TODO: pivot/update txtr, update screen (NON-BLOCKING)?
@@ -1019,7 +1022,7 @@ public: //methods:
 //        ss << ", elaps " << (now() - started) << ", usec/fr " << usec_per_fr << "," << usec_per_fr64 << "," << usec_per_fr64i << "," << usec_per_fr32i;
 //        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
 //        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
-        log(15, "gpu_wkr exit %s", ss.str());
+        debug(15, "gpu_wkr exit %s", ss.str());
         if (exc_msg.size()) debug(0, RED_MSG "gpu wker exc: %s" << ss.str(), exc_msg.c_str());
         else debug(0, YELLOW_MSG "gpu wker exit" << ss.str());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
@@ -3278,7 +3281,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 
 
 
-#ifdef WANT_BROKEN_CODE
+#if 0 //def WANT_BROKEN_CODE
  #ifdef SRC_NODE_API_H_ //USE_NAPI
  //#include <string>
 //#include "sdl-helpers.h"
