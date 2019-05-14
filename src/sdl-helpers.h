@@ -335,9 +335,9 @@ inline bool SDL_OK(void* ptr) { return SDL_OK(ptr? SDL_Success: SDL_OtherError);
 #define SDL_exc_2ARGS(what_failed, srcline)  SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE))
 #define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? SDL_errmsg(exc, what_failed, NVL(srcline, SRCLINE)): SDL_errmsg(debug, what_failed, NVL(srcline, SRCLINE)))
 #else
-#define SDL_exc_1ARG(what_failed)  exc(what_failed, SRCLINE)
-#define SDL_exc_2ARGS(what_failed, srcline)  exc(what_failed, NVL(srcline, SRCLINE))
-#define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? exc(what_failed, NVL(srcline, SRCLINE)): debug(SDL_LEVEL, what_failed, NVL(srcline, SRCLINE)))
+#define SDL_exc_1ARG(what_failed)  error(what_failed, SRCLINE)
+#define SDL_exc_2ARGS(what_failed, srcline)  error(what_failed, NVL(srcline, SRCLINE))
+#define SDL_exc_3ARGS(what_failed, want_throw, srcline)  ((want_throw)? error(what_failed, NVL(srcline, SRCLINE)): debug(SDL_LEVEL, what_failed, NVL(srcline, SRCLINE)))
 #endif
 #define SDL_exc(...)  UPTO_3ARGS(__VA_ARGS__, SDL_exc_3ARGS, SDL_exc_2ARGS, SDL_exc_1ARG) (__VA_ARGS__)
 
@@ -745,7 +745,7 @@ public: //ctor/dtor
         Uint32 inited = SDL_WasInit(SDL_INIT_EVERYTHING);
         for (SDL_SubSystemFlags bit = 1; bit; bit <<= 1) //do one at a time
             if (flags & bit) //caller wants this one
-                if (!SDL_SubSystemName(bit)) exc("SDL_AutoLib: unknown subsys: 0x%x" << ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
+                if (!SDL_SubSystemName(bit)) error("SDL_AutoLib: unknown subsys: 0x%x" << ATLINE(srcline)); //throw SDL_Exception("SDL_Init");
                 else if (inited & bit) debug(LEVEL, BLUE_MSG "SDL_AutoLib: subsys '%s' (0x%x) already inited" << ATLINE(srcline), SDL_SubSystemName(bit), bit);
                 else if (!SDL_OK(SDL_InitSubSystem(bit))) SDL_exc("SDL_AutoLib: init subsys " << FMT("'%s'") << SDL_SubSystemName(bit) << FMT(" (0x%x)") << bit << " failed", srcline);
                 else
@@ -1313,11 +1313,11 @@ public: //static utility methods
         /*Uint32*/ SDL_Format fmt = SDL_GetWindowPixelFormat(wnd); //desktop OpenGL: 24 RGB8888, RPi: 32 ARGB8888
         if (!SDL_OK(fmt/*, SDL_PIXELFORMAT_UNKNOWN*/)) SDL_exc("Get window format", srcline);
 //        if (want_fmts && (numfmt != want_fmts)) err(RED_MSG "Unexpected #formats: %d (wanted %d)" ENDCOLOR, numfmt, want_fmts);
-        if (want_fmt && (fmt != want_fmt)) exc("unexpected window format: got " << fmt << ", expected " << want_fmt << ATLINE(srcline)); //, fmt, want_fmt);
+        if (want_fmt && (fmt != want_fmt)) error("unexpected window format: got " << fmt << ", expected " << want_fmt << ATLINE(srcline)); //, fmt, want_fmt);
         SDL_Rect rect; //int wndw, wndh;
         VOID SDL_GetWindowRect(wnd, &rect);
-        if (want_wh && (rect.size() != *want_wh)) exc("window size mismatch: expected " << *want_wh << ", got " << rect.size() << ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
-        if (want_xy && (rect.position() != *want_xy)) exc("window position mismatch: expected " << *want_xy << ", got " << rect.position() << ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
+        if (want_wh && (rect.size() != *want_wh)) error("window size mismatch: expected " << *want_wh << ", got " << rect.size() << ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
+        if (want_xy && (rect.position() != *want_xy)) error("window position mismatch: expected " << *want_xy << ", got " << rect.position() << ATLINE(srcline)); //, want_w, want_h, wndw, wndh);
 //        myprintf(22, BLUE_MSG "cre wnd: max fit %d x %d => wnd %d x %d, vtx size %2.1f x %2.1f" ENDCOLOR, MaxFit().w, MaxFit().h, wndw, wndh, (double)wndw / (TXR_WIDTH - 1), (double)wndh / univ_len);
 //TODO: check renderer also?
     }
@@ -1889,7 +1889,7 @@ public: //methods
 //        if (!pixels) pixels = m_shmbuf;
 //        if (!pitch) pitch = cached.bounds.w * sizeof(pixels[0]); //Uint32);
 //        debug(BLUE_MSG "update %s pixels from texture %p, pixels %p, pitch %d" ENDCOLOR_ATLINE(srcline), NVL(rect_desc(rect).c_str()), get(), pixels, pitch);
-        if (want_pitch && (want_pitch != m_cached.pitch /*wh.w * sizeof(pixels[0])*/)) exc("pitch mismatch: got %d, expected %d" << ATLINE(srcline), want_pitch, m_cached.pitch); //wh.w * sizeof(pixels[0]), want_pitch);
+        if (want_pitch && (want_pitch != m_cached.pitch /*wh.w * sizeof(pixels[0])*/)) error("pitch mismatch: got %d, expected %d" << ATLINE(srcline), want_pitch, m_cached.pitch); //wh.w * sizeof(pixels[0]), want_pitch);
 //        static int count = 0;
 //        if (!count++)
 //            printf("txtr upd xfr was %p, is now %p\n", xfr, xfr? xfr: memcpy);
@@ -2046,7 +2046,7 @@ public: //static helper methods
 //        int access; //texture access mode (one of the SDL_TextureAccess values)
 //        Uint32 fmt; //raw format of texture; actual format may differ, but pixel transfers will use this format
         if (!SDL_OK(SDL_QueryTexture(txtr, (Uint32*)&cached->fmt, &cached->access, &cached->wh.w, &cached->wh.h))) SDL_exc("query texture", srcline);
-        if (want_wh /*!= NO_SIZE*/ && (/*(cached_wh.w != want_wh->w) || (cached_wh.h != want_wh->h)*/ cached->wh != *want_wh)) exc("texture mismatch: expected " << *want_wh << " , got " << cached->wh << ATLINE(srcline)); //, want_w, want_h, cached->w, cached->h);
+        if (want_wh /*!= NO_SIZE*/ && (/*(cached_wh.w != want_wh->w) || (cached_wh.h != want_wh->h)*/ cached->wh != *want_wh)) error("texture mismatch: expected " << *want_wh << " , got " << cached->wh << ATLINE(srcline)); //, want_w, want_h, cached->w, cached->h);
         if (cached->access == SDL_TEXTUREACCESS_STREAMING) //lock() only used with streamed textures
         {
 //            int pitch;
@@ -2054,7 +2054,7 @@ public: //static helper methods
             void* pixels_void; //kludge: C++ doesn't like casting Uint32* to void* due to potential alignment issues
             if (!SDL_OK(SDL_LockTexture(txtr, NO_RECT, &pixels_void, &cached->pitch))) SDL_exc("lock texture", srcline);
             VOID SDL_UnlockTexture(txtr);
-            if (cached->pitch != cached->expected_pitch() /*wh.w * sizeof(pixels[0])*/) exc("pitch mismatch: got %d, expected %d" << ATLINE(srcline), cached->pitch, cached->expected_pitch()); //cached->wh.w * sizeof(pixels[0]), cached->pitch);
+            if (cached->pitch != cached->expected_pitch() /*wh.w * sizeof(pixels[0])*/) error("pitch mismatch: got %d, expected %d" << ATLINE(srcline), cached->pitch, cached->expected_pitch()); //cached->wh.w * sizeof(pixels[0]), cached->pitch);
         }
     }
 //    static void inspect(SDL_Window* ptr, SrcLine srcline = 0) {} //noop

@@ -50,12 +50,13 @@ struct substr //StringFragment
     size_t len;
 //ctors/dtors:
     substr(const substr& that): substr(that.str, that.len) {} //delegated
+    explicit substr(const std::string that): substr(that.c_str(), that.length()) {} //delegated
     explicit substr(const char* other_str, size_t other_len = 0): str(other_str), len(other_len? other_len: other_str? strlen(other_str): 0) {}
 //    substr(const char* match_str, const std::sub_match& match): str(match_str + match.position()), len(match.length()) {}
 //operators:
     inline bool operator!=(const substr& that) const { return !(*this == that); }
     inline bool operator==(const char* that_str) const { return *this == substr(that_str); }
-    inline bool operator==(const substr& that) const { return (len == that.len) && (!len || !strncmp(str, that.str, len)); }
+    inline bool operator==(const substr& that) const { return (len == that.len) && (!len || (that.str == str) || !strncmp(str, that.str, len)); } //if len + addr ==, then str ==
 //    {
 //        /*if (!len)*/ int that_len = that_str? strlen(that_str): 0;
 //        return ((other_len == len) && !strcmp(other)str, str, len);
@@ -270,6 +271,16 @@ inline const char* skip_prefix(const char* str, const char* prefix)
         while (*str == *prefix++) ++str;
     return str;
 }
+
+
+/*
+inline size_t strnlen(const char* str, size_t maxlen)
+{
+    const char* bp = str;
+    while (maxlen-- && *bp++);
+    return bp - str;
+}
+*/
 
 
 int numlines(const char* str)

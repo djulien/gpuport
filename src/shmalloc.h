@@ -95,6 +95,15 @@ const int SHM_LEVEL = 75; //detailed low-level debug level
 // #define IFHDR_1ARG(stmt)  stmt
 // #define IFHDR_2ARGS(yes_stmt, no_stmt)  yes_stmt
 
+//kludge: "!this" no worky with g++ on RPi
+#ifndef isnull
+ #ifdef __ARMEL__ //RPi //__arm__
+  #define isnull(ptr)  ((ptr) < reinterpret_cast<decltype(ptr)>(2)) //kludge: "!this" no worky with g++ on RPi; this !< 1 and != 0, but is < 2 so use that
+ #else //PC
+  #define isnull(ptr)  !(ptr)
+ #endif
+#endif
+
 
 //keep a little extra info in shm:
 //uses 24 bytes on Intel, 16 bytes on ARM (Rpi)
@@ -116,7 +125,7 @@ struct ShmHdr //16 or 24 bytes (depending on processor architecture)
     static const int SHM_LOCAL = 0xfacade; //-33; //kludge: use local alloc instead of shm
     static const int SHM_VALID = 0xfeedbeef; //marker to detect valid shmem block
 //methods:
-    inline bool isvalid() const { return (this && ((marker == SHM_VALID) || (marker == SHM_VALID ^ 1))); }
+    inline bool isvalid() const { return (!isnull(this) && ((marker == SHM_VALID) || (marker == SHM_VALID ^ 1))); }
 }; //ShmHdr;
 
 #if 0
@@ -172,7 +181,7 @@ const ShmHdr* get_shmhdr(const void* addr, SrcLine srcline = 0)
 //    snprintf(buf, sizeof(buf), "%s: bad shmem pointer %p", func, addr);
 //    throw std::runtime_error(buf);
 //    exc(FMT("bad shm ptr %p") << addr, srcline);
-    exc("bad shm ptr " << addr, srcline);
+    error("bad shm ptr " << addr, srcline);
 }
 //#else //ifdef WANT_SHMHDR
 // #define IFHDR_1ARG(stmt)  //noop
@@ -352,7 +361,7 @@ template <typename TYPE> //= uint8_t>
 TYPE* shmalloc_typesafe(key_t key = 0, size_t ENTS = 1, SrcLine srcline = 0)
 {
     srcline = NVL(srcline, SRCLINE);
-    TYPE* ptr = (TYPE*)shmalloc(sizeof(TYPE) * ENTS, key, srcline);
+    TYPE* ptr = (TYPE*)shmalloc_debug(sizeof(TYPE) * ENTS, key, srcline);
 #if 1
     if (shmnattch(ptr, srcline) > 1) return ptr; //already inited and dtors defered; nothing else to do here
     for (int i = 0; i < ENTS; ++i)
@@ -377,7 +386,7 @@ int shmfree_typesafe(TYPE* ptr, SrcLine srcline = 0)
 //TODO: should take into account m_count
             ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
 #endif
-    return shmfree(ptr, srcline); //CAUTION: data members not valid after
+    return shmfree_debug(ptr, srcline); //CAUTION: data members not valid after
 }
 //#define shmalloc  shmalloc_typesafe
 //#define shmfree  shmfree_typesafe
@@ -474,7 +483,7 @@ protected: //methods
         auto& m_mutex = static_m_mutex();
         auto& m_all = static_m_all();
 //        static int done = 0;
-        std::lock_guard<std::mutex> guard(m_mutex); //only allow one thread to init or get count at a time
+        std::lock_guard<std::mutex> guard(m_mutex); //only allow one thread/proc to init or get count at a time
 //        if (done++) return;
         if (!m_all.size())
         {
@@ -601,12 +610,12 @@ public: //methods
     key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
     bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
 public: //std::vector methods
+//TODO: reserve(), capacity(), grow(), etc
     TYPE* begin() { return m_ptr; }
     TYPE* end() { return &m_ptr[m_count]; }
     size_t size() const { return m_count; }
     void push_back(const TYPE& new_item)
     {
-//TODO: reserve(), capacity(), grow(), etc
         if (m_count >= ENTS) exc_hard("shm::vector no room");
         m_ptr[m_count++] = new_item; //TODO: emplace?
     }
@@ -627,6 +636,7 @@ private: //data members
 
 
 //fixed len vector for use in shm:
+#if 0 //incomplete
 template <typename TYPE, size_t SIZE>
 class FixedShmVector
 {
@@ -659,6 +669,150 @@ public:
     /*static*/ inline void push_back(const TYPE& new_item) { wrapper->ptr().push_back(new_item); }
 #endif
 };
+#endif
+
+
+#if 0 //TODO
+//shared memory single object:
+template <typename TYPE = uint8_t, bool AUTO_INIT = true> //, bool WANT_MUTEX = false> //, typename PTRTYPE=TYPE*>
+class AutoShmobj: public AutoShmary_common_base //public std::unique_ptr<SDL_Window, std::function<void(SDL_Window*)>>
+{
+    TYPE* m_ptr;
+public:
+    template<typename ... ARGS>
+    explicit Shmobj(key_t shmkey, ARGS&& ... args) //perfect fwd
+    {
+        m_ptr = shmalloc
+    }
+template <typename TYPE> //= uint8_t>
+TYPE* shmalloc_typesafe(key_t key = 0, size_t ENTS = 1, SrcLine srcline = 0)
+{
+    srcline = NVL(srcline, SRCLINE);
+    TYPE* ptr = (TYPE*)shmalloc_debug(sizeof(TYPE) * ENTS, key, srcline);
+#if 1
+    if (shmnattch(ptr, srcline) > 1) return ptr; //already inited and dtors defered; nothing else to do here
+    for (int i = 0; i < ENTS; ++i)
+        new (&ptr[i]) TYPE(); //placement new; apply ctors so shm is really inited and has valid state (esp mutex)
+    ((ShmHdr*)get_shmhdr(ptr, srcline))->numents = ENTS; //remember #times to call dtor
+//    if (WANT_MUTEX) new (&m_ptr[ENTS]) std::mutex();
+#endif
+    return ptr;
+}
+template <typename TYPE> //= uint8_t>
+int shmfree_typesafe(TYPE* ptr, SrcLine srcline = 0)
+{
+    srcline = NVL(srcline, SRCLINE);
+#if 1
+    size_t ENTS = get_shmhdr(ptr, srcline)->numents; //get #times to call dtor
+    if (shmnattch(ptr, srcline) <= 1)
+        for (int i = 0; i < ENTS; ++i) //TODO: should this be reverse order?  atexit is in order of occurrence so it's probably okay here too
+//                {
+//                    debug(0, "delete @%p" ENDCOLOR, &m_ptr[i]);
+//                    delete &m_ptr[i]; //WRONG
+//TODO: should take into account m_count
+            ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
+#endif
+    return shmfree_debug(ptr, srcline); //CAUTION: data members not valid after
+}
+    explicit AutoShmobj(SrcLine srcline = 0): AutoShmary(0, srcline) {}
+    AutoShmary(key_t key = 0, /*size_t ents = 1,*/ SrcLine srcline = 0): m_ptr((key != KEY_NONE)? (TYPE*)shmalloc(ENTS * sizeof(TYPE) + (WANT_MUTEX? sizeof(std::mutex): 0), key, NVL(srcline, SRCLINE)): 0), /*len(shmsize(m_ptr) / sizeof(TYPE)), key(shmkey(m_ptr)), existed(shmexisted(m_ptr)),*/ m_count(0), m_srcline(NVL(srcline, SRCLINE))
+    {
+        if (!m_ptr && (key != KEY_NONE)) exc_soft("shmalloc" << m_templargs << "(" << ENTS << FMT(", 0x%lx") << key << ") failed");
+        if (!m_ptr) return;
+        if (shmnattch(m_ptr) > 1) return; //already inited and dtors defered; nothing else to do here
+//NOTE: can't get std::bind to attach #ents to func ptr, so embed #ents into template instead (ENTS)
+        if (AUTO_INIT) //call ctors
+        {
+            for (int i = 0; i < ENTS; ++i)
+//            {
+//                debug(0, "placement new @%p" ENDCOLOR, &m_ptr[i]);
+//TODO: should take into account m_count
+                new (&m_ptr[i]) TYPE(); //placement new; apply ctors so shm is really inited and has valid state (esp mutex)
+//            }
+            if (WANT_MUTEX) new (&m_ptr[ENTS]) std::mutex();
+        }
+        AutoShmary_common_base::DTOR dtor = /*AUTO_INIT? std::bind(*/ [](/*size_t ents,*/ void* ptr)
+        {
+            TYPE* m_ptr = static_cast<TYPE*>(ptr);
+            std::mutex* m_mutex = reinterpret_cast<std::mutex*>(&m_ptr[ENTS]);
+            if (AUTO_INIT) //call dtors for each array item
+            {
+                for (int i = 0; i < ENTS; ++i) //TODO: should this be reverse order?  atexit is in order of occurrence so it's probably okay here too
+//                {
+//                    debug(0, "delete @%p" ENDCOLOR, &m_ptr[i]);
+//                    delete &m_ptr[i]; //WRONG
+//TODO: should take into account m_count
+                    m_ptr[i].~TYPE(); //call dtor only; can't free shm; //example at https://stackoverflow.com/questions/14187006/is-calling-destructor-manually-always-a-sign-of-bad-design
+//                }
+                using std_mutex = std::mutex; //kludge: compiler seems to mis-parse explicit call to dtor with "::" so use alias
+                if (WANT_MUTEX) /*mutex()*/ m_mutex->~std_mutex(); //kludge: "this" not captured, so cast from m_ptr
+            }
+            shmfree(ptr);
+//            }, ents, std::placeholders::_1):
+//            [](void* ptr) { shmfree(ptr); };
+        };
+//        std::lock_guard<std::mutex> guard(mutex()); //only allow one thread to init at a time
+//        debug(GREEN_MSG "AutoShmary(%p) ctor: ptr %p, key 0x%x => 0x%x, size %zu * %zu => %zu, existed? %d, page size %ld" ENDCOLOR_ATLINE(srcline), this, m_ptr, key, shmkey(m_ptr), ents, sizeof(TYPE), shmsize(m_ptr), shmexisted(m_ptr), sysconf(_SC_PAGESIZE));
+//        debug(GREEN_MSG "ctor " << *this << ENDCOLOR_ATLINE(srcline));
+        cleanup_later(dtor, m_ptr);
+    }
+//    virtual ~AutoShmary() {} //if (m_ptr) debug(RED_MSG "dtor " << *this << ENDCOLOR_ATLINE(m_srcline)); } //"AutoShmary(%p) dtor, ptr %p defer dealloc" ENDCOLOR_ATLINE(m_srcline), this, m_ptr); }
+public: //operators
+    operator TYPE*() { return m_ptr; }
+    std::mutex& mutex() { return *(std::mutex*)(WANT_MUTEX? &m_ptr[ENTS]: NULL); } //NOTE: usage of retval will give memory error if !WANT_MUTEX
+//    operator void*() { return m_ptr; }
+    STATIC friend std::ostream& operator<<(std::ostream& ostrm, const AutoShmary& that) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+    {
+//        ostrm << "i " << me.m_i << ", s '" << me.m_s << "', srcline " << shortsrc(me.m_srcline, SRCLINE);
+        ostrm << "AutoShmary" << that.m_templargs;
+        ostrm << "{" << commas(sizeof(that)) << ":" << &that;
+        if (!&that) return ostrm << " NO DATA}";
+        ostrm << FMT(", key 0x%lx") << that.key();
+        ostrm << ", ptr " << that.m_ptr;
+        ostrm << ", len " << that.len();
+        ostrm << ", hdr " << (that.m_ptr? get_shmhdr(that.m_ptr): 0);
+        ostrm << ", len " << (that.m_ptr? sizeof(*get_shmhdr(that.m_ptr)): 0);
+        ostrm << ", existed? " << that.existed();
+        ostrm << ", #attch " << (that.m_ptr? shmnattch(that.m_ptr): 0);
+        ostrm << "}";
+        return ostrm;
+    }
+//public: //data members (read-only)
+//no worky: need to call shmalloc before setting these
+//    const size_t len;
+//    const key_t key;
+//    const bool existed;
+public: //methods
+//    PTRTYPE& ptr() /*const*/ { return m_ptr; }
+    TYPE* ptr() const { return m_ptr; }
+    size_t len() const { return m_ptr? shmsize(m_ptr) / sizeof(TYPE): 0; } //NOTE: round down; >= ENTS (shm seg might have given more than requested)
+    key_t key() const { return m_ptr? shmkey(m_ptr): 0; }
+    bool existed() const { return m_ptr? shmexisted(m_ptr): false; }
+public: //std::vector methods
+//TODO: reserve(), capacity(), grow(), etc
+    TYPE* begin() { return m_ptr; }
+    TYPE* end() { return &m_ptr[m_count]; }
+    size_t size() const { return m_count; }
+    void push_back(const TYPE& new_item)
+    {
+        if (m_count >= ENTS) exc_hard("shm::vector no room");
+        m_ptr[m_count++] = new_item; //TODO: emplace?
+    }
+private: //data members
+    int m_count;
+    TYPE* /*const*/ m_ptr; //doesn't change after ctor
+    SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
+#if 0
+    static std::string& my_templargs() //kludge: use wrapper to avoid trailing static decl at global scope
+    {
+        static std::string m_templ_args(TEMPL_ARGS); //only used for debug msgs
+        return m_templ_args;
+    }
+#else
+    static STATIC_WRAP(std::string, m_templargs, = TEMPL_ARGS); //only used for debug msgs
+#endif
+};
+#endif
 
 
 #endif //ndef _SHMARY_H

@@ -5,6 +5,7 @@
 
 //decide which Node API to use:
 #if defined(USE_NAPI)
+// https://nodejs.org/dist/latest/docs/api/n-api.html#n_api_napi_get_value_string_utf8
  #define NAPI_EXPERIMENTAL //NOTE: need this to avoid compile errors; needs Node v10.6.0 or later
  #include <node_api.h> //C style api; https://nodejs.org/api/n-api.html; at ~/.node-gyp/ver#/include/node/node_api.h
  #define NAPI_EXPORTS  NAPI_MODULE //kludge: make macro name consistent to reduce #ifs
@@ -52,6 +53,7 @@
 #define NO_FINAL_DATA  NULL //void* NO_FINAL_DATA = NULL;
 
 //#include "str-helpers.h" //vector_cxx17<>
+#include "logging.h" //thrinx()
 
 //define top of module init chain:
 #define module_exports(env, exports)  exports
@@ -83,7 +85,7 @@ std::string NAPI_ErrorMessage(napi_env env)
     std::ostringstream ss;
     const napi_extended_error_info* errinfo;
     if (napi_get_last_error_info(env, &errinfo) != napi_ok) ss << "Can't get error " << NAPI_LastStatus << " info!";
-    else ss << errinfo->error_message << " (errcode " << errinfo->error_code << ", status " << NAPI_LastStatus << ", thr# " << thrinx() << ")";
+    else ss << errinfo->error_message << " (errcode " << errinfo->error_code << ", status " << NAPI_LastStatus << ", thr# " << LogInfo::thrinx_static() << ")";
     return ss.str(); //NOTE: returns stack var by value, not by ref
 }
 
@@ -231,10 +233,10 @@ struct my_napi_value: napi_value
 #endif
 
 
-#if 0
+#if 1
 //create thread-safe wrapper for caller's js callback function:
 //    napi_ref aoref; //ref to wrapped version of this object
-void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats, void* data = 0) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
 {
     napi_value wker_name;
     const napi_value NO_RESOURCE = NULL; //optional, for init hooks
@@ -242,12 +244,12 @@ void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js
     const int NUM_THREADS = 1; //#threads that will use caller's func (including main thread)
 //    void* NO_FINAL_DATA = NULL;
 //    napi_finalize NO_FINALIZE = NULL;
-    void* NO_CONTEXT = NULL;
+//    void* NO_CONTEXT = NULL;
 //    void* FINAL_DATA = NULL; //optional data for thread_finalize_cb
     napi_finalize THREAD_FINAL = NULL; //optional func to destroy tsfn
     if (valtype(env, jsfunc) != napi_function) NAPI_exc("expected js function arg");
     !NAPI_OK(napi_create_string_utf8(env, "GpuPort async thread-safe callback function", NAPI_AUTO_LENGTH, &wker_name), "Cre wkitem desc str failed");
-    !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, NO_CONTEXT, napi_cb, fats), "Cre JS fats failed");
+    !NAPI_OK(napi_create_threadsafe_function(env, jsfunc, /*aodata->listener.obj.value*/ NO_RESOURCE, wker_name, QUE_NOMAX, NUM_THREADS, NO_FINAL_DATA, NO_FINALIZE, /*NO_CONTEXT*/ data, napi_cb, fats), "Cre JS fats failed");
 }
 #endif
 
@@ -477,6 +479,29 @@ public: //conversions:
         if (coerce) !NAPI_OK(napi_coerce_to_number(env, value, &newval), "Get value as int failed");
         !NAPI_OK(napi_get_value_uint32(env, coerce? newval: value, &uintval), "Get uint32 failed");
         return uintval;
+    }
+    double as_float(bool coerce = false) const
+    {
+        double flval;
+        napi_value newval;
+        if (coerce) !NAPI_OK(napi_coerce_to_number(env, value, &newval), "Get value as int failed");
+        !NAPI_OK(napi_get_value_double(env, coerce? newval: value, &flval), "Get float failed");
+        return flval;
+    }
+    std::string /*&*/ as_str(bool coerce = false) const
+    {
+        size_t buflen;
+        char buf[1000];
+        napi_value newval;
+//        std::string retval;
+//        retval.reserve(1000);
+        if (coerce) !NAPI_OK(napi_coerce_to_string(env, value, &newval), "Get value as str failed");
+        !NAPI_OK(napi_get_value_string_utf8(env, coerce? newval: value, /*&retval[0] /-*.data()*-/, retval.capacity() - 1*/ buf, sizeof(buf), &buflen), "Get str_utf8 failed");
+//printf("napi get str: %d(%d):%p\n", sizeof(buf), buflen, buf); //retval.capacity(), buflen, &retval[0]);
+//retval[0] = 'a';
+//        retval.resize(buflen);
+        std::string retval(buf, buflen);
+        return retval; //std::string(buf, buflen);
     }
 public: //methods
 //get value:

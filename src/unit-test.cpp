@@ -16,10 +16,10 @@ if [ "x$TOTEST" == "x" ]; then TOTEST="?? no files ??"; fi
 echo -e "${PINK}Unit testing '${TOTEST}' on ${HOSTOS} ...${ENDCOLOR}"
 OPT=3  #3 = max; 0 = none
 #CFLAGS="-fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14"
-CFLAGS="`sdl2-config --cflags` -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -fno-rtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14 -x c++"
+CFLAGS="`sdl2-config --cflags` -I. -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -O$OPT -fno-omit-frame-pointer -frtti -fexceptions  -w -Wall -pedantic -Wvariadic-macros -g -std=c++14 -x c++" #-fno-rtti
 CLIBS="`sdl2-config --libs`" #-lGL
 if [ -f "/boot/config.txt" ]; then #RPi
-    CFLAGS="${CFLAGS} -DRPI_NO_X -j4"
+    CFLAGS="${CFLAGS} -DRPI_NO_X #-j4"
 else
     CLIBS="${CLIBS} -lX11 -lXxf86vm"
 fi
@@ -53,6 +53,7 @@ int main(int argc, const char* argv[])
     return 0;
 }
 //EOF
+date
 set +x
 #if [ $? -eq 0 ]; then
 ENDTIME=$(date +%s)

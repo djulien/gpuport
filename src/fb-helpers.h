@@ -111,8 +111,9 @@ protected:
     bool m_cfg_dirty; //TODO: allow caller to change cfg?
 //    struct timespec m_started;
 public: //ctor/dtor
-    explicit FB(SrcLine srcline = 0): m_fd(-1), m_fbp((PIXEL*)-1), m_cfg_dirty(false), width(m_varinfo.xres), height(m_varinfo.yres), pitch(m_fixinfo.line_length), m_srcline(srcline) //, m_started(now()) //, hscale(1), vscale(1)
+    explicit FB(SrcLine srcline = 0): m_fd(-1), m_fbp((PIXEL*)-1), m_cfg_dirty(false), width(m_varinfo.xres), height(m_varinfo.yres), pitch(m_fixinfo.line_length), m_srcline(srcline), m_started(Now()) //, hscale(1), vscale(1)
     {
+//HERE(1);
 //open fb device for read/write:
         m_fd = ::open("/dev/fb0", O_RDWR);
         if (!m_fd || (m_fd == -1)) exc_hard("Error: cannot open framebuffer device");
@@ -121,6 +122,7 @@ public: //ctor/dtor
         if (ioctl(m_fd, FBIOGET_VSCREENINFO, &m_varinfo) == -1) exc_hard("Error reading variable info");
         if (!m_varinfo.pixclock)
         {
+//HERE(2);
 #ifdef RPI_NO_X
             exc_soft("TODO: vcgencmd measure_clock pixel");
 #else //query video info from X Windows
@@ -156,6 +158,10 @@ public: //ctor/dtor
 #endif
         }
         if (!m_varinfo.pixclock) { exc_soft("No pixclock cfg"); m_varinfo.pixclock = 1e6; }
+//HERE(3);
+//detail(DetailLevel::DUMP);
+//printf("FB ctor: max %d, my %d @%s:%d\n", MAX_DEBUG_LEVEL, detail(), __FILE__, __LINE__);
+//printf("debug? level %d <= %d && <= %d" ENDCOLOR_NEWLINE, 30, MAX_DEBUG_LEVEL, detail());
         debug(30, "var info %d x %d, %d bpp, linelen %d, pxclk %4.2f MHz, LR/TB marg %d %d %d %d, sync len h %d v %d, fps %4.2f", 
             m_varinfo.xres, m_varinfo.yres, m_varinfo.bits_per_pixel, m_fixinfo.line_length, (double)PICOS2KHZ(m_varinfo.pixclock) / 1000,
             m_varinfo.left_margin, m_varinfo.right_margin, m_varinfo.upper_margin, m_varinfo.lower_margin, m_varinfo.hsync_len, m_varinfo.vsync_len,
@@ -163,16 +169,18 @@ public: //ctor/dtor
         m_fbp = (PIXEL*)mmap(0, fblen(), PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0);
         if (m_fbp == (PIXEL*)-1) exc_hard("Failed to mmap");
 //        if (!m_varinfo.pixclock) m_varinfo.pixclock = -1;
+//HERE(4);
         debug(30, GREEN_MSG "Framebuffer device opened successfully");
-    	if (m_varinfo.bits_per_pixel / 8 != sizeof(PIXEL)) exc_soft("Expected 32 bpp, got %d bpp @%d", m_varinfo.bits_per_pixel);
-        if (rowlen() != width) exc_soft("Line len (pitch) %s != width %s, likely padded", commas(rowlen()), commas(width));
+    	if (m_varinfo.bits_per_pixel / 8 != sizeof(PIXEL)) exc_soft("Expected 32 bpp, got %d bpp @%d " << ATLINE(srcline), m_varinfo.bits_per_pixel);
+        if (rowlen() != width) exc_soft("Line len (pitch) %s != width %s, likely padded " << ATLINE(srcline), commas(rowlen()), commas(width));
 //    // Store for reset (copy vinfo to vinfo_orig)
 //    memcpy(&orig_vinfo, &vinfo, sizeof(vinfo)); //struct fb_var_screeninfo));
 //map fb to user mem
 //        m_fblen = m_varinfo.xres * m_varinfo.yres * m_varinfo.bits_per_pixel / 8;
-        elapsed(true);
+        elapsed(0);
 //        clock_gettime(/*CLOCK_REALTIME*/ CLOCK_MONOTONIC, &m_started);
         INSPECT(GREEN_MSG << "ctor " << *this << ATLINE(srcline));
+//HERE(5);
     }
     /*virtual*/ ~FB() { close(); INSPECT(RED_MSG << "dtor " << *this << ", lifespan " << ((double)elapsed() / 1000) << " sec" << ATLINE(m_srcline)); } //debug(RED_MSG "mySDL_AutoLib(%p) dtor" ENDCOLOR_ATLINE(m_srcline), this); }
 public: //operators
@@ -199,15 +207,23 @@ public: //operators
 public: //methods
 //    typedef long elapsed_t;
     typedef /*uint64_t*/ uint32_t elapsed_t; //don't need > 32 bits for perf measurement; 20 bits will hold 5 minutes of msec, or 29 bits will hold 5 minutes of usec
-    elapsed_t elapsed(bool reset = false) //msec
+#if 1
+    elapsed_t elapsed() const { return Now() - m_started; }
+    elapsed_t elapsed(elapsed_t reset) //bool reset = false) //msec
     {
-        struct timespec now;
-        clock_gettime(/*CLOCK_REALTIME*/ CLOCK_MONOTONIC, &now);
-        elapsed_t retval = (now.tv_sec - m_started.tv_sec) * 1e3; //sec -> msec
-        retval += now.tv_nsec / 1e6 - m_started.tv_nsec / 1e6; //nsec -> msec
-        if (reset) { m_started = now; m_numfr = 0; }
-        return retval;
+//        struct timespec now;
+//        clock_gettime(/*CLOCK_REALTIME*/ CLOCK_MONOTONIC, &now);
+//        elapsed_t retval = (now.tv_sec - m_started.tv_sec) * 1e3; //sec -> msec
+//        retval += now.tv_nsec / 1e6 - m_started.tv_nsec / 1e6; //nsec -> msec
+//        elapsed_t retval = Now();
+//        if (reset) { m_started = retval; m_numfr = 0; }
+//        return retval - m_started;
+        elapsed_t retval = elapsed();
+        *((decltype(Now())*)&m_started) += retval - reset;
+        m_numfr = 0;
+        return retval; //return pre-adjusted value
     }
+#endif
     inline size_t xy(int x, int y) const { return rowlen(y) + x; }
     PIXEL& pixel(int x, int y, uint32_t argb = 0)
     {
@@ -261,10 +277,9 @@ public: //methods
 //#include <linux/fb.h>
 //#include <cstdlib> //atexit()
 //#include <stdexcept> //std::runtime_error
-    void vsync() //bool want_fallback = false)
+    void vsync(SrcLine srcline = 0) //bool want_fallback = false)
     {
-        static int mm_numfr = 0;
-        ++mm_numfr;
+        int frnum = m_numfr++;
 #ifndef FBIO_WAITFORVSYNC
  #define FBIO_WAITFORVSYNC  _IOW('F', 0x20, __u32)
 #endif
@@ -272,14 +287,15 @@ public: //methods
 //        if (fbfd < 0) return -1;
         if (ioctl(m_fd, FBIO_WAITFORVSYNC, &arg) < 0)
         {
-#ifdef __ARMEL__ //RPi //__arm__
+#ifdef __ARMEL__ //RPi (prod) //__arm__
             /*if (!want_fallback)*/ throw std::runtime_error(strerror(errno)); //let caller deal with it
-#else //PC
+#else //PC (dev)
 //            return false;
-//try to simultate desired timing (not as critical on dev machine):
+//try to simulate desired timing (not as critical on dev machine):
             int delay_msec = 1000 * m_numfr / fps() - elapsed();
-            if (mm_numfr < 5) exc_soft("ioctl vsync fr#[%s] failed, simulate %s fps with sleep %s msec", commas(m_numfr), commas(fps()), commas(delay_msec));
-            if ((delay_msec > 0) && (delay_msec <= 250)) usleep(1000 * delay_msec);
+            static int reported = 0;
+            if (reported++ < 5) exc_soft("ioctl vsync fr#%s failed, simulate %s fps with sleep %s msec " << ATLINE(srcline), commas(frnum), commas(fps(), "%4.2f"), commas(delay_msec));
+            if ((delay_msec > 0) && (delay_msec <= 250)) usleep(1000 * delay_msec); //if it's close, try to simulate correct timing
 #endif
         }
 //        return true;
@@ -299,8 +315,8 @@ public: //methods
 //protected: //data members
 public: //kludge: allow wrapper to reuse
     int m_numfr;
-    struct timespec m_started;
-//    const elapsed_t m_started;
+//    struct timespec m_started;
+    const /*elapsed_t*/ decltype(Now()) m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
 
@@ -363,7 +379,7 @@ struct FB_Rect { int x, y, w, h; };
 
 
 //typedef /*uint64_t*/ /*uint32_t*/ FB::elapsed_t elapsed_t; //don't need > 32 bits for perf measurement; 20 bits will hold 5 minutes of msec, or 29 bits will hold 5 minutes of usec
-#define NO_PERF  (FB::elapsed_t*)NULL
+#define NO_PERF  (elapsed_t*)NULL
 #define NO_XFR  NULL
 
 
@@ -398,7 +414,7 @@ public: //data members
 //    const int width, height;
     typedef PXTYPE PIXEL; //exposed so caller can use it
     enum {CALLER = 0, CPU_TXTR, REND_COPY, REND_PRESENT, NUM_PRESENT, NUM_IDLE, NUM_STATS}; //perf_stats offsets
-    /*double*/ FB::elapsed_t perf_stats[NUM_STATS + EXTRA_STATS]; //allow caller to store additional stats here, or to add custom stats
+    /*double*/ elapsed_t perf_stats[NUM_STATS + EXTRA_STATS]; //allow caller to store additional stats here, or to add custom stats
 //    static const int NUM_STATS = SIZEOF(perf_stats);
     using wrap_type = std::map<int, const char*>; //kludge: can't use "," in macro param
 //kludge: gcc won't allow static member init so wrap in static function/data member:
@@ -418,7 +434,7 @@ public: //ctor/dtor
     explicit FB_AutoTexture(NullOkay): width(m_view.w), height(m_view.h) { debug(20, "empty ctor"); m_view.w = m_view.h = 0; } //: m_started(now()), m_srcline(0) {}
 //    explicit FB_AutoTexture(FB_AutoTexture that): FB_AutoTexture(&that.view(), 0, SRCLINE) {} //used by create() retval
     /*explicit*/ FB_AutoTexture(const FB_AutoTexture& that): FB_AutoTexture(&that.m_view, 0, SRCLINE) { debug(20, "copy ctor"); } //delegated; NOTE: needs to be implicit for NAMED create() and create()
-    explicit FB_AutoTexture(const FB_Size* view_wh = NO_SIZE, PXTYPE init_color = FB::BLACK, SrcLine srcline = 0): width(m_view.w), height(m_view.h), m_latest(now()), m_started(now()), m_srcline(srcline)
+    explicit FB_AutoTexture(const FB_Size* view_wh = NO_SIZE, PXTYPE init_color = FB::BLACK, SrcLine srcline = 0): width(m_view.w), height(m_view.h), m_latest(Now()), m_started(Now()), m_srcline(srcline)
     {
 //        m_fb.m_started = now(); m_fb.m_srcline = NVL(srcline, SRCLINE);
 //        m_hscale = view_wh? (double)m_fb.width / view_wh->w: 1;
@@ -429,7 +445,7 @@ public: //ctor/dtor
         clear(init_color, NVL(srcline, SRCLINE));
         INSPECT(GREEN_MSG << "ctor " << *this << ATLINE(srcline));
     }
-    /*virtual*/ ~FB_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << (now() - m_started) / 1000 /*m_started, 1000)*/ << " sec" << ATLINE(m_srcline)); }
+    /*virtual*/ ~FB_AutoTexture() { INSPECT(RED_MSG "dtor " << *this << ", lifespan " << (Now() - m_started) / 1000 /*m_started, 1000)*/ << " sec" << ATLINE(m_srcline)); }
 public: //operators
     FB_AutoTexture& operator=(const FB_AutoTexture& that) //NOTE: FB itself doesn't need to be copied because it's just mmapped
     {
@@ -452,12 +468,14 @@ public: //operators
         return ostrm; 
     }
 public: //methods
-    typedef FB::elapsed_t elapsed_t;
-    FB::elapsed_t m_latest; //time of last update (RenderPresent unless caller used this also)
-    FB::elapsed_t now() { return m_fb.elapsed(); }
-    inline elapsed_t elapsed(bool reset = false) { return m_fb.elapsed(reset); } //msec
-    inline FB::elapsed_t perftime() { FB::elapsed_t delta = now() - m_latest; m_latest += delta; return delta; } //latest == now() after this
-    inline void clear_stats(FB::elapsed_t* perf = NO_PERF)
+//    typedef FB::elapsed_t elapsed_t;
+    /*FB::elapsed_t*/ decltype(Now()) m_latest; //time of last update (RenderPresent unless caller used this also)
+//    FB::elapsed_t now() { return m_fb.elapsed(); }
+//    inline elapsed_t elapsed(bool reset = false) { return m_fb.elapsed(reset); } //msec
+    inline elapsed_t elapsed() const { return m_fb.elapsed(); } //msec
+    inline elapsed_t elapsed(elapsed_t reset) { return m_fb.elapsed(reset); } //msec
+    inline elapsed_t perftime() { elapsed_t delta = Now() - m_latest; m_latest += delta; return delta; } //latest == now() after this
+    inline void clear_stats(elapsed_t* perf = NO_PERF)
     {
         if (!perf) perf = &perf_stats[0];
         perftime(); //flush/reset perf timer
@@ -482,14 +500,14 @@ public: //methods
         PXTYPE* ptr = static_cast<PXTYPE*>(dest);
         while (len--) *ptr++ = *(PXTYPE*)src; //supposedly a loop is faster than an overlapping memcpy
     }
-    void idle(FB::elapsed_t* perf = NO_PERF, SrcLine srcline = 0)
+    void idle(elapsed_t* perf = NO_PERF, SrcLine srcline = 0)
     {
         if (!perf) perf = &perf_stats[0];
         ++perf[NUM_IDLE]; //count #render presents; gives max theoretical frame rate (vsynced)
         m_fb.vsync(); //CAUTION: waits up to 1 frame time (~17 msec @60 FPS)
     }
     typedef std::function<void(void* dest, const void* src, size_t len)> XFR; //void* (*XFR)(void* dest, const void* src, size_t len); //NOTE: must match memcpy sig; //decltype(memcpy);
-    void update(const PXTYPE* pixels, /*const SDL_Rect* rect = NO_RECT,*/ FB::elapsed_t* perf = NO_PERF, XFR xfr = NO_XFR, /*REFILL refill = NO_REFILL,*/ SrcLine srcline = 0)
+    void update(const PXTYPE* pixels, /*const SDL_Rect* rect = NO_RECT,*/ elapsed_t* perf = NO_PERF, XFR xfr = NO_XFR, /*REFILL refill = NO_REFILL,*/ SrcLine srcline = 0)
     {
         if (!perf) perf = &perf_stats[0];
         perf[CALLER] += perftime(); //time caller spent rendering (sec); could be long (caller determines)
@@ -604,7 +622,7 @@ public: //named arg variants
 //            int& w = size.w; //allor caller to set individually as well
 //            int& h = size.h;
 //            int pitch = NO_PITCH;
-            FB::elapsed_t* perf = NO_PERF;
+            elapsed_t* perf = NO_PERF;
             XFR xfr = NO_XFR; //memcpy;
 //            REFILL refill = NO_REFILL; //memcpy;
             SrcLine srcline = 0;
@@ -619,7 +637,7 @@ public: //named arg variants
     }
 protected:
     static STATIC_WRAP(std::string, my_templargs, = TEMPL_ARGS);
-    FB::elapsed_t m_started;
+    /*FB::elapsed_t*/ decltype(Now()) m_started;
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
 };
 
@@ -685,7 +703,7 @@ const FB_DisplayMode* ScreenInfo(int screen = FIRST_SCREEN, SrcLine srcline = 0)
 #define sec  *1000
 
 //TODO: get from elapsed.h
-typedef FB::elapsed_t elapsed_t;
+//typedef FB::elapsed_t elapsed_t;
 //int64_t now_msec()
 //{
 //    using namespace std::chrono;
@@ -867,7 +885,7 @@ void wrapper_api_test(ARGS& args)
         for (int i = 0; i < 300; ++i) //5 sec @60 fps, 10 sec @30 fps
             VOID txtr.idle(NO_PERF, SRCLINE); //no updated, just vsynced for timing
     }
-    TXTR::elapsed_t duration_msec = txtr.perftime();
+    /*TXTR::*/elapsed_t duration_msec = txtr.perftime();
     debug(0, CYAN_MSG "max frame rate (synced): %d fr / %4.3f s => %4.3f fps", txtr.perf_stats[SDL_AutoTexture<>::NUM_IDLE], (double)duration_msec / 1000, (double)1000 * txtr.perf_stats[SDL_AutoTexture<>::NUM_IDLE] / duration_msec); //txtr.perftime_msec());
 
 //primary color test:
@@ -949,7 +967,7 @@ int calibrate()
     debug(0, "blue (%d, %d)", H - 1, 0);
     SDL_Delay(2 sec);
 
-    txtr.elapsed(true); //reset timer/frame count
+    txtr.elapsed(0); //reset timer/frame count
     TXTR::fill(&myPixels[0][0], mixARGB(0.5, BLACK, WHITE), W * H); //txtr.width * txtr.height); //for (int i = 0; i < wh.w * wh.h; ++i) (&myPixels[0][0])[i] = palette[c]; //(i & 1)? BLACK: palette[c]; //asRGBA(PINK);
     const TXTR::PIXEL palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE}; //convert at compile time for faster run-time loops
     for (int y = 0, c = 0; y < H; ++y) //fill in GPU xfr order (for debug/test only)

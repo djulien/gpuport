@@ -14,6 +14,8 @@
 //NOT NECESSARY:
 //- use lambda to reduce overhead when turned off
 //- use esc codes for colors, thrinx
+//-take a look at: https://github.com/gabime/spdlog
+
 #if 0
 struct
 {
@@ -34,6 +36,15 @@ no: #incl commas
 #if !defined(_LOGGING_H) && !defined(WANT_UNIT_TEST) //force unit test to explicitly #include this file
 #define _LOGGING_H //CAUTION: put this before defs to prevent loop on cyclic #includes
 //#pragma message("#include " __FILE__)
+
+
+//accept variable # up to 2 macro args:
+#ifndef UPTO_2ARGS
+ #define UPTO_2ARGS(one, two, three, ...)  three
+#endif
+//#ifndef UPTO_3ARGS
+// #define UPTO_3ARGS(one, two, three, four, ...)  four
+//#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -127,10 +138,56 @@ no: #incl commas
 
 //std::chrono::duration<double> elapsed()
 #include <chrono> //now(), duration<>
-#include <sstream> //std::stringstream
-#include <unistd.h> //getpid()
+//#include <sstream> //std::stringstream
+//#include <unistd.h> //getpid()
 
-#include "str-helpers.h" //"ostrfmt.h" //FMT()
+//#include "str-helpers.h" //"ostrfmt.h" //FMT()
+
+typedef /*decltype(now())*/ /*int64_t*/ uint32_t my_time_msec_t; //32 bits is enough for ~ 1200 hours (50 days) of msec or ~1.2 hr of usec
+typedef /*decltype(elapsed())*/ uint32_t my_elapsed_msec_t;
+//#ifdef time_t
+// #undef time_t
+//#endif
+//#ifdef elapsed_t
+// #undef elapsed_t
+//#endif
+//CAUTION: must come after thread.h
+//BROKEN: conflicts with time_t used in condition_variable
+//BROKEN #define time_t  my_time_msec_t //conflict; override time.h
+#define elapsed_t  my_elapsed_msec_t
+
+//fwd refs:
+//elapsed_t Elapsed();
+//elapsed_t Elapsed(elapsed_t reset);
+
+inline /*time_t*/ my_time_msec_t Now() //msec
+{
+    using namespace std::chrono;
+    return /*std::chrono::*/duration_cast</*std::chrono::*/milliseconds>(/*std::chrono::*/system_clock::now().time_since_epoch()).count();
+}
+
+
+//TYPE* shmalloc_typesafe(key_t key = 0, size_t ENTS = 1, SrcLine srcline = 0)
+#define NO_RESET  ((elapsed_t)0x80000000)
+//inline elapsed_t Elapsed() { return Now() - m_started; }
+//elapsed_t Elapsed(elapsed_t reset = NO_RESET)
+//CAUTION: times are relative to local process; use LogInfo::Elapsed() for shared/adjustable epoch
+inline elapsed_t Elapsed()
+{
+//    typedef std::atomic<time_t> epoch_t;
+//    static AutoShmobj<epoch_t> epoch = shmalloc_typesafe<epoch_t>(0xF00D0001, 1, SRCLINE);> epoch = Now();
+    static decltype(Now()) epoch = Now();
+//    elapsed_t retval = Now() - epoch;
+//    if (reset != NO_RESET) m_started += retval - reset;
+//    return retval; //return un-updated value
+    return Now() - epoch;
+}
+
+
+void sleep_msec(int msec)
+{
+    if (msec > 0) std::this_thread::sleep_for(std::chrono::milliseconds(msec))); //CAUTION: blocking; should only be used on bkg threads
+}
 
 
 #if 0 //replaced
@@ -244,27 +301,37 @@ std::string timestamp(bool undecorated = false)
 #include <thread> //std::thread::get_id(), std::thread()
 //#include <utility> //std::forward<>
 //#include <sstream> //std::ostringstream
-#include <condition_variable>
-#include <mutex> //std:mutex<>, std::unique_lcok<>
+//#include <condition_variable>
+#include <vector> //std::vector<>
+#include <mutex> //std:mutex<>, std::unique_lock<>
+
+//#include "str-helpers.h" //PreallocVector<>
 
 #if 0 //replaced
-inline auto /*std::thread::id*/ thrid()
+inline auto /*std::thread::id*/ Thrid()
 {
 //TODO: add pid for multi-process uniqueness?
     return std::this_thread::get_id();
 }
+#else
+const thread_local auto thrid = std::this_thread::get_id();
+#endif
 
+
+#if 1
 //reduce verbosity by using a unique small int instead of thread id:
-int thrinx(const std::thread::id/*auto*/& myid = thrid())
+//CAUTION: indices are relative to local process; use LogInfo::thrinx() for shared indices across processes
+size_t Thrinx(const std::thread::id/*auto*/& myid = thrid) //Thrid())
 {
-//TODO: move to shm
-    static std::vector</*std::decay<decltype(thrid())>*/std::thread::id> ids;
+//    PreallocVector</*thrid*/ std::thread::id, 8> thrids;
     static std::mutex mtx;
-    std::unique_lock<decltype(mtx)> lock(mtx);
+    using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
+    static std::vector</*std::decay<decltype(thrid())>*/std::thread::id> ids;
 
+    LOCKTYPE lock(mtx);
     for (auto it = ids.begin(); it != ids.end(); ++it)
         if (*it == myid) return it - ids.begin();
-    int newinx = ids.size();
+    size_t newinx = ids.size();
     ids.push_back(myid);
     return newinx;
 }
@@ -276,6 +343,7 @@ int thrinx(const std::thread::id/*auto*/& myid = thrid())
 /// debug and error helpers
 //
 
+#if 0
 #include <sstream> //std::ostringstream
 #include <stdexcept> //std::runtime_error
 #include <utility> //std::forward<>
@@ -295,15 +363,7 @@ int thrinx(const std::thread::id/*auto*/& myid = thrid())
 #ifndef MAX_DEBUG_LEVEL
  #define MAX_DEBUG_LEVEL  100 //[0..9] for high-level, [10..19] for main logic, [20..29] for mid logic, [30..39] for lower level alloc/dealloc
 #endif
-
-
-//accept variable #3 macro args:
-#ifndef UPTO_2ARGS
- #define UPTO_2ARGS(one, two, three, ...)  three
 #endif
-//#ifndef UPTO_3ARGS
-// #define UPTO_3ARGS(one, two, three, four, ...)  four
-//#endif
 
 
 /*
@@ -345,6 +405,14 @@ public: //operators
 /// Convenience macros:
 //
 
+#include <sstream> //std::ostringstream
+#include <stdexcept> //std::runtime_error
+#include <stdio.h> //printf(), fflush() //<cstdio> //vsnprintf()
+//#include <stdarg.h> //varargs
+#include <utility> //std::forward<>
+#include <string> //std::string
+
+
 //debug messages:
 //structured as expr to avoid surrounding { } and possible syntax errors
 //#define debug(level, ...)  (((level) <= MAX_DEBUG_LEVEL)? myprintf(level, __VA_ARGS__): noop())
@@ -365,12 +433,62 @@ public: //operators
 //inline int32_t debug_level() { return debug_level(-1); }
 //extern int32_t debug_level = MAX_DEBUG_LEVEL;
 
+#ifndef MAX_DEBUG_LEVEL
+ #define MAX_DEBUG_LEVEL  100 //[0..9] for high-level, [10..19] for main logic, [20..29] for mid logic, [30..39] for lower level alloc/dealloc
+#endif
+
+#define HERE(n)  { printf("here " TOSTR(n) SRCLINE "\n"); fflush(stdout); } //TOSTR(n) " @" TOSTR(__LINE__) "\n"); fflush(stdout); }
+
 
 #define warn exc_soft
-#define exc exc_hard
-#define exc_soft(...)  logprintf(DetailLevel::WARN_LEVEL, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
-#define exc_hard(...)  logprintf(DetailLevel::ERROR_LEVEL, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
+#define error exc_hard
+#define exc_soft(...)  debug(DetailLevel::WARN_LEVEL, __VA_ARGS__) //logprintf(DetailLevel::WARN_LEVEL, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
+#define exc_hard(...)  debug(DetailLevel::ERROR_LEVEL, __VA_ARGS__) //logprintf(DetailLevel::ERROR_LEVEL, SRCLINE, std::ostringstream() << /*RED_MSG <<*/ __VA_ARGS__)
 #define exc_throw(...)  throw std::runtime_error((static_cast<std::ostringstream&>(std::ostringstream() << RED_MSG << __VA_ARGS__ << ENDCOLOR_NOLINE)).str())
+
+#if 0
+#define SNAT_1ARG(var)  snapshot("(no name)", var)
+#define SNAT_2ARGS(desc, var)  SNAT_3ARGS(desc, &(var), sizeof(var))
+#define SNAT_3ARGS(desc, addr, len)  SNAT_4ARGS(desc, addr, len, SRCLINE)
+#define SNAT_4ARGS(desc, addr, len, srcline)  snapshot(desc, addr, len, srcline) //NVL(srcline, SRCLINE))
+#define SNAT(...)  UPTO_4ARGS(__VA_ARGS__, SNAT_4ARGS, SNAT_3ARGS, SNAT_2ARGS, SNAT_1ARG) (__VA_ARGS__)
+#endif
+
+
+//kludge: "!this" no worky with g++ on RPi
+//#ifndef isnull
+// #ifdef __ARMEL__ //RPi //__arm__
+//  #define isnull(ptr)  ((ptr) < reinterpret_cast<decltype(ptr)>(2)) //kludge: "!this" no worky with g++ on RPi; this !< 1 and != 0, but is < 2 so use that
+// #else //PC
+//  #define isnull(ptr)  !(ptr)
+// #endif
+//#endif
+
+
+#ifndef INSPECT_LEVEL
+ #define INSPECT_LEVEL  12
+#endif
+//put desc/dump of object to debug:
+//use macro so SRCLINE will be correct
+#define inspect_1ARG(thing)  inspect_2ARGS(INSPECT_LEVEL, thing) //SRCLINE)
+//#define inspect_2ARGS(things, srcline)  inspect_3ARGS(INSPECT_LEVEL, things, srcline)
+#define inspect_2ARGS(level, things)  debug(level, BLUE_MSG << things)
+//#define inspect_3ARGS(level, things, srcline)  debug(level, BLUE_MSG << things << srcline) //NVL(srcline, "") //ENDCOLOR_ATLINE(srcline))
+//#define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
+#define INSPECT(...)  UPTO_2ARGS(__VA_ARGS__, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
+
+
+//#define WantDetail_0ARGS()  detail(__FILE__) //substr(__FILE__, strrofs(__FILE__, '.')))
+//#define WantDetail_1ARG(level)  detail(__FILE__, level)
+//#define WantDetail_2ARGS(file, level)  detail(file, level)
+//#define WantDetail(...)  UPTO_2ARGS(__VA_ARGS__, WantDetail_2ARGS, WantDetail_1ARG, WantDetail_0ARGS) (__VA_ARGS__)
+
+
+//fwd refs:
+//int detail();
+int detail(const char* key);
+/*void*/ int logprintf(int level, /*SrcLine srcline,*/ SrcLine srcline, const char* fmt, ...);
+
 
 //#define exc(...)  myprintf(-1, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
@@ -387,49 +505,14 @@ public: //operators
 //use macro so SRCLINE will be correct
 //compiler should filter out anything > MAX_DEBUG_LEVEL, leaving only the second condition for run-time eval
 //TODO: use lamba function for lazy param eval (better run-time perf, can leave debug enabled)
-#define debug(level, ...)  ((((level) <= MAX_DEBUG_LEVEL) && ((level) <= detail()))? ::logprintf(level, SRCLINE, std::ostringstream() << __VA_ARGS__): 0) //filter out *max* detail at compile time
+#define debug(level, ...)  ((((level) <= MAX_DEBUG_LEVEL) && ((level) <= detail(__FILE__)))? ::logprintf(level, SRCLINE, std::ostringstream() << __VA_ARGS__): 0) //filter out *max* detail at compile time
+//#define debugx(level, ...)  ((((level) <= MAX_DEBUG_LEVEL) && ((level) <= detail()))? ::logprintf(level, SRCLINE, std::ostringstream() << __VA_ARGS__): (printf("!debug: level %d > %d && > %d" ENDCOLOR_NEWLINE, level, MAX_DEBUG_LEVEL, detail()), 0)) //filter out *max* detail at compile time
 //#define debug(...)  myprintf(0, ssfriend() << __VA_ARGS__)
 //template <typename ... ARGS>
 //void debug(ARGS&& ... args)
 //{
 //    myprintf(0, std::forward<ARGS>(args) ...); //perfect fwding
 //}
-
-#define HERE(n)  { printf("here " TOSTR(n) SRCLINE "\n"); fflush(stdout); } //TOSTR(n) " @" TOSTR(__LINE__) "\n"); fflush(stdout); }
-
-#if 0
-#define SNAT_1ARG(var)  snapshot("(no name)", var)
-#define SNAT_2ARGS(desc, var)  SNAT_3ARGS(desc, &(var), sizeof(var))
-#define SNAT_3ARGS(desc, addr, len)  SNAT_4ARGS(desc, addr, len, SRCLINE)
-#define SNAT_4ARGS(desc, addr, len, srcline)  snapshot(desc, addr, len, srcline) //NVL(srcline, SRCLINE))
-#define SNAT(...)  UPTO_4ARGS(__VA_ARGS__, SNAT_4ARGS, SNAT_3ARGS, SNAT_2ARGS, SNAT_1ARG) (__VA_ARGS__)
-#endif
-
-
-#ifndef INSPECT_LEVEL
- #define INSPECT_LEVEL  12
-#endif
-//put desc/dump of object to debug:
-//use macro so SRCLINE will be correct
-#define inspect_1ARG(thing)  inspect_2ARGS(INSPECT_LEVEL, thing) //SRCLINE)
-//#define inspect_2ARGS(things, srcline)  inspect_3ARGS(INSPECT_LEVEL, things, srcline)
-#define inspect_2ARGS(level, things)  debug(level, BLUE_MSG << things)
-//#define inspect_3ARGS(level, things, srcline)  debug(level, BLUE_MSG << things << srcline) //NVL(srcline, "") //ENDCOLOR_ATLINE(srcline))
-//#define INSPECT(...)  UPTO_3ARGS(__VA_ARGS__, inspect_3ARGS, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
-#define INSPECT(...)  UPTO_2ARGS(__VA_ARGS__, inspect_2ARGS, inspect_1ARG) (__VA_ARGS__)
-
-
-typedef /*decltype(now())*/ /*int64_t*/ uint32_t my_time_t; //32 bits is enough for ~ 1200 hours of msec or ~1.2 hr of usec
-typedef /*decltype(elapsed())*/ uint32_t my_elapsed_t;
-#define time_t  my_time_t //conflict; override time.h
-#define elapsed_t  my_elapsed_t
-
-//fwd refs:
-int detail();
-/*void*/ int logprintf(int level, /*SrcLine srcline,*/ SrcLine srcline, const char* fmt, ...);
-time_t now(); //msec
-elapsed_t elapsed();
-elapsed_t elapsed(elapsed_t reset);
 
 //kludge: implicit cast ostringstream -> const char* !worky; overload with perfect fwd for now
 template <typename ... ARGS>
@@ -455,19 +538,29 @@ class InOutDebug
 public:
 //kludge: overload until implicit cast ostringstream -> const char* works
     explicit InOutDebug(SrcLine srcline, std::/*ostringstream*/ostream& label): InOutDebug(srcline, static_cast<std::ostringstream&>(label).str().c_str()) {} //delegated ctor
-    explicit InOutDebug(SrcLine srcline, const char* label = ""): m_started(elapsed()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(INOUT_LEVEL, BLUE_MSG << label << ": IN" << m_srcline); } //ENDCOLOR_ATLINE(srcline)); }
-    /*virtual*/ ~InOutDebug() { debug(INOUT_LEVEL, BLUE_MSG << m_label << ": OUT after %f msec" << m_srcline, restart()); } //ENDCOLOR_ATLINE(m_srcline), restart()); }
+    explicit InOutDebug(SrcLine srcline, const char* label = ""): m_started(Now()), m_label(label), m_srcline(NVL(srcline, SRCLINE)) { debug(INOUT_LEVEL, BLUE_MSG << label << ": IN" << m_srcline); } //ENDCOLOR_ATLINE(srcline)); }
+    /*virtual*/ ~InOutDebug() { debug(INOUT_LEVEL, BLUE_MSG << m_label << ": OUT after %f msec" << m_srcline, elapsed()); } //ENDCOLOR_ATLINE(m_srcline), restart()); }
 public: //methods
+#if 0
     double restart(bool update = true) //my_elapsed_msec(bool restart = false)
     {
         double retval = elapsed() - m_started;
         if (update) m_started = elapsed();
         return retval;
     }
-    void checkpt(const char* desc = 0, SrcLine srcline = 0) { debug(INOUT_LEVEL, BLUE_MSG << m_label << " CHKPT(%s) after %f msec" << m_srcline /*ENDCOLOR_ATLINE(NVL(srcline, m_srcline))*/, NVL(desc, ""), restart(false)); }
+#endif
+//    elapsed_t elapsed() { return Now() - m_started; }
+//allow caller to reset:
+    elapsed_t elapsed(elapsed_t reset = NO_RESET)
+    {
+        elapsed_t retval = Now() - m_started; //elapsed();
+        if (reset != NO_RESET) m_started += retval - reset;
+        return retval; //elapsed();
+    }
+    void checkpt(const char* desc = 0, SrcLine srcline = 0) { debug(INOUT_LEVEL, BLUE_MSG << m_label << " CHKPT(%s) after %s msec" << m_srcline /*ENDCOLOR_ATLINE(NVL(srcline, m_srcline))*/, NVL(desc, ""), commas(elapsed(0))); }
 protected: //data members
 //    /*const*/ int m_started; //= -elapsed_msec();
-    elapsed_t m_started;
+    decltype(Now()) m_started;
 //    const char* m_label;
     std::string m_label; //make a copy in case caller's string is on stack
     SrcLine m_srcline; //save for parameter-less methods (dtor, etc)
@@ -476,8 +569,27 @@ protected: //data members
 
 /////////////////////////////////////////////////////////////////////////////////
 ////
-/// Debug detail levels:
+/// debug env control (detail level):
 //
+
+//#include <sstream> //std::ostringstream
+//#include <stdexcept> //std::runtime_error
+//#include <utility> //std::forward<>
+//#include <stdio.h> //<cstdio> //vsnprintf()
+//#include <stdarg.h> //varargs
+//#include <cctype> //isspace()
+#include <regex> //std::regex, std::cmatch, std::regex_match()
+//#include <string>
+#include <string.h> //strrchr()
+#include <cstdlib> //atoi(), getenv()
+#include <vector>
+
+//#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+#include "str-helpers.h" //substr, NVL(), commas()
+//cyclic; moved below; #include "thr-helpers.h" //thrid(), thrinx()
+//#include "srcline.h" //SRCLINE
+//#include "elapsed.h" //elapsed_msec()
+
 
 struct DetailLevel
 {
@@ -500,22 +612,33 @@ struct DetailLevel
 };
 
 
+void first_time(); //fwd ref
+
 //get/set detail logging level for given file (key):
 int detail(const char* key /*= "*"*/, size_t keylen, int new_level /*= NO_CHANGE*/)
 {
-    static /*PreallocVector<DetailLevel, 10>*/ std::vector<DetailLevel> details; //max 1 per src file + 1 global
+//set initial debug level to max, then discard if debug found to be off later; this avoids any debug data loss
+    static /*PreallocVector<DetailLevel, 10>*/ std::vector<DetailLevel> details = {{"*", MAX_DEBUG_LEVEL}}; //max 1 per src file + 1 global
     static bool busy = false;
 //    if (busy) return DetailLevel::SILENT;
     bool was_busy = busy;
     busy = true;
+    first_time();
+
     if (new_level == DetailLevel::DUMP)
     {
-        if (!was_busy) debug(32, CYAN_MSG "debug detail %d entries:", details.size());
+        if (!was_busy) /*debug(32-32,*/printf( CYAN_MSG "debug detail %d entries:" ENDCOLOR_NEWLINE, details.size());
         for (auto it = details.begin(); it != details.end() /*&& (it->level != EMPTY)*/; ++it)
-            if (!was_busy) debug(32, BLUE_MSG "debug detail[%d/%d]: " << it->key << " = %d", it - details.begin(), details.size(), it->level);
-        new_level = DetailLevel::NO_CHANGE;
+            if (!was_busy) /*debug(32-32,*/printf( BLUE_MSG "debug detail[%d/%d]: '%.*s' = %d" ENDCOLOR_NEWLINE, it - details.begin(), details.size(), it->key.len, it->key.str, it->level);
+//        new_level = DetailLevel::NO_CHANGE;
+        return 0;
     }
-//    if (!keylen) keylen = strlen(key);
+    if (!keylen)
+    {
+        keylen = strrofs(key, '.');
+        if (!keylen) keylen = strlen(key);
+        if (!keylen) return 0;
+    }
     static const substr ALL("*");
     substr new_key(key, keylen);
     if (!was_busy && (new_level != DetailLevel::NO_CHANGE)) debug(32, "detail level " << new_key << " <- %d", new_level);
@@ -535,17 +658,30 @@ int detail(const char* key /*= "*"*/, size_t keylen, int new_level /*= NO_CHANGE
     details.emplace_back(new_key, new_level);
     return new_level;
 }
-int detail() { return detail(__FILE__, strrofs(__FILE__, '.'), DetailLevel::NO_CHANGE); }
-int detail(int new_level) { return detail(__FILE__, strrofs(__FILE__, '.'), new_level); }
-int detail(const char* key) { return detail(key, 0, DetailLevel::NO_CHANGE); }
+//const substr me(__FILE__, strrofs(__FILE__, '.'));
+inline int detail() { return detail(__FILE__); } //, strrofs(__FILE__, '.'), DetailLevel::NO_CHANGE); }
+inline int detail(int new_level) { return detail(__FILE__, /*strrofs(__FILE__, '.')*/ 0, new_level); }
+inline int detail(const char* key)
+{
+    int retval = detail(key, 0, DetailLevel::NO_CHANGE);
+//printf("detail(%d:%s) = %d\n", NVL(strrofs(key, '.'), strlen(key)), key, retval);
+    return retval;
+}
 int detail(const substr& key, const substr& level) //const char* key, size_t keylen, const char* new_level)
 {
     debug(24, "set detail: key " << key << ", level " << level);
     int new_level;
-    if (!level.len || (level == "+")) new_level = DetailLevel::TRUE;
-    else if (level == "-") new_level = DetailLevel::FALSE;
+    if (!level.len || (level == "+") || (level == "true")) new_level = DetailLevel::TRUE;
+    else if ((level == "-") || (level == "false")) new_level = DetailLevel::FALSE;
     else new_level = atoi(level.str);
     return detail(key.str, key.len, new_level);
+}
+
+
+inline const char* skip_folder(const char* path)
+{
+    const char* bp = strrchr(path, '/');
+    return bp? bp + 1: path;
 }
 
 
@@ -555,15 +691,15 @@ void first_time()
     if (inited) return;
     inited = true;
 //    std::string str(NVL(getenv("DEBUG"), ""));
-    const char* str = getenv("DEBUG");
+    const char* str = NVL(getenv("DEBUG"), getenv("debug"));
 //    printf("%.*s %d:'%s', trunc %d:'%.*s'\n", 4, "qwerty", strlen(__FILE__), __FILE__, strrofs(__FILE__, '.'), strrofs(__FILE__, '.'), __FILE__);
-    if (!str) { warn("Prefix with \"DEBUG=%.*s\" or \"DEBUG=*\" to see debug %d info (default is %d).", strrofs(__FILE__, '.'), __FILE__, DetailLevel::TRUE, DetailLevel::FALSE); return; } //tell user how to get debug info
+    if (!str) { warn("Prefix with \"DEBUG=%.*s\" or \"DEBUG=*\" for debug level %d (default is %d).", strrofs(skip_folder(__FILE__), '.'), skip_folder(__FILE__), DetailLevel::TRUE, DetailLevel::FALSE); return; } //tell user how to get debug info
     static const int           ONOFF = 1, NAME = 2,            LEVEL = 4;
     static const std::regex re("^([+\\-])?([^\\s=]+)(\\s*=\\s*(\\d+))?(\\s*,\\s*)?");
 //    static const char* DELIM = ", ";
     for (int count = 0; *str; ++count)
     {
-        if (count > 50) { exc_soft("whoops; inf loop?"); break; } //paranoid/debug
+        if (count > 50) { warn("whoops; inf loop?"); break; } //paranoid/debug
 //        while (strchr(DELIM, *str)) ++str;
 //        const char* bp = str;
 //        while (*str && !strchr(DELIM, *str)) ++str;
@@ -599,13 +735,271 @@ void first_time()
 
 ////////////////////////////////////////////////////////////////////////////////
 ////
+/// In-memory log files:
+//
+
+#include <mutex>
+#include <condition_variable>
+#include <string>
+#include <stdio.h>
+
+//abstract base class (interface):
+class LogFile
+{
+public: //ctor/dtor
+    LogFile() {}
+    virtual ~LogFile() {} // show(); } //can't call virtual function from dtor; https://stackoverflow.com/questions/10707286/how-to-resolve-pure-virtual-method-called
+public: //methods
+    virtual size_t alloc(size_t buflen) = 0; //must be atomic; other methods don't need to be
+    size_t writex(const char* buf, size_t buflen = 0) //kludge: can't overload virtual with non-virtual function, so use different name
+    {
+        if (!buflen) buflen = strlen(buf);
+        return write(buf, buflen, alloc(buflen));
+    }
+    virtual size_t write(const char* buf, size_t buflen, size_t ofs) = 0;
+    virtual std::string read(bool wait) = 0; //int maxents = 0)
+    void wake() { m_cvar.notify_all(); }
+//    void sleep()
+//    {
+//        LOCKTYPE lock(m_mutex);
+//        while (!pred()) m_cvar.wait(lock);
+//    }
+protected: //members
+    std::mutex m_mutex;
+    std::condition_variable m_cvar;
+    using LOCKTYPE = std::unique_lock<decltype(m_mutex)>; //not: std::lock_guard<decltype(m_mtx)>;
+protected: //helpers
+    void show() //bool clear = true)
+    {
+//        LOCKTYPE lock(m_mutex);
+//        if (!clear) { printf(CYAN_MSG "flush nonshm log" ENDCOLOR_NEWLINE); fflush(stdout); }
+//HERE(33);
+        const std::string& display = read();
+//HERE(34);
+        if (!display.length()) return;
+        printf(CYAN_MSG "drain mem log %p:\n%s" ENDCOLOR_NEWLINE, this, display.c_str());
+        fflush(stdout);
+//        /*if (clear)*/ m_log.clear();
+    }
+};
+
+
+#if 1
+class debug_string: public std::string
+{
+public:
+    debug_string() { printf("str %p ctor\n", this); fflush(stdout); }
+    ~debug_string() { printf("str %p dtor, len %u\n", this, length()); fflush(stdout); }
+};
+#else
+ #define debug_string  std::string
+#endif
+
+
+//#if 1
+//linear log file:
+//for use with local memory when shm log not available
+class LocalMemLog: public LogFile, public debug_string
+{
+//    std::mutex m_mutex;
+//    std::condition_variable m_cvar;
+//    using LOCKTYPE = std::unique_lock<decltype(m_mutex)>; //not: std::lock_guard<decltype(m_mtx)>;
+//    debug_string m_log;
+#define m_log  (*this)
+public: //ctor/dtor
+    LocalMemLog()
+    {
+        static int m_count = 0;
+        if (m_count++) exc_throw("should be singleton");
+//        static bool disp_later = false;
+//        if (!disp_later) { disp_later = true; atexit([]() { show_log(false); }); }
+    }
+    /*virtual*/ ~LocalMemLog() { show(); } //NOTE: if object is static and created < LogInfo, don't need atexit() call here
+public: //methods
+    size_t alloc(size_t buflen) //must be atomic; other methods don't need to be
+    {
+        LOCKTYPE lock(m_mutex);
+        size_t retval = m_log.length();
+//        reserve(retval + buflen);
+        m_log.append(buflen, '\0');
+        return retval;
+    }
+    size_t write(const char* buf, size_t buflen, size_t ofs)
+    {
+        LOCKTYPE lock(m_mutex); //is lock needed for in-place replacement?
+        m_log.replace(ofs, buflen, buf);
+        return buflen;
+    }
+//CAUTION: blocking wait; should only be used on bkg threads
+    std::string read(bool wait) //int maxents = 0)
+    {
+        LOCKTYPE lock(m_mutex);
+        for (;;)
+        {
+            std::string retval = m_log; //*this;
+            m_log.clear();
+            if (retval.length() || !wait) return retval;
+            m_cvar.wait(lock);
+        }
+    }
+//    void wake() { m_cvar.notify_all(); }
+//private: //helpers
+//    void sleep()
+//    {
+//        LOCKTYPE lock(m_mutex);
+//        while (!pred()) m_cvar.wait(lock);
+//    }
+#if 0
+    void show() //bool clear = true)
+    {
+//        LOCKTYPE lock(m_mutex);
+//        if (!clear) { printf(CYAN_MSG "flush nonshm log" ENDCOLOR_NEWLINE); fflush(stdout); }
+        const std::string& display = read();
+        if (!display.length()) return;
+        printf(CYAN_MSG "local mem log:\n%s" ENDCOLOR_NEWLINE, display.c_str());
+        fflush(stdout);
+//        /*if (clear)*/ m_log.clear();
+    }
+#endif
+#undef m_log
+};
+//CAUTION: must be created < and destroyed > all logging calls
+static LocalMemLog nonshm_log; //must be outside of LogInfo to outlive LogInfo instances
+//#endif
+
+
+//circular log file:
+//for use with shared memory
+class CircularLog: public LogFile //, public debug_string
+{
+    std::atomic<size_t> m_head; //, m_tail /*= 0*/;
+    size_t m_tail; //read protected by mutex/cvar; doesn't need to be atomic
+//    std::atomic<int>& m_retries;
+    char m_storage[0x4000]; //= ""; //16K will hold ~200 entries of 80 char
+public: //ctor/dtor
+//    CircularLog(): m_head(0), m_tail(0), m_retries(0)
+//    CircularLog(std::atomic<int>& retries): m_retries(retries)
+//    {
+//        static int m_count = 0;
+//        if (m_count++) exc_throw("should be singleton");
+//    }
+    /*virtual*/ ~CircularLog() { show(); } //NOTE: if object is static and created < LogInfo, don't need atexit() call here
+public: //methods
+//    size_t re_reads() const { return m_retries; }
+    size_t alloc(size_t buflen) //must be atomic; other methods don't need to be
+    {
+//        if (/*isclosing()*/ /*isnull(this)*/ !THIS()) return 0;
+        size_t retval = m_head.fetch_add(buflen); //% sizeof(pool); //prev atomic += didn't adjust for wrap-around, so do it here
+//wrapwrite will wrap its private copy of write ofs to pool size, but shm copy is not updated
+//eventual shm copy overflow will cause incorrect wrap (misalignment) if !power of 2, so update shm copy of write ofs when needed:
+//no        if (retval + buflen > sizeof(pool)) head.fetch_add(-sizeof(pool)); //retval -= sizeof(pool); } //wrapped
+        if (retval + buflen < retval) exc_throw("log size wrapped");
+//        size_t tail_bump = retval;
+//        tail.compare_exchange_strong(tail_bump, (retval + 1) % sizeof(pool)); //kludge: tail == head means empty; bump tail if full to avoid ambiguity
+// |==========pool==============|
+// |============tail===new-head=|
+// |==new-head==tail============|
+//        for (;;)
+//        {
+//            size_t svtail = tail;
+//            if ((svtail >= retval) && (svtail < retval + buflen))
+//            if ()
+//        }
+//        while (!head.compare_exchange_weak(retval, retval % sizeof(pool)); //CAS loop; https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
+//NOTE: race condition exists while buf is being filled in; mitigate by pre-filling with nulls (race window is much shorter, but still there):
+//        retval %= sizeof(pool);
+//        size_t wraplen = std::min(buflen, sizeof(pool) - retval);
+//        if (!buf) return ofs; //caller will write
+//        if (wraplen) memset(pool + retval, 0, wraplen);
+//        if (wraplen < buflen) memset(pool, 0, buflen - wraplen);
+        return retval;
+    }
+    size_t write(const char* buf, size_t buflen, size_t ofs)
+    {
+//        if (!buf) return ofs; //caller will write
+//no        if (!buflen) buflen = strlen(buf);
+//        if (THIS()) ///*!isclosing()*/ !isnull(this) && !isclosing())
+//        if (/*isclosing()*/ !this) return 0;
+        ofs %= sizeof(m_storage);
+        size_t wraplen = std::min(buflen, sizeof(m_storage) - ofs);
+        if (wraplen) memcpy(m_storage + ofs, buf, wraplen); //std::min(intro_len, sizeof(pool) - ofs));
+//            int wrap_len = ofs + intro_len - sizeof(pool);
+        if (wraplen < buflen) memcpy(m_storage, buf + wraplen, buflen - wraplen);
+//            if (nonshm_log().length() >= sizeof(pool)) show_log(); //don't let it get too big
+        return buflen;
+    }
+//CAUTION: blocking wait; should only be used on bkg threads
+    std::string read(bool wait) //int maxents = 0)
+    {
+#if 0 //read() doesn't need to be lockless; use mutex so cvar can also be used
+        for (;;) //retry lockless read
+        {
+            std::string retval;
+            size_t svtail = m_tail;
+            int loglen = m_head - svtail; //CAUTION: atomic read on head allows new log entries to come in; tail assumed safe (only one reader)
+            if (loglen < 0) exc_throw("log wrapped: " << (loglen + svtail) << " <- " << svtail); //loglen += sizeof(pool); //wrapped
+            
+            size_t newtail = svtail + loglen;
+            loglen %= sizeof(m_storage); //can't exceed buf size
+            svtail %= sizeof(m_storage);
+//            size_t svretlen = retval.length();
+            size_t wraplen = std::min(sizeof(m_storage) - svtail, (size_t)loglen);
+            retval.append(m_storage + svtail, wraplen);
+            retval.append(m_storage, loglen - wraplen);
+//                if (tail == svtail) break; //no new log entries were written while reading
+            if (m_tail.compare_exchange_strong(svtail, newtail)) return retval; //break; //svtail + loglen) % sizeof(pool)); //kludge: tail == head means empty; bump tail if full to avoid ambiguity
+//            retval.erase(svretlen, loglen); //try again
+            ++m_retries;
+        }
+#endif
+        LOCKTYPE lock(m_mutex);
+        for (;;)
+        {
+            int loglen = m_head - m_tail; //atomic head allows new log entries to come in; tail is locked (only one reader)
+            if (loglen < 0) exc_throw("log wrapped: " << (loglen + m_tail) << " <- " << m_tail); //loglen += sizeof(pool); //wrapped
+            loglen %= sizeof(m_storage); //can't exceed buf size
+            size_t tailofs = m_tail % sizeof(m_storage);
+            std::string retval;
+            size_t wraplen = std::min(sizeof(m_storage) - tailofs, (size_t)loglen);
+            retval.append(m_storage + tailofs, wraplen);
+            retval.append(m_storage, loglen - wraplen);
+            m_tail += loglen; //clear unread log
+            if (retval.length() || !wait) return retval;
+            m_cvar.wait(lock);
+        }
+    }
+//    void wake() {} //noop
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+////
 /// shared memory logger:
 //
 
-#include <cstdlib> //getenv(), atexit()
-#include <regex> //std::regex, std::regex_match()
+//#include <cstdlib> //getenv(), atexit()
+//#include <regex> //std::regex, std::regex_match()
+//#include <sstream> //std::ostringstream
+//#include <stdexcept> //std::runtime_error
+//#include <utility> //std::forward<>
+#include <stdio.h> //<cstdio> //vsnprintf()
+#include <stdarg.h> //varargs, va_list
+//#include <cctype> //isspace()
+//#include <regex> //std::regex, std::cmatch, std::regex_match()
+#include <string>
+#include <string.h> //strrchr(), strlen(), strcmp(), strncpy(), strstr()
+//#include <cstdlib> //atoi(), getenv()
+//#include <vector>
+#include <thread> //std::thread::*
+#include <mutex> //std:mutex<>, std::unique_lock<>
+#include <atomic> //std::atomic<>
+#include <algorithm> //std::max(), std::min()
 
+
+//#include "msgcolors.h" //MSG_*, ENDCOLOR_*
+#include "str-helpers.h" //substr, NVL(), commas(), PreallocVector<>
 #include "shmalloc.h" //shmalloc(), shmfree(), STATIC_WRAP
+
 
 #if 0 //experimental
 //from above:
@@ -632,11 +1026,29 @@ void first_time()
 // so log messages are stored in shm and another process can read them aynchronously if interested
 //circular fifo is used; older msgs will be overwritten automatically; no memory mgmt overhead
 #if 1
+//static std::mutex& nonshm_mutex()
+//{
+//    static std::mutex m_mutex;
+//    return m_mutex;
+//}
+//static /*thread_local*/ std::string& nonshm_log() //collect msgs in local mem until shm set up
+//{
+//    static std::string m_str;
+//    return m_str;
+//}
+//CAUTION: must be inited first/destroyed last; dcl separatedly from LogInfo
+//static struct nonshm
+//{
+//    std::mutex mutex;
+//    std::string str;
+//    nonshm() {}
+//    ~nonshm() { printf("NON-SHM @EXIT:\n%s\n", str.c_str()); }
+//} LogInfo_nonshm;
 struct LogInfo
 {
-    const uint32_t m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
     static const key_t SHMKEY = 0xF00D0000; //| sizeof(LogInfo); //0; //show size in key; avoids recompile/rerun size conflicts and makes debug easier (ipcs -m)
-    std::mutex mtx;
+    const uint32_t m_hdr = VALIDCHK; //bytes[0..3]; 1 x int32
+    std::mutex mtx; //for thrinx() and local log only; other methods are atomic/lockless
     using LOCKTYPE = std::unique_lock<decltype(mtx)>; //not: std::lock_guard<decltype(m_mtx)>;
 //    PreallocVector<thrid, 8> thrids;
 //    std::atomic<int32_t> latest; //lockless struct
@@ -669,22 +1081,28 @@ struct LogInfo
 //    }
 //public: //operators
 public: //timer methods
-    typedef /*decltype(now())*/ /*int64_t*/ uint32_t time_t; //32 bits is enough for ~ 1200 hours of msec or ~1.2 hr of usec
-    typedef /*decltype(elapsed())*/ uint32_t elapsed_t;
-    static time_t now() //msec
+//    typedef /*decltype(now())*/ /*int64_t*/ uint32_t time_t; //32 bits is enough for ~ 1200 hours of msec or ~1.2 hr of usec
+//    typedef /*decltype(elapsed())*/ uint32_t elapsed_t;
+//    static time_t now() //msec
+//    {
+//        using namespace std::chrono;
+//        return /*std::chrono::*/duration_cast</*std::chrono::*/milliseconds>(/*std::chrono::*/system_clock::now().time_since_epoch()).count();
+//    }
+    std::atomic<decltype(Now())> epoch /*= now()*/;
+//    inline elapsed_t elapsed() { return !isnull(this)? now() - epoch: 0; } //msec
+//allow caller to adjust:
+    /*inline*/ elapsed_t elapsed(elapsed_t reset = NO_RESET) //, int scaled = 1) //Freq = #ticks/second
     {
-        using namespace std::chrono;
-        return /*std::chrono::*/duration_cast</*std::chrono::*/milliseconds>(/*std::chrono::*/system_clock::now().time_since_epoch()).count();
-    }
-    std::atomic<time_t> epoch /*= now()*/;
-    inline elapsed_t elapsed() { return this? now() - epoch: 0; } //msec
-    inline elapsed_t elapsed(elapsed_t reset) //, int scaled = 1) //Freq = #ticks/second
-    {
-        if (/*isclosing()*/ !this) return 0;
+        if (/*isclosing()*/ /*isnull(this)*/ !THIS()) return -1; //unknown
 //    started += delta; //reset to now() each time called
-        epoch = now() - reset; //set new epoch
+        elapsed_t retval = Now() - epoch;
+        if (reset != NO_RESET)
+        {
+            epoch += retval - reset; //set new epoch; CAUTION: lockless
+            if (retval != reset) debug(0, "adjust elapsed %u -> %u %c%u", retval, reset, "+-"[reset < retval], std::max(reset, retval) - std::min(reset, retval));
+        }
 //        return /*scaled? (double)delta * scaled / SDL_TickFreq():*/ delta; //return actual time vs. #ticks
-        return elapsed(); //msec
+        return retval; //elapsed(); //msec
     }
 //    static inline elapsed_t elapsed() { return singleton()->elapsed(); } //msec
 //    static inline elapsed_t elapsed(elapsed_t reset) { return singleton()->elapsed(reset); }
@@ -693,24 +1111,33 @@ public: //timer methods
 //protected: //data members
 //    time_t m_epoch;
 public: //thread methods
+#if 0
     static inline /*auto*/ std::thread::id thrid()
     {
 //TODO: add pid for multi-process uniqueness?
         return std::this_thread::get_id();
     }
+#endif
 //reduce verbosity by using a unique small int instead of thread id:
-    PreallocVector</*thrid*/ std::thread::id, 8> thrids;
-    int thrinx(const std::thread::id/*auto*/& newid = thrid())
+    PreallocVector</*thrid*/ std::thread::id, 8> thrids; //TODO: xfr to local during ctor/dtor?
+    int thrinx()
+    {
+        thread_local static int my_thrinx = -1; //cached
+        if (my_thrinx == -1) my_thrinx = thrinx(thrid);
+        return my_thrinx;
+    }
+    int thrinx(const std::thread::id/*auto*/& newid) //= thrid)
     {
 //        static std::vector</*std::decay<decltype(thrid())>*/std::thread::id> ids;
 //        static std::mutex mtx;
-        if (/*isclosing()*/ !this) return 0;
+        if (/*isclosing()*/ /*isnull(this)*/ !THIS()) return -1; //unknown
         LOCKTYPE lock(mtx);
 
         for (auto it = thrids.begin(); it != thrids.end(); ++it)
             if (*it == newid) return it - thrids.begin();
 //        int newinx = thrids.size();
 //        thrids.push.back(newid);
+//        LOCKTYPE lock(mtx);
         for (auto it = thrids.begin(); it != thrids.end(); ++it)
             if (*it == (std::thread::id)0) { *it = newid; return it - thrids.begin(); }
 //        return newinx;
@@ -719,27 +1146,74 @@ public: //thread methods
     }
 //    static inline int thrinx(const std::thread::id/*auto*/& newid = thrid()) { return singleton()->thrinx(); }
 public: //logging methods
-    std::atomic<size_t> head /*= 0*/;
-    struct LogStats
+    struct //LogStats
     {
-        std::atomic<int> num_writes /*= 0*/, num_ovfl /*= 0*/; //total #log msgs, #fmtbuf ovfls
-        std::atomic<int> buf_len /*= 0*/, ovfl_len /*= 0*/, move_len /*= 0*/; //total buf, ovfl, memmove len
-        std::atomic<int> color_resets /*= 0*/; //#color ends within buf (indicates multi-colored log msgs)
-        LogStats() //kludge: avoid atomic<> "deleted function" errors
-        {
-            num_writes.store(0);
-            num_ovfl.store(0);
-            buf_len.store(0);
-            ovfl_len.store(0);
-            move_len.store(0);
-            color_resets.store(0);
-        }
-    };
-    LogStats stats;
-    char pool[0x4000] = ""; //16K will hold ~200 entries of 80 char
+        std::atomic<int> num_writes{0} /*= 0*/, num_ovfl{0} /*= 0*/; //total #log msgs, #fmtbuf ovfls
+        std::atomic<int> buf_len{0} /*= 0*/, ovfl_len{0} /*= 0*/, move_len{0} /*= 0*/; //total buf, ovfl, memmove len
+        std::atomic<int> color_resets{0} /*= 0*/; //#color ends within buf (indicates multi-colored log msgs)
+        std::atomic<int> re_reads{0}; //lockless write retries
+//        LogStats() //std::atomic<int>& retries): re_reads(retries) //kludge: avoid atomic<> "deleted function" errors
+//        {
+//            num_writes.store(0);
+//            num_ovfl.store(0);
+//            buf_len.store(0);
+//            ovfl_len.store(0);
+//            move_len.store(0);
+//            color_resets.store(0);
+//            re_reads.store(0);
+//        }
+//    };
+//    LogStats stats;
+    } stats;
+//    std::atomic<size_t> head, tail /*= 0*/;
+//    char pool[0x4000] = ""; //16K will hold ~200 entries of 80 char
+    CircularLog m_shmlog; //(stats.re_reads);
+#if 0 //CAUTION: must be inited before and destroyed after all member data
+    static std::mutex& nonshm_mutex()
+    {
+        static std::mutex m_mutex;
+        return m_mutex;
+//        return LogInfo_nonshm.mutex;
+    }
+    static /*thread_local*/ std::string& nonshm_log() //collect msgs in local mem until shm set up
+    {
+//NO        static /*std::string*/ debug_string m_str; //move outside class so it can outlive instances
+        static bool disp_later = false;
+        if (!disp_later) { disp_later = true; atexit([]() { show_log(false); }); }
+//        {
+//            disp_later = true;
+//            atexit([]() { show_log(false); });
+//            {
+//                if (m_str.length()) { printf("residual log:\n%s", m_str.c_str()); fflush(stdout); }
+//                m_str.clear();
+//            });
+//        }
+        return m_str;
+//        return LogInfo_nonshm.str;
+    }
+    static void show_log(bool clear = true)
+    {
+//        if (!clear) { printf(CYAN_MSG "flush nonshm log" ENDCOLOR_NEWLINE); fflush(stdout); }
+        std::string& m_str = nonshm_log();
+        if (!clear) { printf(CYAN_MSG "flush nonshm log len %u" ENDCOLOR_NEWLINE, m_str.length()); fflush(stdout); }
+        if (!m_str.length()) return;
+        printf("%slog:\n%s", clear? "residual ": "", m_str.c_str());
+        fflush(stdout);
+        if (clear) m_str.clear();
+    }
+#endif
 //NOTE: wrapper macro already decided whether to keep this message or not
 /*void*/ int logprintf(int level, SrcLine srcline, const char* fmt, va_list args) //...) //use ret type to allow conditional/ternary usage
     {
+//        bool THIS = !isnull(this); //kludge: "!this" no worky with g++ on RPi
+//        bool nullthis = (this == 0); //kludge: "!this" doesn't seem to work on RPi
+        if (THIS()) //!isnull(this))
+        {
+//            printf("null? %p %d %d %d %d %d %d %d %d %d\n", this, !this, this != 0, !!this, this == 0, this == nullptr, reinterpret_cast<intptr_t>(this) == 0, (this == reinterpret_cast<LogInfo*>(0)), (this < reinterpret_cast<LogInfo*>(0x100)), 123);
+//            printf("null? %p %d 0x%x 0x%x %d %d %d %d\n", this, sizeof(this), reinterpret_cast<intptr_t>(this), this == reinterpret_cast<LogInfo*>(1), (this > reinterpret_cast<LogInfo*>(0)), (this < reinterpret_cast<LogInfo*>(1)), (this < reinterpret_cast<LogInfo*>(2)), 123);
+//            printf("null? %p %p %d %d\n", this, &stats, !isnull(this), 123);
+            if (&stats.num_writes < reinterpret_cast<std::atomic<int>*>(0x100)) exc_throw("whoops: bad this!");
+        }
 //HERE(1);
 //        if (isclosing()) return 0;
 //        if (/*!isclosing()*/ this) first_time();
@@ -749,7 +1223,7 @@ public: //logging methods
             (level <= DetailLevel::ERROR_LEVEL)? RED_MSG: 
             (level <= DetailLevel::WARN_LEVEL)? YELLOW_MSG: 
             BLUE_MSG;
-        size_t msg_colorlen = strlen(msg_color);
+        const size_t msg_colorlen = strlen(msg_color);
 //pre-fmt basic msg contents:
         char fmtbuf[1000]; //should be large enough for most msgs
 //        va_list args;
@@ -759,23 +1233,34 @@ public: //logging methods
 //        stats.buf_len += fmtlen;
 //        ++stats.num_writes;
         va_end(args);
+//if (level >= 0) printf("debug%d: %u:'%.*s'%s from '%s'\n", level, fmtlen, std::min(sizeof(fmtbuf) - 1, fmtlen), fmtbuf, (fmtlen >= sizeof(fmtbuf))? "...": "", NVL(srcline, "??")); //fflush(stdout);
 //        static const char* ColorEnd = ENDCOLOR_NOLINE;
+//HERE(12);
+//printf("logpr lvl %d, src '%s', msg '%.*s'\n", level, NVL(srcline, "(none)"), 200, fmtbuf);
         static const size_t endlen = strlen(ENDCOLOR_NOLINE); //ANSI_COLOR("0")
+//printf("from %s, raw fmtlen %u", NVL(srcline, "??"), fmtlen); fflush(stdout);
         if ((fmtlen >= endlen) && (fmtlen < sizeof(fmtbuf)) && !strcmp(fmtbuf + fmtlen - endlen, ENDCOLOR_NOLINE)) fmtbuf[fmtlen -= endlen] = '\0'; //drop trailing ENDCOLOR; going to re-add it later anyway
 //        std::vector<size_t> color_resets;
         for (char* bp = fmtbuf; bp = strstr(bp, ENDCOLOR_NOLINE); bp += endlen) //infrequent, and hopefully occurrences are toward buf end so memmove is not too expensive
         {
 //            color_resets.push(bp - fmtbuf);
-            size_t tail_len = std::min(sizeof(fmtbuf) - 1, fmtlen) - (bp + endlen - fmtbuf);
-            if (msg_colorlen != endlen) memmove(bp + msg_colorlen, bp + endlen, tail_len + 1); //incl null terminator
+            size_t tail_len = fmtbuf + std::min(sizeof(fmtbuf) - std::max(msg_colorlen - endlen, 0UL) - 1, fmtlen) - (bp + endlen);
+//printf(", mv len %u, mv? %d", tail_len, msg_colorlen != endlen); fflush(stdout);
+            if (msg_colorlen != endlen)
+            {
+                memmove(bp + msg_colorlen, bp + endlen, tail_len); //excl null terminator
+                bp[msg_colorlen + tail_len] = '\0';
+            }
             strncpy(bp, msg_color, msg_colorlen);
             fmtlen += msg_colorlen - endlen;
-            if (/*isclosing()*/ !this) continue; //no stats
+            if (/*isclosing()*/ /*!this*/ /*isnull(this)*/ !THIS()) continue; //no stats
             stats.move_len += tail_len;
             ++stats.color_resets;
         }
+//printf(", re-ended fmtlen %u, '%.*s' %s\n", fmtlen, 40, fmtbuf, (fmtlen >= sizeof(fmtbuf))? "...": ""); fflush(stdout);
 //HERE(2);
 //find first + last color codes so we can insert more text correctly into msg:
+#if 0
 //        const ColorCodes = /\x1b\[\d+(;\d+)?m/g; //ANSI color escape codes; NOTE: need /g to get last match
 //    static const char* ColorCodes_ldr = ANSI_COLOR("\0"); //kludge: inject null color to truncate, then use string search instead of regex for better performance; //code)  "\x1b[" code "m"
 //    static const char* ColorCodes_tlr = strend(ColorCodes_ldr) + 1; //skip injected null to get remainder of string
@@ -786,7 +1271,17 @@ public: //logging methods
         static const size_t suffix_len = strlen(ColorCodes + prefix_len + 3); //suffix_ofs);
 //    static const size_t cc_endlen = strlen(ColorCodes + cc_startlen + 3);
         const char* bp = !strncmp(fmtbuf, ColorCodes, prefix_len)? strstr(fmtbuf + prefix_len, ColorCodes + prefix_len + 3): 0;
-        size_t leading_colorend = bp? bp + suffix_len - fmtbuf: 0; //!0 == end of leading color code
+        const size_t leading_colorend = bp? bp + suffix_len - fmtbuf: 0; //!0 == end of leading color code
+#else
+        const size_t leading_colorend = [](const char* fmtbuf) -> size_t
+        {
+            static const /*std::string*/ char* ColorCodes = ANSI_COLOR("###"); //use dummy color code for length parsing
+            static const size_t prefix_len = strstr(ColorCodes, "###") - ColorCodes; //.find("###") - ColorCodes.begin();
+            static const size_t suffix_len = strlen(ColorCodes + prefix_len + 3); //suffix_ofs);
+            const char* bp = !strncmp(fmtbuf, ColorCodes, prefix_len)? strstr(fmtbuf + prefix_len, ColorCodes + prefix_len + 3): 0;
+            return bp? bp + suffix_len - fmtbuf: 0; //!0 == end of leading color code
+        }(fmtbuf);
+#endif
 //        bool ends_colored = strcmp(fmtbuf + std::min(fmtlen, sizeof(fmtbuf)) - strlen(EndColor), EndColor);
 //        size_t first_ofs, last_ofs = 0; //text ins offsets at beginning and end of fmt str
 //        {
@@ -809,15 +1304,16 @@ public: //logging methods
 //        }
 //show warning if fmtbuf too short:
 //    std::ostringstream tooshort;
-        if (this) //!isclosing())
+        if (THIS()) //!isnull(this)) //!isclosing())
         {
+//            if (&stats.num_writes < reinterpret_cast<std::atomic<int>*>(0x100)) exc_throw("whoops!");
             ++stats.num_writes;
             stats.buf_len += fmtlen;
         }
         if (fmtlen >= sizeof(fmtbuf))
         {
             static const int RESERVE = 20;
-            if (this) //!isclosing())
+            if (THIS()) //!isnull(this)) //!isclosing())
             {
                 ++stats.num_ovfl;
                 stats.ovfl_len += fmtlen - sizeof(fmtbuf);
@@ -833,18 +1329,33 @@ public: //logging methods
 //    if (strstr(fmtbuf, )) srcline = ""; //already there; don't add again
 //#define ENDCOLOR  "  &" SRCLINE ENDCOLOR_NOLINE //use const char* if possible; don't call shortsrc()
 //    static SrcLine me = SRCLINE;
+//HERE(13);
         size_t src_insofs = fmtlen, srclen = 0;
         if (!srcline) srcline = SRCLINE; //use self if caller unknown
+        char srcbuf[80];
+        {
+            const char* bp = skip_folder(srcline); //strrchr(srcline, '/');
+            if (bp != srcline)
+            {
+//printf("srcline was %d:'%s', last '/' @ ofs %d", strlen(srcline), srcline, bp - srcline);
+                size_t prefix = skipspaces(srcline) - srcline;
+                strncpy(srcbuf, srcline, prefix + 1);
+                strcpy(srcbuf + prefix + 1, bp); //+ 1);
+                srcline = srcbuf; //drop folder name; base file name should be enough
+//printf(" => %d:'%s'\n", strlen(srcbuf), srcbuf);
+            }
+        }
 //        srcline = skipspaces(srcline);
 #if 0
         srclen = strlen(srcline);
         src_insofs = fmtlen;
 #else
 //    while (isspace(*srcline)) ++srcline;
-        if (strstr(fmtbuf, skipspaces(srcline))); //printf("found '%s' in '%s'\n", skipspaces(srcline), fmtbuf); //srclen = 0; //srcline = 0; //""; //don't repeat if already there
+        if (strstr(fmtbuf, skipspaces(srcline) + 1)); //printf("found '%s' in '%s'\n", skipspaces(srcline), fmtbuf); //srclen = 0; //srcline = 0; //""; //don't repeat if already there
         else //try again with just filename part, no line#
         {
             const char* bp = strchr(srcline, ':');
+//printf("srcline %p, bp %p, bp - srcline %u\n", srcline, bp, bp - srcline);
             char* foundofs = bp? strnstr(fmtbuf, srcline, bp - srcline): 0;
 //printf("found %d:'%s' @%d in %d:'%s'\n", bp - srcline, srcline, foundofs? foundofs - fmtbuf: -1, fmtlen, fmtbuf);
             if (foundofs) //same file, different line; just show additional line#
@@ -862,14 +1373,16 @@ public: //logging methods
 //        static std::mutex mtx;
         thread_local static int /*numerr = 0,*/ count = 0; //show thread info once
 //no        LOCKTYPE lock(mtx); //avoid interleaved output between threads
+//        bool want_shmlog = THIS(); //decide once so log entry won't be fragmented
+        LogFile* logp = THIS()? &m_shmlog: (true? &nonshm_log: logp); //decide once so log entry won't be fragmented; local vs. shared state change ignored below; ternary ptr trick from https://stackoverflow.com/questions/6179314/casting-pointers-and-the-ternary-operator-have-i-reinvented-the-wheel
 //    static int count = 0;
 //    if (!count++) printf(CYAN_MSG "[elapsed-msec $thread] ===============================\n" ENDCOLOR_NOLINE);
         if (!count++) //show thread info first time
         {
             char intro_buf[80];
-            size_t intro_len = snprintf(intro_buf, sizeof(intro_buf), PINK_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ========" ENDCOLOR_NEWLINE, thrinx(), thrid(), getpid());
-            wrapwrite(intro_buf, intro_len + 1);
-            if (!this) printf(intro_buf);
+            size_t intro_len = snprintf(intro_buf, sizeof(intro_buf), PINK_MSG "[msec $thr] ======== thread# %d, id 0x%x, pid %d ======== @srcline.lvl" ENDCOLOR_NEWLINE, thrinx(), thrid, getpid());
+            logp->writex(intro_buf); //, intro_len /*+ 1*/);
+//            if (isnull(this)) printf("%.*s", intro_len, intro_buf);
         }
 //    const char* hdr_color = (level == -1)? RED_MSG: (level == -2)? YELLOW_MSG: PINK_MSG;
 //    if (level < 0) //error
@@ -878,25 +1391,43 @@ public: //logging methods
 //for (char* bp = fmtbuf; bp = strchr(bp, '\x1b'); *bp++ = '?');
 //printf("first ofs %d, last ofs %d, len %d, cc start %u, end %u, buf \"%s\"\n", first_ofs, last_ofs, fmtlen, cc_startlen, cc_endlen, fmtbuf); fflush(stdout);
 //HERE(4);
+        char lvlbuf[7];
+        size_t lvl_len = snprintf(lvlbuf, sizeof(lvlbuf), ".%d", level);
         char timestamp[20];
-        size_t timest_len = snprintf(timestamp, sizeof(timestamp), this? "[%s $%d] ": "[?.??? $?] ", commas((double)elapsed() / 1000, "%4.3f"), thrinx());
+        size_t timest_len = snprintf(timestamp, sizeof(timestamp), /*!isnull(this)*/ "[%s $%c] ", THIS()? commas((double)elapsed() / 1000, "%4.3f"): "?.???", THIS()? '0' + thrinx(): '?'); //, level);
 //    if (undecorated) { ss << FMT("%4.3f") << elapsed_msec(); return ss.str(); }
 //        fprintf(fout, "%s%.*s[%s $%d] %.*s%s%s" ENDCOLOR_NEWLINE, msg_color, first_ofs, fmtbuf, my_timestamp(true).c_str(), thrinx(), last_ofs - first_ofs, fmtbuf + first_ofs, srcline, fmtbuf + last_ofs);
 //        substr full_msg[]
-        size_t buflen = (!leading_colorend? msg_colorlen: 0) + timest_len + fmtlen + /*color.resets.length() * (msg_colorlen - endlen) + (srcline? strlen(srcline): 0)*/ srclen + endlen;
+        size_t buflen = (!leading_colorend? msg_colorlen: 0) + timest_len + fmtlen + /*color.resets.length() * (msg_colorlen - endlen) + (srcline? strlen(srcline): 0)*/ srclen + lvl_len + endlen + 1;
+//size_t buflen1 = !leading_colorend? msg_colorlen: 0, buflen2 = timest_len, buflen3 = fmtlen , buflen4 = srclen, buflen5 = endlen;
 //alloc space for msg in shm log, then write it piece by piece:
-        size_t wrofs = alloc(buflen + 1), svofs = wrofs;
-        if (!leading_colorend) wrofs += wrapwrite(msg_color, msg_colorlen, wrofs);
-        else wrofs += wrapwrite(fmtbuf, leading_colorend, wrofs);
-        wrofs += wrapwrite(timestamp, timest_len, wrofs);
+        size_t wrofs = logp->alloc(buflen /*+ 1*/), svofs = wrofs;
+//size_t svofs2 = wrofs;
+        if (!leading_colorend) wrofs += logp->write(msg_color, msg_colorlen, wrofs);
+        else wrofs += logp->write(fmtbuf, leading_colorend, wrofs);
+//if (wrofs - svofs2 != (!leading_colorend? msg_colorlen: leading_colorend)) exc_throw("bad wrwr len1: got " << (wrofs - svofs2) << ", expected " << (!leading_colorend? msg_colorlen: leading_colorend));
+//svofs2 = wrofs;
+        wrofs += logp->write(timestamp, timest_len, wrofs);
+//if (wrofs - svofs2 != timest_len) exc_throw("bad wrwr len2: got " << (wrofs - svofs2) << ", expected " << timest_len);
+//svofs2 = wrofs;
 //        if (srclen)
 //        {
-        wrofs += wrapwrite(fmtbuf + leading_colorend, /*(srclen? src_insofs: fmtlen)*/ src_insofs - leading_colorend, wrofs);
-        wrofs += wrapwrite(srcline, srclen, wrofs);
+//size_t svofs2 = wrofs;
+        wrofs += logp->write(fmtbuf + leading_colorend, /*(srclen? src_insofs: fmtlen)*/ src_insofs - leading_colorend, wrofs);
+//if (wrofs - svofs2 != src_insofs - leading_colorend) exc_throw("bad wrwr len3: got " << (wrofs - svofs2) << ", expected " << (src_insofs - leading_colorend));
+//svofs2 = wrofs;
+        wrofs += logp->write(srcline, srclen, wrofs);
+//if (wrofs - svofs2 != srclen) exc_throw("bad wrwr len3: got " << (wrofs - svofs2) << ", expected " << srclen);
+//svofs2 = wrofs;
 //        }
-        if (srclen) wrofs += wrapwrite(fmtbuf + src_insofs, fmtlen - src_insofs, wrofs);
-        wrofs += wrapwrite(ENDCOLOR_NOLINE, endlen, wrofs);
+        if (srclen) wrofs += logp->write(fmtbuf + src_insofs, fmtlen - src_insofs, wrofs);
+//if (srclen && (wrofs - svofs2 != fmtlen - src_insofs)) exc_throw("bad wrwr len4: got " << (wrofs - svofs2) << ", expected " << (fmtlen - src_insofs));
+//svofs2 = wrofs;
+        wrofs += logp->write(lvlbuf, lvl_len, wrofs);
+        wrofs += logp->write(ENDCOLOR_NEWLINE, endlen + 1, wrofs);
+//if (wrofs - svofs2 != endlen + 1) exc_throw("bad wrwr len4: got " << (wrofs - svofs2) << ", expected " << endlen + 1);
         if (wrofs != svofs + buflen) exc_throw(/*throw std::runtime_error((std::ostringstream() << RED_MSG <<*/ "wrapwrite wrong len: got " << wrofs << ", expected " << svofs + buflen); // << ENDCOLOR_NEWLINE).str());
+        logp->wake(); //notify listeners
 //        FILE* fout = (level < 0)? stderr: stdout;
 //        if (level < 0) { fflush(stdout); fflush(fout); } //make sure important msgs are output; might as well incl stdout as well
 //        if (level == -1) throw std::runtime_error(fmtbuf);
@@ -904,45 +1435,131 @@ public: //logging methods
 //HERE(5);
         if (level <= DetailLevel::ERROR_LEVEL) exc_throw(/*throw std::runtime_error((std::ostringstream() << RED_MSG <<*/ fmtbuf); //<< ENDCOLOR_NEWLINE).str());
         else if (level <= DetailLevel::WARN_LEVEL) { fprintf(stderr, YELLOW_MSG "%s" ENDCOLOR_NEWLINE, fmtbuf); fflush(stderr); } //make sure important msgs are output
+//if (nonshm_log().length()) printf("nonshm_log len is now %u\n", nonshm_log().length());
 //also show on screen if no shm:
-//        else if (true || !this) printf(BLUE_MSG "%.*s%s%.*s%s%s" ENDCOLOR_NEWLINE, leading_colorend, fmtbuf, timestamp, src_insofs - leading_colorend, fmtbuf + leading_colorend, srcline, fmtbuf + src_insofs);
-        else if (/*true ||*/ !this) printf("%.*s%s%.*s%.*s%.*s" ENDCOLOR_NEWLINE, NVL(leading_colorend, msg_colorlen), leading_colorend? fmtbuf: msg_color, timestamp, src_insofs - leading_colorend, fmtbuf + leading_colorend, srclen, srcline, srclen? fmtlen - src_insofs: 0, fmtbuf + src_insofs);
+//        else if (true || isnull(this)) printf(BLUE_MSG "%.*s%s%.*s%s%s" ENDCOLOR_NEWLINE, leading_colorend, fmtbuf, timestamp, src_insofs - leading_colorend, fmtbuf + leading_colorend, srcline, fmtbuf + src_insofs);
+#if 0
+        else if (/*true ||*/ isnull(this)) printf("%.*s%s%.*s%.*s%.*s" ENDCOLOR_NEWLINE, NVL(leading_colorend, msg_colorlen), leading_colorend? fmtbuf: msg_color, timestamp, src_insofs - leading_colorend, fmtbuf + leading_colorend, srclen, srcline, srclen? fmtlen - src_insofs: 0, fmtbuf + src_insofs);
+#endif
 //        else printf(fmtbuf); //TEMP
 //HERE(6);
     }
 //    inline static int logprintf(int level, SrcLine srcline, const char* fmt, va_list args) { return singleton()->logprintf(level, srcline, fmt, args); }
+//CAUTION: wait is blocking; should only be used on bkg threads
+    std::string read_log(bool wait) //int maxents = 0)
+    {
+//        std::string retval;
+//        if (THIS()) retval = nonsmh_log.read();
+        return THIS()? m_shmlog.read(wait): nonshm_log.read(wait); //assume local vs. shared state doesn't change while reading
+#if 0
+        {
+            LOCKTYPE lock(nonshm_mutex());
+//            std::lock_guard<std::mutex> guard(nonshm_mutex()); //only allow one thread to read/write non-shm at a time
+            if (nonshm_log().length()) //get non-shm msgs first
+            {
+                retval.append("NON-SHM:\n");
+                retval += nonshm_log(); //CAUTION: assume doesn't change while reading
+                nonshm_log().clear(); //erase(0, retval.length()); //should only be 1 writer
+                retval.append("SHM:\n");
+            }
+        }
+        if (THIS()) //!isnull(this))
+#if 0
+            for (const char* bp = pool + tail; bp != pool + head;)
+            {
+                for (;;)
+                {
+                    size_t len = strnlen(bp, &pool[sizeof(pool)] - bp);
+                    retval.append(bp, len);
+                    bp += len;
+                    if (bp != &pool[sizeof(pool)]) break; //end of entry
+                    if (len == sizeof(pool)) break; //already wrapped
+                    bp = pool; //entry wrapped
+                }
+                retval.append("\n");
+                tail/*.store*/ = ++bp - pool;
+                if (maxents && !--maxents) break;
+//                if (tail == head) break;
+            }
+#else
+            for (;;) //retry lockless read
+            {
+                size_t svtail = tail;
+                int loglen = head - svtail; //CAUTION: atomic read on head allows new log entries to come in; tail assumed safe (only one reader)
+                if (loglen < 0) exc_throw("log wrapped: " << (loglen + svtail) << " <- " << svtail); //loglen += sizeof(pool); //wrapped
+                size_t newtail = svtail + loglen;
+                loglen %= sizeof(pool); //can't exceed buf size
+                svtail %= sizeof(pool);
+                size_t svretlen = retval.length();
+                size_t wraplen = std::min(sizeof(pool) - svtail, (size_t)loglen);
+                retval.append(pool + svtail, wraplen);
+                retval.append(pool, loglen - wraplen);
+//                if (tail == svtail) break; //no new log entries were written while reading
+                if (tail.compare_exchange_strong(svtail, newtail)) break; //svtail + loglen) % sizeof(pool)); //kludge: tail == head means empty; bump tail if full to avoid ambiguity
+                retval.erase(svretlen, loglen); //try again
+                ++stats.re_reads;
+            }
+//            if (wraplen < loglen) retval.append(pool, loglen - wraplen);
+//            tail += loglen;
+//        }
+#endif
+        return retval;
+#endif
+    }
 private: //helpers
+#if 0 //moved into CircularLog
     size_t alloc(size_t buflen)
     {
-        if (/*isclosing()*/ !this) return 0;
+        if (/*isclosing()*/ /*isnull(this)*/ !THIS()) return 0;
         size_t retval = head.fetch_add(buflen) /*% sizeof(pool)*/; //prev atomic += didn't adjust for wrap-around, so do it here
 //wrapwrite will wrap its private copy of write ofs to pool size, but shm copy is not updated
 //eventual shm copy overflow will cause incorrect wrap (misalignment) if !power of 2, so update shm copy of write ofs when needed:
-        if (retval + buflen >= sizeof(pool)) { head.fetch_add(-sizeof(pool)); retval -= sizeof(pool); }
+//no        if (retval + buflen > sizeof(pool)) head.fetch_add(-sizeof(pool)); //retval -= sizeof(pool); } //wrapped
+        if (retval + buflen < retval) exc_throw("log size wrapped");
+//        size_t tail_bump = retval;
+//        tail.compare_exchange_strong(tail_bump, (retval + 1) % sizeof(pool)); //kludge: tail == head means empty; bump tail if full to avoid ambiguity
+// |==========pool==============|
+// |============tail===new-head=|
+// |==new-head==tail============|
+//        for (;;)
+//        {
+//            size_t svtail = tail;
+//            if ((svtail >= retval) && (svtail < retval + buflen))
+//            if ()
+//        }
 //        while (!head.compare_exchange_weak(retval, retval % sizeof(pool)); //CAS loop; https://preshing.com/20150402/you-can-do-any-kind-of-atomic-read-modify-write-operation/
 //NOTE: race condition exists while buf is being filled in; mitigate by pre-filling with nulls (race window is much shorter, but still there):
 //        retval %= sizeof(pool);
-        size_t wraplen = std::min(buflen, sizeof(pool) - retval);
+//        size_t wraplen = std::min(buflen, sizeof(pool) - retval);
 //        if (!buf) return ofs; //caller will write
-        if (wraplen) memset(pool + retval, 0, wraplen);
-        if (wraplen < buflen) memset(pool, 0, buflen - wraplen);
+//        if (wraplen) memset(pool + retval, 0, wraplen);
+//        if (wraplen < buflen) memset(pool, 0, buflen - wraplen);
         return retval;
     }
-    size_t wrapwrite(const char* buf, size_t buflen) { return wrapwrite(buf, buflen, alloc(buflen)); }
+    size_t wrapwrite(const char* buf, size_t buflen = 0) { if (!buflen) buflen = strlen(buf); return wrapwrite(buf, buflen, alloc(buflen)); }
     size_t wrapwrite(const char* buf, size_t buflen, size_t ofs)
     {
-//        if (/*isclosing()*/ !this) return 0;
-        ofs %= sizeof(pool);
-        size_t wraplen = std::min(buflen, sizeof(pool) - ofs);
 //        if (!buf) return ofs; //caller will write
-        if (/*!isclosing()*/ this)
+//no        if (!buflen) buflen = strlen(buf);
+        if (THIS()) ///*!isclosing()*/ !isnull(this) && !isclosing())
         {
+//        if (/*isclosing()*/ !this) return 0;
+            ofs %= sizeof(pool);
+            size_t wraplen = std::min(buflen, sizeof(pool) - ofs);
             if (wraplen) memcpy(pool + ofs, buf, wraplen); //std::min(intro_len, sizeof(pool) - ofs));
 //            int wrap_len = ofs + intro_len - sizeof(pool);
             if (wraplen < buflen) memcpy(pool, buf + wraplen, buflen - wraplen);
         }
+        else
+        {
+            LOCKTYPE lock(nonshm_mutex());
+//            std::lock_guard<std::mutex> guard(nonshm_mutex()); //only allow one thread to read/write non-shm at a time
+            nonshm_log().append(buf, buflen);
+            if (nonshm_log().length() >= sizeof(pool)) show_log(); //don't let it get too big
+        }
         return buflen;
     }
+#endif
     const uint32_t m_tlr = VALIDCHK;
 //    /*txtr_bb*/ /*SDL_AutoTexture<XFRTYPE>*/ TXTR m_txtr; //in-memory copy of bit-banged node (color) values (formatted for protocol)
 //    InOutDebug inout2;
@@ -954,53 +1571,163 @@ public: //ctors/dtors
 //        static bool m_isclosing = true;
 //        return m_isclosing;
 //    }
-    explicit LogInfo() //kludge: avoid atomic<> "deleted function" errors
+    explicit LogInfo(): /*head(0), tail(0),*/ epoch(Now()), m_shmlog(stats.re_reads) //kludge: avoid atomic<> "deleted function" errors
     {
 //        isclosing() = false;
-        debug(0, GREEN_MSG "LogInfo ctor");
-        epoch.store(now());
-        head.store(0);
+//        epoch.store(Now());
+//        head.store(0);
+//        tail.store(0);
+        std::string xfr = nonshm_log.read();
+//TODO: check whether to keep each debug() item; for now, just all or nothing
+        if (detail()) m_shmlog.write(xfr.c_str(), xfr.length(), xfr.length()); //xfr local to shm so caller can still get it; TODO: why is 3rd arg needed?
+        debug(0, GREEN_MSG "LogInfo ctor, xfr len %u", xfr.length());
+//        atexit([](){ /*if (nonshm_log.length())*/ std::string log = read_log(); printf("EXIT FLUSH:\n%.*s", log.length(), log.c_str()); });
     }
-    ~LogInfo() { debug(0, RED_MSG "LogInfo dtor"); } //isclosing() = true; }
+    ~LogInfo()
+    {
+//        debug(0, RED_MSG "LogInfo dtor"); //isclosing() = true;
+        std::string xfr = m_shmlog.read();
+        char buf[40];
+//        nonshm_log.writex(&buf[0], (size_t)snprintf(buf, sizeof(buf), "LogInfo dtor xfr len %u\n", xfr.length())); //isclosing() = true;
+        snprintf(buf, sizeof(buf), "LogInfo dtor xfr len %u\n", xfr.length()); //isclosing() = true;
+        nonshm_log.writex(buf);
+        nonshm_log.write(xfr.c_str(), xfr.length(), xfr.length()); //xfr local to shm so caller can still get it; TODO: why is 3rd arg needed?
+    }
 public: //operators
     static const uint32_t VALIDCHK = 0xf00d6789;
-    bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_tlr == VALIDCHK); }
+    bool isvalid() const { return /*!isnull(this)*/ THIS() && (m_hdr == VALIDCHK) && (m_tlr == VALIDCHK); }
 public: //members
 //singleton init:
 //NOTE: using singleton instance to collect all data members in shm (static members are excluded, ~thread-local stg for procs)
-    static LogInfo* const /*&*/ singleton()
+//race conditions won't occur here; ctor/dtor only called from a single (first) thread
+//    static bool& isclosing()
+//    {
+//        static bool m_closing = false;
+//        return m_closing;
+//    }
+#if 0 //attach shm to each thread to allow detached threads to work correctly
+    static LogInfo* const /*&*/ THIS() //singleton()
+    {
+//        static std::atomic<LogInfo*> m_shlptr(0); //static_cast<LogInfo*>(0));
+//        shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE))
+//        static bool m_inited = false;
+//        if (shmnattch(newptr) == 1) new (newptr) LogInfo; //placement "new" to call ctor; CAUTION: first time only
+//        if (m_inited.compare_exchange_strong(false, true))
+        static LogInfo* const NOT_READY = reinterpret_cast<LogInfo*>(-2);
+//don't need atomic for thread-local ptr
+        static thread_local LogInfo* m_shlptr(0); //= std::atomic<LogInfo*>(reinterpret_cast<LogInfo*>(0)); //TOALLOC;
+        if (m_shlptr == NOT_READY) return 0; //CAUTION: "this" will be 0 < ctor called; called methods must check !THIS(); //CAUTION: "this" will be 0 in called methods
+//        LogInfo* newptr = 0;
+//        if (!m_shlptr) //== NEEDS_ALLOC)
+//        if (m_shlptr.compare_exchange_strong(newptr, NOT_READY))
+        if (!m_shlptr)
+        {
+            m_shlptr = NOT_READY;
+            debug(10, "singleton init"); //static std::string& m_strlog = nonshm_log(); //kludge: force static var to be created < LogInfo ctor so it won't be destroyed until > LogInfo dtor
+//printf("singleton: first time\n");
+            first_time(); //get detail level info
+//printf("singleton: alloc\n");
+            LogInfo* newptr = static_cast<LogInfo*>(shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE)); //O/S will dealloc shm at process exit; use at_exit() or std::unique_ptr<> to dealloc sooner
+            if (shmnattch(newptr) == 1) new (newptr) LogInfo; //placement "new" to call ctor; CAUTION: first time only
+            debug(10, "... using shm now ..."); //nonshm_log().append(
+            m_shlptr = newptr; //allow other threads/proc to use shared instance now
+        }
+        return m_shlptr;
+    }
+#elif 1 //use atomic ptr so it can be shared with other threads
+    static LogInfo* const /*&*/ THIS() //singleton()
+    {
+//        static std::atomic<LogInfo*> m_shlptr(0); //static_cast<LogInfo*>(0));
+//        shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE))
+//        static bool m_inited = false;
+//        if (shmnattch(newptr) == 1) new (newptr) LogInfo; //placement "new" to call ctor; CAUTION: first time only
+//        if (m_inited.compare_exchange_strong(false, true))
+        static LogInfo* const NOT_READY = reinterpret_cast<LogInfo*>(-2);
+        static std::atomic<LogInfo*> m_shlptr(0); //= std::atomic<LogInfo*>(reinterpret_cast<LogInfo*>(0)); //TOALLOC;
+        if (m_shlptr == NOT_READY) return 0; //CAUTION: "this" will be 0 < ctor called; called methods must check !THIS(); //CAUTION: "this" will be 0 in called methods
+        LogInfo* newptr = 0;
+//        if (!m_shlptr) //== NEEDS_ALLOC)
+        if (m_shlptr.compare_exchange_strong(newptr, NOT_READY))
+        {
+            debug(10, "singleton init"); //static std::string& m_strlog = nonshm_log(); //kludge: force static var to be created < LogInfo ctor so it won't be destroyed until > LogInfo dtor
+//printf("singleton: first time\n");
+            first_time(); //get detail level info
+//printf("singleton: alloc\n");
+            /*LogInfo* */ newptr = static_cast<LogInfo*>(shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE)); //O/S will dealloc shm at process exit; use at_exit() or std::unique_ptr<> to dealloc sooner
+            if (shmnattch(newptr) == 1) new (newptr) LogInfo; //placement "new" to call ctor; CAUTION: first time only
+            debug(10, "... using shm now ..."); //nonshm_log().append(
+            m_shlptr = newptr; //allow other threads/proc to use shared instance now
+        }
+        return m_shlptr;
+    }
+//global wrappers to LogInfo methods:
+    static elapsed_t elapsed_static() { return THIS()->elapsed(); }
+    static std::string read_log_static(/*int maxents = 0*/ bool wait) { return THIS()->read_log(/*maxents*/ wait); }
+    static inline int thrinx_static() { return THIS()->thrinx(); }
+    static inline int thrinx_static(const std::thread::id/*auto*/& newid) { return THIS()->thrinx(newid); } //= thrid)
+#else
+//CAUTION: std::unique_ptr<> does not preserve normal dtor order
+    static LogInfo* const /*&*/ THIS() //singleton()
     {
 //        enum class State { NONE = 0, DEV_MODE, WS281X, CANCEL = -1}; //combine bkg wker control with protocol selection
 //        static LogInfo* const TOALLOC = reinterpret_cast<LogInfo*>(-1);
-        static LogInfo* m_shlptr = 0; //TOALLOC;
+//        static std::string& m_strlog = nonshm_log(); //kludge: force static var to be created < LogInfo ctor so it won't be destroyed until > LogInfo dtor
+//TODO? attach each thread to shm separately:
+//then nattach() will give global count across procs or threads, last owner thread is easier to identify, and logic below can be single-threaded
+        static std::atomic<LogInfo*> m_shlptr(0); //= std::atomic<LogInfo*>(reinterpret_cast<LogInfo*>(0)); //TOALLOC;
         static LogInfo* const NOT_READY = reinterpret_cast<LogInfo*>(-2);
         static std::unique_ptr<LogInfo, /*decltype([](void* ptr)*/ std::function<void(void*)>> m_shldata(m_shlptr, [](void* ptr)
         {
             LogInfo* svptr = static_cast<LogInfo*>(ptr);
             if (svptr != m_shlptr) exc_throw("singleton shlptr mismatch @dtor");
+//            isclosing() = true;
+            std::string xfr_log;
+            if (svptr) xfr_log = svptr->read_log();
             m_shlptr = NOT_READY; //prevent further usage during destruction
+            if (!svptr) return;
+//printf("xfr log %d\n", xfr_log.length()); fflush(stdout);
+HERE(2);
+            nonshm_log().append(xfr_log); //xfr unread shm log to local memory
 //        LogInfo* shlptr = static_cast<LogInfo*>(shldata.get());
 //        printf("destroy shldata: #att %d, dtor? %d\n", shmnattch(shlptr), shmnattch(shlptr) == 1);
-            debug(0, "singleton: dealloc %p", svptr);
+HERE(3);
+            elapsed_t olde = svptr->elapsed(), newe = Elapsed();
+            debug(0, "dealloc singleton %p, xfr unread log %u to local, adjusting elapsed %u -> %u %c%u", svptr, xfr_log.length(), olde, newe, "+-"[newe < olde], std::max(newe, olde) - std::min(newe, olde));
 //printf("singleton: dealloc %p\n", svptr);
-            if (!svptr) return;
+//            if (!svptr) return;
+#if 1 //ok now; let O/S clean up shm; this avoids problems with nonshm_log being destroyed too soon
             if (shmnattch(svptr) == 1) svptr->~LogInfo(); //call dtor but don't dealloc memory
             shmfree_debug(svptr);
+#endif
         }); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
 //        switch (m_shlptr)
 //        {
 //            case NEEDS_ALLOC:
 //if (m_shlptr == FROZEN) printf("singleton: frozen => 0\n");
-        if (m_shlptr == NOT_READY) return 0; //CAUTION: "this" will be 0 in called methods
-        if (!m_shlptr) //== NEEDS_ALLOC)
+        if (m_shlptr == NOT_READY) return 0; //CAUTION: "this" will be 0 < ctor called; called methods must check !THIS(); //CAUTION: "this" will be 0 in called methods
+        LogInfo* newptr = 0;
+//        if (!m_shlptr) //== NEEDS_ALLOC)
+        if (m_shlptr.compare_exchange_strong(newptr, NOT_READY))
         {
-            m_shlptr = NOT_READY; //kludge: don't try to alloc again during shmalloc()
+//            m_shlptr = NOT_READY; //CAUTION: this must be set before any calls to logprintf() to avoid recursion; first_time() and shmalloc() call it
+            newptr->wrapwrite("singleton init"); //static std::string& m_strlog = nonshm_log(); //kludge: force static var to be created < LogInfo ctor so it won't be destroyed until > LogInfo dtor
 //printf("singleton: first time\n");
             first_time(); //get detail level info
 //printf("singleton: alloc\n");
-            LogInfo* newptr = static_cast<LogInfo*>(shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE));
+            /*LogInfo* */ newptr = static_cast<LogInfo*>(shmalloc_debug(sizeof(LogInfo), SHMKEY | sizeof(LogInfo), SRCLINE));
             if (shmnattch(newptr) == 1) new (newptr) LogInfo; //placement "new" to call ctor; CAUTION: first time only
+            debug(0, "... using shm now ..."); //nonshm_log().append(
             m_shldata.reset(m_shlptr = newptr); //remember to dealloc later; CAUTION: must call ctor first
+            std::string xfr_log = newptr->read_log();
+            newptr->wrapwrite(xfr_log.c_str(), xfr_log.length()); //xfr pre-obj local to shm
+#if 0 //read_log() will get this info; don't need to read it here
+            if (nonshm_log.length()) //move collected msgs to shm now that it's ready
+            {
+                wrap_write("DEQUEUE:\n");
+                wrap_write(nonshm_log.c_str(), nonshm_log.length());
+                nonshm_log.clear();
+            }
+#endif
         }
 //                break;
 //                return 0;
@@ -1012,6 +1739,7 @@ public: //members
 //printf("singleton: ret %p\n", m_shlptr);
         return m_shlptr;
     }
+#endif
 #if 0
     LogInfo* get_shldata()
     {
@@ -1208,15 +1936,20 @@ LogInfo* get_shldata()
 {
     va_list args;
     va_start(args, fmt);
-    return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->logprintf(level, srcline, fmt, args);
+    return /*get_shldata()->LogInfo::*/ LogInfo::/*singleton*/ THIS()->logprintf(level, srcline, fmt, args);
 }
+//std::string read_log(/*int maxents = 0*/) { return LogInfo::/*singleton*/ THIS()->read_log(/*maxents*/); }
 
-inline time_t now() { return LogInfo::now(); } //msec
-inline elapsed_t elapsed() { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->elapsed(); } //msec
-inline elapsed_t elapsed(elapsed_t reset) { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->elapsed(reset); }
 
-inline /*auto*/ std::thread::id thrid() { return LogInfo::thrid(); }
-inline int thrinx(const std::thread::id/*auto*/& newid = thrid()) { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->thrinx(); }
+//#include "thr-helpers.h"
+//#define thread_det  DONT_USE_WITH_LogInfo //std::thread //kludge: shm LogInfo !worky with detachhed threads
+
+//inline time_t now() { return LogInfo::now(); } //msec
+//inline elapsed_t elapsed() { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->elapsed(); } //msec
+//inline elapsed_t elapsed(elapsed_t reset) { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->elapsed(reset); }
+
+//inline /*auto*/ std::thread::id thrid() { return LogInfo::thrid(); }
+//inline int Thrinx(const std::thread::id/*auto*/& newid = Thrid()) { return /*get_shldata()->LogInfo::*/ LogInfo::singleton()->thrinx(); }
 
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -1497,6 +2230,7 @@ std::string my_timestamp(bool undecorated = false)
 //#include "srcline.h"
 //#include "debugexc.h"
 #include "logging.h"
+#include "thr-helpers.h"
 
 
 void func1(int val = -1, SrcLine srcline = 0)
@@ -1514,7 +2248,7 @@ void debug_test()
     func1();
     func1(1);
     func1(2, SRCLINE);
-    exc_soft("test completed");
+    warn("test completed");
 }
 
 
@@ -1589,7 +2323,7 @@ void elapsed_test() //ARGS& args)
 {
     debug(0, BLUE_MSG << "start");
     sleep(2); //give parent head start
-    debug(0, GREEN_MSG << "finish");
+    debug(0, GREEN_MSG << "finish 2 sec later");
 //    return 0;
 }
 
@@ -1598,7 +2332,7 @@ void bg() ///*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
 //void bg(/*BkgSync<>*/ /*auto*/ XSYNCTYPE& xbs, int want)
 {
 //    SYNCTYPE& bs = *shmalloc_typed<SYNCTYPE>(xbs, 1, SRCLINE);
-    DebugInOut(PINK_MSG "bkg thr#" << thrinx());
+    DebugInOut(PINK_MSG "bkg thr#" << Thrinx());
 //    std::string status;
     for (int i = 0; i < 3; ++i)
     {
@@ -1611,17 +2345,22 @@ void bg() ///*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
 }
 
 
-#include "thr-helpers.h"
+#define THREAD  thread_det
+//#define THREAD  std::thread
 
 void thread_test() //ARGS& args)
 {
-    debug(0, "my thrid " << thrid() << ", my inx " << thrinx());
-    thread_det fg1(bg);
+    debug(0, "my thrid " << thrid << ", my inx " << Thrinx());
+//HERE(11);
+    THREAD fg1(bg);
     sleep(1);
-    thread_det fg2(bg);
+    THREAD fg2(bg);
     sleep(3);
-    thread_det fg3(bg);
+    THREAD fg3(bg);
 //    sync_test();
+    fg1.join();
+    fg2.join();
+    fg3.join();
 }
 
 

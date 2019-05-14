@@ -28,12 +28,12 @@
   "main": "./index.js",
   "scripts": {
     "dj-notes": "'npm scripts' to list scripts, 'npm update' to update pkgs, 'npm test' to recompile, 'npm install' to install deps",
-    "fbtest": "ls; gcc -std=c++11 demos/fbtest.cpp -o demos/fbtest",
-    "xtest": "node-gyp rebuild && mocha --reporter spec",
-    "xbuild": "node-gyp rebuild --verbose",
-    "xclean": "node-gyp clean",
+    "x-fbtest": "ls; gcc -std=c++11 demos/fbtest.cpp -o demos/fbtest",
+    "x-test": "node-gyp rebuild && mocha --reporter spec",
+    "x-build": "node-gyp rebuild --verbose",
+    "x-clean": "node-gyp clean",
     "showenv": "node -p \"process.env\"",
-    "test": "node-gyp rebuild --verbose  && node ./"
+    "test": "node-gyp rebuild --verbose -j 4  && node ./"
   },
   "old-dependencies": {
     "bindings": "^1.2.1",

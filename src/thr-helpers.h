@@ -8,7 +8,7 @@
 #include <utility> //std::forward<>
 #include <sstream> //std::ostringstream
 #include <condition_variable>
-#include <mutex> //std:mutex<>, std::unique_lcok<>
+#include <mutex> //std:mutex<>, std::unique_lock<>
 #include <vector>
 #include <bitset>
 
@@ -69,12 +69,14 @@ inline bool operator==(const std::thread::id& lhs, const std::thread::id& rhs)
 
 //detached thread:
 //NOTE: not useful if additional methods need to be called (thread's "this" not valid after detach())
-class thread_det: std::thread
+class thread_det: public std::thread
 {
     using super = std::thread;
 public:
     template <typename ... ARGS>
     explicit thread_det(ARGS&& ... args): super(std::forward<ARGS>(args) ...) { detach(); } //perfect fwd to ctor, then detach
+public:
+    void join() { warn("join() ignored on detached thread"); }
 };
 
 
@@ -141,7 +143,7 @@ public: //methods
     typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
     bool wait(VALTYPE want_value = 0, CANCEL cancel = NULL, bool blocking = true, SrcLine srcline = 0)
     {
-        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << " (" << &"non-blocking"[blocking? 4: 0] << "): thr# " << thrinx() << ", cur val 0x" << std::hex << load() << " or 0x" << m_val << std::dec << ", match? " << (load() == want_value) << ATLINE(srcline));
+        if (WANT_DEBUG) DebugInOut(YELLOW_MSG "BkgSync wait for 0x" << std::hex << want_value << std::dec << " (" << &"non-blocking"[blocking? 4: 0] << "): thr# " << Thrinx() << ", cur val 0x" << std::hex << load() << " or 0x" << m_val << std::dec << ", match? " << (load() == want_value) << ATLINE(srcline));
         if (load() == want_value) return true; //no need to wait, already has desired value
         if (blocking)
         {
@@ -214,10 +216,28 @@ public:
 #define sleep(delay)  usleep((delay) * 1000) //msec => usec
 
 
+std::string timestamp(bool undecorated = false)
+{
+    std::stringstream ss;
+//    ss << thrid;
+//    ss << THRID;
+//    float x = 1.2;
+//    int h = 42;
+//TODO: add commas
+    if (undecorated) { ss << FMT("%4.3f") << Elapsed(); return ss.str(); }
+    ss << FMT("[%4.3f msec") << Elapsed();
+#ifdef IPC_THREAD
+    ss << " " << getpid();
+#endif
+    ss << "] ";
+    return ss.str();
+}
+
+
 std::string info()
 {
     std::ostringstream ostrm;
-    ostrm << timestamp() /*<< std::hex << "0x"*/ << "thr#" << thrinx() << " (" << thrid() /*<< std::dec*/ << ") ";
+    ostrm << timestamp() /*<< std::hex << "0x"*/ << "thr#" << Thrinx() << " (" << thrid /*<< std::dec*/ << ") ";
     return ostrm.str();
 }
 
@@ -231,7 +251,7 @@ void fg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int which)
 //void fg(/*BkgSync<>*/ /*auto*/ XSYNCTYPE& xbs, int which)
 {
 //    SYNCTYPE& bs = *shmalloc_typed<SYNCTYPE>(xbs, 1, SRCLINE);
-    DebugInOut(PINK_MSG "FG thr#" << thrinx() << ", bits " << which);
+    DebugInOut(PINK_MSG "FG thr#" << Thrinx() << ", bits " << which);
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
@@ -253,7 +273,7 @@ void bg(/*BkgSync<>*/ /*auto*/ SYNCTYPE& bs, int want)
 //void bg(/*BkgSync<>*/ /*auto*/ XSYNCTYPE& xbs, int want)
 {
 //    SYNCTYPE& bs = *shmalloc_typed<SYNCTYPE>(xbs, 1, SRCLINE);
-    DebugInOut(PINK_MSG "bkg thr#" << thrinx());
+    DebugInOut(PINK_MSG "bkg thr#" << Thrinx());
     std::string status;
     for (int i = 0; i < 3; ++i)
     {
@@ -314,7 +334,7 @@ void sync_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
-    debug(0, "my thrid " << thrid() << ", my inx " << thrinx());
+    debug(0, "my thrid " << thrid << ", my inx " << Thrinx());
     sync_test();
 }
 

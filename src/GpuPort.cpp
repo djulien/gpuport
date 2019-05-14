@@ -90,8 +90,10 @@
 //can't get rid of flicker; use framebuf instead:
 #if 0
  #include "sdl-helpers.h" //AutoTexture, Uint32, elapsed(), now()
+ #pragma message("using SDL helpers")
 #else
  #include "fb-helpers.h" //AutoTexture, SDL shims
+ #pragma message("using FB helpers")
 #endif
 #include "rpi-helpers.h" //ScreenConfig, getScreenConfig()
 //#include "elapsed.h" //elapsed_msec(), timestamp(), now()
@@ -141,6 +143,16 @@
 #endif
 #ifndef UPTO_4ARGS
  #define UPTO_4ARGS(skip1, skip2, skip3, skip4, use5, ...)  use5
+#endif
+
+
+//kludge: "!this" no worky with g++ on RPi
+#ifndef isnull
+ #ifdef __ARMEL__ //RPi //__arm__
+  #define isnull(ptr)  ((ptr) < reinterpret_cast<decltype(ptr)>(2)) //kludge: "!this" no worky with g++ on RPi; this !< 1 and != 0, but is < 2 so use that
+ #else //PC
+  #define isnull(ptr)  !(ptr)
+ #endif
 #endif
 
 
@@ -219,7 +231,7 @@ public:
 
 
 #define IFDEBUG(yes_stmt, no_stmt)  no_stmt //yes_stmt
-#pragma message(IFDEBUG(YELLOW_MSG "Debug sizing ON" ENDCOLOR_NOLINE, GREEN_MSG "Debug sizing off" ENDCOLOR_NOLINE))
+//#pragma message(IFDEBUG(YELLOW_MSG "Debug sizing ON" ENDCOLOR_NOLINE, GREEN_MSG "Debug sizing off" ENDCOLOR_NOLINE))
 
 //shm struct shared by bkg gpu wker thread and main/renderer threads:
 //CAUTION: don't store ptrs; they won't be valid in other procs
@@ -434,10 +446,23 @@ public: //dependent types:
 //??        std::atomic<int32_t> numfr;
         int32_t numfr; //divisor for avg timing stats
 //        elapsed_msec_t perf_stats[SIZEOF(TXTR::perf_stats) + 1]; //= {0}; //1 extra counter for my internal overhead; //, total_stats[SIZEOF(perf_stats)] = {0};
-        const elapsed_t started = now(); //elapsed();
+        const decltype(Now()) started = Now(); //elapsed();
         elapsed_t /*decltype(TXTR::latest)*/ latest = 0; //timestamp of latest loop iteration
         PreallocVector<elapsed_t, SIZEOF(TXTR::perf_stats) /*+ 1*/> perf_stats; //NO: 1 extra slot for loop count, but still want a local copy
         char exc_reason[80] = ""; //exc message if bkg gpu wker throws error
+#if 0
+//debug event emitters:
+//description of cvar: https://stackoverflow.com/questions/16350473/why-do-i-need-stdcondition-variable
+        std::condition_variable cv;
+        std::atomic<int> evt_pending(0);
+        typedef struct
+        {
+            napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+            enum { NONE, REPEAT, ONCE } state = NONE;
+        } cb_info;
+        static std::mutex evt_mtx; //doesn't need to be in shm
+        static /*cb_info cbs[5]*/ PreallocVector<cb_info, 5> cbs; //doesn't need to be in shm
+#endif
     public: //ctors/dtors
         explicit FrameControl(int new_screen, const SDL_Size& new_wh, double new_frame_time): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {} // HERE(3); }
     public: //operators
@@ -456,7 +481,19 @@ public: //dependent types:
             ostrm << ", debug level " << /*that.*/detail(); //debug_level; //TODO: put a copy in shm
             ostrm << ", #fr " << commas(that.numfr);
             ostrm << ", latest " << that.latest << " msec";
-            ostrm << ", perf [";
+            ostrm << ", evt pending? " << that.signal_pending;
+            ostrm << ", evth [";
+            for (auto itcb = that.cbs.begin(); itcb != that.cbs.end(); ++itcb)
+            {
+                ostrm << &", "[(itcb == that.cbs.begin())? 2: 0] << (itcb - that.cbs.begin()) << ": ";
+                switch (itcb->state)
+                {
+                    case REPEAT: ostrm << "cb-n"; break;
+                    case ONCE: ostrm << "cb-1"; break;
+                    default: ostrm << "-"; break;
+                }
+            }
+            ostrm << "], perf [";
 //            for (int i = 0; i < SIZEOF(that.perf_stats); ++i)
 //broken            for (const auto it: that.perf_stats)
             for (/*const*/ auto /*decltype(that.perf_stats.cbegin())*/ it = that.perf_stats.cbegin(); it != that.perf_stats.cend(); ++it)
@@ -467,7 +504,7 @@ public: //dependent types:
 //            }
             ostrm << "]";
             if (that.exc_reason[0]) ostrm << ", exc '" << that.exc_reason << "'";
-            ostrm << ", age " << commas(elapsed(that.started)) << " msec";
+            ostrm << ", age " << commas(Now() - that.started) << " msec";
             return ostrm << "}";
         }
     public: //NAPI methods
@@ -489,6 +526,7 @@ public: //dependent types:
         static /*uint32_t*/ napi_value numfr_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->numfr, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value latest_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->latest, napi_thingy::Uint32{}); }
         static /*uint32_t*/ napi_value exc_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->exc_reason); }
+        static /*uint32_t*/ napi_value evt_pending_getter(napi_env env, void* ptr) /*const*/ { return napi_thingy(env, my(ptr)->evt_pending); }
 //        /*static*/ napi_value my_exports(napi_env env) { return my_exports(env, napi_thingy(env, napi_thingy::Object{})); }
         /*static*/ napi_value my_exports(napi_env env, const napi_value& retval)
         {
@@ -517,6 +555,11 @@ public: //dependent types:
             add_prop("perf_stats", perf_typary)(props.emplace_back()); //(*pptr++);
 //            add_prop("perf_stats", napi_thingy(env, GPU_NODE_type, SIZEOF(perf_stats), napi_thingy(env, &perf_stats[0], sizeof(perf_stats)))(props.emplace_back()); //(*pptr++);
             add_getter("exc_reason", FrameControl::exc_getter, this)(props.emplace_back()); //(*pptr++);
+            add_getter("evt_pending", FrameControl::evt_pending_getter, this)(props.emplace_back()); //(*pptr++);
+//methods:
+            add_method("on", std::bind(FrameControl::On_NAPI, std::placeholders::_1, std::placeholders::_2, false), this)(props.emplace_back()); //(*pptr++);
+            add_method("once", std::bind(FrameControl::On_NAPI, std::placeholders::_1, std::placeholders::_2, true), this)(props.emplace_back()); //(*pptr++);
+            add_method("emit", FrameControl::Emit_NAPI, this)(props.emplace_back()); //(*pptr++);
 //            retval += props;
 //            return retval;
             return napi_thingy(env, retval) += props;
@@ -541,7 +584,148 @@ public: //dependent types:
 //            return more_retval;
             return napi_thingy(env, retval) += props;
         }
-    };
+//(add) debug evt handlers:
+        static napi_value On_NAPI(napi_env env, napi_callback_info info, bool once)
+        {
+            if (!env) return NULL; //Node cleanup mode?
+            DebugInOut("On_napi");
+
+            ShmData* shmptr;
+            napi_value argv[2+1], This; //allow 1 extra arg to check for extras
+            size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+            !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+            if (argc) NAPI_exc("expected 2 args, got " << argc << " arg" << plural(argc));
+            shmptr->isvalid(env, SRCLINE);
+            napi_thingy argval(env);
+            argval = argv[0];
+            std::string evt = argval.as_str(true);
+            if (evt != "debug") NAPI_exc("unknown event type: '" << evt << "'");
+//            for (decltype(shmptr->m_frctl.cbs) cbp; cbp < &shmptr->m_frctl.cbs[SIZEOF(); ++cbp)
+#if 0 //evt emitter, cb lists, etc
+            for (auto itcb = cbs.begin(); itcb != cbs.end(); ++itcb)
+                if (itcb->state == NONE)
+                {
+//void make_fats(napi_env env, napi_value jsfunc, napi_threadsafe_function_call_js napi_cb, napi_threadsafe_function* fats) //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+                    make_fats(env, argv[1], On_cb, &itcb->fats); //, (void*)(itcb - cbs.begin())); //last arg = js cb func
+                    itcb->state = once? ONCE: REPEAT;
+                    argval = true;
+                    return argval;
+                }
+            NAPI_exc("too many '" << evt << "' event handlers (max is " << SIZEOF(cbs) << ")");
+            argval = false;
+#else //simpler async cb and bkg loop to watch for debug msgs
+            napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+            make_fats(env, argv[1], On_cb, &fats); //, (void*)(itcb - cbs.begin())); //last arg = js cb func
+            std::thread bkg([shmptr, once]()
+            {
+//                try
+                debug(12, PINK_MSG "bkg: %s(%s), shmdata %p, valid? %d" ENDCOLOR, once? "once": "on", evt.c_str(), shmptr, shmptr->isvalid());
+                for (;;) //sleep_msec(15)) //at 30 FPS, probably only need to check every 33 msec
+                {
+                    std::string logstr = read_log_static(true);
+//                    if (!new_evts.length()) continue;
+//??                    if (!shmptr->isvalid()) break;
+                    size_t start = 0;
+//            while (start != string::npos)
+                    for (;;)
+                    {
+                        size_t end = logstr.find("\n", start);
+                        std::string msg = logstr.substr(start, (end == string::npos)? string::npos: end - start);
+                        
+                        if ((end == string::npos) || (end == logstr.length() - 1)) break;
+                        start = end;
+                    }
+                    
+                    if (once) break;
+                }
+                debug(12, PINK_MSG "bkg exit: %s(%s), shmdata %p, valid? %d" ENDCOLOR, once? "once": "on", evt.c_str(), shmptr, shmptr->isvalid());
+            });
+            {
+                DebugInOut("call fats for fr# " << commas(aoptr->/*m_frinfo.*/numfr.load()) << ", wait for 0x" << std::hex << Nodebuf::ALL_UNIV << std::dec << " (blocking)", SRCLINE);
+//                !NAPI_OK(napi_call_threadsafe_function(aoptr->fats, aoptr, napi_tsfn_blocking), "Can't call JS fats");
+//            while (aoptr->islistening()) //break; //allow cb to break out of playback loop
+//    typedef std::function<bool(void)> CANCEL; //void* (*REFILL)(mySDL_AutoTexture* txtr); //void);
+                aoptr->dirty.wait(Nodebuf::ALL_UNIV, [aoptr](){ return !aoptr->islistening(); }, true, SRCLINE); //CAUTION: blocks until al univ ready or caller cancelled
+//                const Uint32 palette[] = {RED, GREEN, BLUE, YELLOW, CYAN, PINK, WHITE};
+//                for (int i = 0; i < SIZEOF(aoptr->m_nodebuf.nodes); ++i) aoptr->m_nodebuf.nodes[0][i] = palette[aoptr->numfr.load() % SIZEOF(palette)];
+//                if (aoptr->numfr.load() >= 10) break;
+                debug(12, BLUE_MSG "bkg woke from fr# %s with ready 0x%x, caller listening? %d" ENDCOLOR, commas(aoptr->numfr.load()), aoptr->dirty.load(), aoptr->islistening());
+                if (!aoptr->islistening()) break;
+//                SDL_Delay(1 sec);
+                aoptr->update(); //env);
+            }
+//            SDL_Delay(1 sec);
+//https://stackoverflow.com/questions/233127/how-can-i-propagate-exceptions-between-threads
+        }
+        catch (...)
+        {
+            aoptr->excptr = std::current_exception(); //allow main thread to rethrow
+            debug(12, RED_MSG "bkg wker exc: %s" ENDCOLOR, aoptr->exc_reason().c_str());
+//            aoptr->islistening(false); //listener.busy = true; //(void*)1;
+        }
+        aoptr->stop(); //env);
+//        !NAPI_OK(napi_release_threadsafe_function(aoptr->fats, napi_tsfn_release), "Can't release JS fats");
+//        aoptr->fats = NULL;
+//        aodata->listener.busy = false; //work = 0;
+        debug(12, YELLOW_MSG "bkg exit after %s frames" ENDCOLOR, commas(aoptr->/*m_frinfo.*/numfr.load()));
+    });
+    bkg.detach();
+
+
+
+
+#endif
+            return argval;
+        }
+//call Javascript callback function:
+//NOTE: this executes on Node main thread only
+        static void On_cb(napi_env env, napi_value js_func, void* context, void* data)
+        {
+            UNUSED(context);
+  // Retrieve the prime from the item created by the worker thread.
+//    int the_prime = *(int*)data;
+            ShmData* shmptr = static_cast<ShmData*>(data);
+            debug(11, "call On_cb fats: shmdata %p, valid? %d, context %p, clup mode? %d", shmptr, shmptr->isvalid(), context, !env);
+            if (!shmptr->isvalid()) NAPI_exc("shmdata invalid");
+  // env and js_cb may both be NULL if Node.js is in its cleanup phase, and
+  // items are left over from earlier thread-safe calls from the worker thread.
+  // When env is NULL, we simply skip over the call into Javascript and free the
+  // items.
+            if (!env) return; //Node cleanup mode
+//            auto itcb = cbs.begin() + (int)context;
+//    {
+//    napi_thingy retval; retval.env = env;
+            std::string logstr = LogInfo::read_log_static();
+            napi_value argv[3];
+// Convert the integer to a napi_value.
+//NOTE: need to lazy-load params here because bkg wker didn't exist first time Listen_NAPI() was called
+//    aodata->wker_ok(env); //) NAPI_exc(env, "Gpu wker problem: " << aodata->exc_reason());
+            napi_thingy cb_arg(env), retval(env), This(env);
+//            for (const char* bp = )
+//https://stackoverflow.com/questions/53849/how-do-i-tokenize-a-string-in-c
+//#include <regex>
+//            std::regex reg("\\r?\\n");
+//            std::sregex_token_iterator iter(logstr.begin(), logstr.end(), reg, -1);
+//            std::sregex_token_iterator end;
+//            for (auto line: )
+//    vector<string> vec(iter, end);
+//    for (auto a : vec)      cout << a << endl;
+            size_t start = 0;
+//            while (start != string::npos)
+            for (;;)
+            {
+                size_t end = logstr.find("\n", start);
+                std::string msg = logstr.substr(start, (end == string::npos)? string::npos: end - start);
+                if ((end == string::npos) || (end == logstr.length() - 1)) break;
+                start = end;
+//CAUTION: seems to be some undocumented magic here: need to pass Undefined as "this" (2nd) arg here or else memory errors occur
+//see "this" at https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this#As_an_object_method
+                debug(10, "call js func with evt msg '" << msg << "'");
+                cb_arg = msg;
+                !NAPI_OK(napi_call_function(env, This, js_func, /*SIZEOF(argv)*/ 1, argv, &retval), "Call JS fats failed");
+            }
+        }
 #if 0
 //debug/diagnostic msgs:
 //don't want anything slowing down gpu_wker (file or console output could cause screen flicker),
@@ -731,6 +915,31 @@ public: //dependent types:
             return napi_thingy(env, retval) += props;
         }
     };
+#if 0 //FATS can't be shared across processes so doesn't need to be in shm; just add cv to FrameControl for listener wakeup
+//debug event emitter:
+    /*alignas(CACHELEN)*/ struct DebugEventEmitter
+    {
+        std::condition_variable cv;
+        std::atomic<bool> signal_pending = false;
+        struct
+        {
+            napi_threadsafe_function fats; //asynchronous thread-safe JavaScript call-back function; can be called from any thread
+            bool active = false;
+        } cbs[5];
+    public: //ctors/dtors
+//        explicit DebugEventEmitter(): screen(new_screen), wh(new_wh), frame_time(new_frame_time) {} // HERE(3); }
+    public: //operators
+        STATIC friend std::ostream& operator<<(std::ostream& ostrm, const DebugEventEmitter& that) //dummy_shared_state) //https://stackoverflow.com/questions/2981836/how-can-i-use-cout-myclass?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+        {
+            ostrm << "{pending " << that.signal_pending;
+            ostrm << ", evth ";
+            for (int i = 0; i < SIZEOF(cbs); ++i)
+                ostrm << "[,"[!!i] << (cbs[i].active? "cb": "-");
+            return ostrm << "]}";
+        }
+    public: //NAPI methods
+        static inline DebugEventEmitter* my(void* ptr) { return static_cast<DebugEventEmitter*>(ptr); }
+#endif
 //    InOutDebug inout1;
 //protected: //data members
 public: //data members (visible to bkg wkers via shm)
@@ -757,10 +966,10 @@ public: //ctors/dtors
     explicit ShmData(): /*inout1("1"), inout2("2"),*/ m_frctl(-1, SDL_Size(0, 0), 0) { /*HERE(2);*/ INSPECT(GREEN_MSG "ctor " << *this); } //set junk values until bkg wker starts
     ~ShmData() { INSPECT(RED_MSG "dtor " << *this); }
 public: //operators
-    bool isvalid() const { return this && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
+    bool isvalid() const { return !isnull(this) && (m_hdr == VALIDCHK) && (m_flag1 == VALIDCHK) && (m_flag2 == VALIDCHK) && (m_tlr == VALIDCHK); }
     bool isvalid(napi_env env, SrcLine srcline = 0) const
     {
-        return isvalid() || NAPI_exc("ShmData " << this << " invalid: " << !!this << std::hex << ((m_hdr < 10)? ",": ",0x") << m_hdr << ((m_flag1 < 10)? ",": ",0x") << m_flag1 << ((m_flag2 < 10)? ",0x": ",") << m_flag2 << ((m_tlr < 10)? ",0x": ",") << m_tlr << std::dec << ATLINE(srcline));
+        return isvalid() || NAPI_exc("ShmData " << this << " invalid: " << isnull(this) << std::hex << ((m_hdr < 10)? ",": ",0x") << m_hdr << ((m_flag1 < 10)? ",": ",0x") << m_flag1 << ((m_flag2 < 10)? ",0x": ",") << m_flag2 << ((m_tlr < 10)? ",0x": ",") << m_tlr << std::dec << ATLINE(srcline));
     }
 //alloc/dealloc in shared memory:
 //this allows caller to use new + delete without special code for shm
@@ -801,10 +1010,12 @@ public: //operators
         ostrm << "ShmData"; //<< my_templargs();
         ostrm << "{" << commas(sizeof(that)) << ":" << &that;
         if (!&that) return ostrm << " NO DATA}";
-        if (!that.isvalid()) return ostrm << " INVALID}";
+        if (!that.isvalid()) return ostrm << " INVALID, isnull? " << isnull(&that) << "}"; //<< " " << !isnull(&that) << ", 0x" << std::hex << that.m_hdr << ", 0x" << that.m_flag1 << ", 0x" << that.m_flag2 << ", 0x" << that.m_tlr << " != 0x" << VALIDCHK << std::dec;
         ostrm << ", ver 0x" << std::hex << that.m_ver << std::dec;
         ostrm << ", manifest " << that.m_manifest;
+//debug(0, "epoch " << LogInfo::singleton()->epoch << ", ptr %p", LogInfo::singleton());
         ostrm << ", frctl " << that.m_frctl;
+//debug(0, "epoch " << LogInfo::singleton()->epoch << ", ptr %p", LogInfo::singleton());
         ostrm << ", is open? " << that.isopen();
         ostrm << ", #attch " << shmnattch(&that); //.m_manifest.shmkey);
 //        ostrm << ", msglog " << that.m_msglog;
@@ -869,7 +1080,7 @@ public: //methods:
     void gpu_wker(int NUMFR = INT_MAX, int screen = FIRST_SCREEN, SDL_Size* want_wh = NO_SIZE, size_t vgroup = 1, NODEVAL init_color = BLACK, SrcLine srcline = 0)
     {
         std::string exc_msg;
-        elapsed_t started = now();
+        decltype(Now()) started = Now();
 //debug(0, "elapsed " << elapsed(started));
 //        strcpy(m_frctl.exc_reason, "");
         try //TODO: let it die (for dev/debug)?
@@ -882,7 +1093,8 @@ public: //methods:
 //TODO: consolidate ScreenInfo + ScreenConfig
             view.h = m_frctl.wh.h = std::min(divup(ScreenInfo(screen, SRCLINE)->bounds.h, vgroup? vgroup: 1), /*static_cast<int>*/SIZEOF(m_fbque[0].nodes[0])); //univ len == display height
             const ScreenConfig* const cfg = getScreenConfig(screen, SRCLINE); //NVL(srcline, SRCLINE)); //get this first for screen placement and size default; //CAUTION: must be initialized before txtr and frame_time (below)
-            if (!cfg) exc_hard("can't get screen %d config");
+            if (!cfg) exc_hard("can't get screen[%d] config", screen);
+            if (!m_frctl.wh.h) exc_hard("can't get screen[%d] height", screen);
             m_frctl.screen = cfg->screen;
 //        /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ m_frctl.frame_time = cfg->frame_time()? cfg->frame_time(): 1.0 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0]))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
         /*static_cast<std::remove_const(decltype(m_frctl.frame_time))>*/ (m_frctl.frame_time = cfg->frame_time() * 1e3) || (m_frctl.frame_time = 1e3 / FPS_CONSTRAINT(NVL(cfg->dot_clock * 1000, CLOCK), NVL(cfg->htotal, HTOTAL), NVL(cfg->vtotal, (decltype(cfg->vtotal))SIZEOF(m_fbque[0].nodes[0])))); //UNIV_MAXLEN_raw))); //estimate from known info if not configured
@@ -924,7 +1136,9 @@ public: //methods:
 //        napi_status status;
 //        ExecuteWork(env, addon_data);
 //        WorkComplete(env, status, addon_data);
+//debug(0, "epoch " << LogInfo::singleton()->epoch << ", ptr %p", LogInfo::singleton());
             debug(12, PINK_MSG "start bkg loop: aodata " << *this); //, valid? %d", this, isvalid());
+//debug(0, "epoch " << LogInfo::singleton()->epoch << ", ptr %p", LogInfo::singleton());
 //        debug(YELLOW_MSG "bkg acq" ENDCOLOR);
 //        !NAPI_OK(napi_acquire_threadsafe_function(aoptr->fats), "Can't acquire JS fats");
 //        !NAPI_OK(napi_reference_ref(env, aodata->listener.ref, &ref_count), "Listener ref failed");
@@ -933,7 +1147,7 @@ public: //methods:
 //        try{
 //        elapsed_msec_t started = elapsed_msec(), previous = started, delta;
 //            const int delay_msec = 1000; //2 msec;
-            started = now(); //reset timebase so timing stats are just for render loop
+            started = Now(); //reset timebase so timing stats are just for render loop
 //debug(0, "elapsed " << (now() - started) << ", " << (1000 * (now() - started)));
             debug(12, "gpu_wkr start playback loop");
             for (int frnum = 0; frnum < NUMFR; m_frctl.numfr = ++frnum) //no-CAUTION: numfr pre-inc to account for clear_stats() at end of first iter; //int i = 0; i < 5; ++i)
@@ -1012,8 +1226,8 @@ public: //methods:
 //            std::exception_ptr excptr; //= nullptr; //init redundant (default init)
 //            excptr = std::current_exception(); //allow main thread to rethrow
 //        uint32_t usec_per_fr = m_frctl.numfr? rdiv(1000 * elapsed(started), m_frctl.numfr): 0;
-        double elapsed_sec = (double)elapsed(started) / SDL_TickFreq();
-        int elapsed_usec = elapsed_sec * 1e6;
+//        double elapsed_sec = (double)elapsed(started) / SDL_TickFreq();
+        int elapsed_usec = 1000 * LogInfo::elapsed_static(); //elapsed_sec * 1e6;
         int usec_per_fr = m_frctl.numfr? elapsed_usec / m_frctl.numfr: 0; //use "int" here to reduce #dec places after convert to msec
 //        debug(0, "elapsed " << elapsed_sec << " sec, " << elapsed_usec << " usec, " << msec_per_fr << " msec/fr");
         std::ostringstream ss;
@@ -1022,7 +1236,7 @@ public: //methods:
 //        ss << ", elaps " << (now() - started) << ", usec/fr " << usec_per_fr << "," << usec_per_fr64 << "," << usec_per_fr64i << "," << usec_per_fr32i;
 //        if (exc_msg.size()) debug(2, RED_MSG "gpu wker exc: %s after %s frames, valid? %d", exc_msg.c_str(), commas(m_frctl.numfr), isvalid());
 //        else debug(12, YELLOW_MSG "bkg exit after %s frames, valid? %d", commas(m_frctl.numfr), isvalid());
-        debug(15, "gpu_wkr exit %s", ss.str());
+//        debug(15, "gpu_wkr exit %s", ss.str().c_str());
         if (exc_msg.size()) debug(0, RED_MSG "gpu wker exc: %s" << ss.str(), exc_msg.c_str());
         else debug(0, YELLOW_MSG "gpu wker exit" << ss.str());
         strncpy(m_frctl.exc_reason, exc_msg.c_str(), sizeof(m_frctl.exc_reason));
@@ -1173,20 +1387,25 @@ public: //NAPI methods:
             for (int i = 0; i < listlen; ++i)
             {
 //TODO: add handle_scope? https://nodejs.org/api/n-api.html#n_api_making_handle_lifespan_shorter_than_that_of_the_native_method
-                char buf[20]; //= ",";
-                size_t buflen;
+//                char buf[20]; //= ",";
+//                size_t buflen;
                 napi_thingy propname(env), propval(env);
                 !NAPI_OK(napi_get_element(env, proplist, i, &propname.value), "Get array element failed");
-                !NAPI_OK(napi_get_value_string_utf8(env, propname, buf, sizeof(buf), &buflen), "Get string failed");
+//                !NAPI_OK(napi_get_value_string_utf8(env, propname, buf, sizeof(buf), &buflen), "Get string failed");
+                const std::string& buf = propname.as_str(true);
+                const char* namebuf = buf.c_str();
 //                strcpy(&buf[1 + buflen], ",");
 //                if (strstr(",screen,vgroup,color,protocol,debug,nodes,", buf)) continue;
 //                buf[1 + buflen] = '\0';
 //                if (!get_prop(env, optsval, buf, &propval.value)) propval.cre_undef();
-                !NAPI_OK(napi_get_named_property(env, argv[0], buf, &propval.value), "Get named prop failed");
-                debug(17, "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d", i, listlen, buflen, buf, !!known_opts.find(buf));
-                if (!strcmp(buf, "fps")) { double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
-                else if (!known_opts.find(buf)) NAPI_exc("unrecognized option: " << buf << " " << propval); //strlen(buf) - 2, &buf[1]);
-                else !NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get " << buf << " opt failed for " << propval);
+                !NAPI_OK(napi_get_named_property(env, argv[0], namebuf, &propval.value), "Get named prop failed");
+//printf("find prop[%d/%d] %d:'%s', value  propval , found? %d\n", i, listlen, buf.length(), namebuf, !!known_opts.find(namebuf)); fflush(stdout);
+                debug(17, "find prop[%d/%d] %d:'%s' " << propname << ", value " << propval << ", found? %d", i, listlen, buf.length(), namebuf, !!known_opts.find(namebuf));
+                if (!strcmp(namebuf, "fps")) frtime_msec = 1000.0 / propval.as_float(true); //{ double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
+                else if (!strcmp(namebuf, "frtime")) frtime_msec = 1000.0 * propval.as_float(true); //{ double fps; !NAPI_OK(napi_get_value_double(env, propval, &fps), "Get prop failed"); frtime_msec = 1000.0 / fps; } //alias for frame_time_msec; kludge: float not handled by known_opts table
+                else if (!strcmp(namebuf, "debug")) detail(substr("*"), substr(propval.as_str(true).c_str())); //{ int32_t level; !NAPI_OK(napi_get_value_int32(env, propval, &level), "Get prop failed"); detail(level); }
+                else if (!known_opts.find(namebuf)) NAPI_exc("unrecognized option: " << namebuf << " " << propval); //strlen(buf) - 2, &buf[1]);
+                else *known_opts.find(namebuf)->second = propval.as_int32(true); //!NAPI_OK(napi_get_value_int32(env, propval, known_opts.find(buf)->second), "Get " << buf << " opt failed for " << propval);
             }
             had_opts = true;
 //#endif
@@ -1230,7 +1449,7 @@ public: //NAPI methods:
 //        napi_thingy retval(env, thrinx(bkg.get_id()));
 //        return NULL;
 //        return retval;
-        return napi_thingy(env, thrinx(bkg.get_id()), napi_thingy::Int32{});
+        return napi_thingy(env, LogInfo::thrinx_static(bkg.get_id()), napi_thingy::Int32{});
     }
 //"close" GPU port:
     static napi_value Close_NAPI(napi_env env, napi_callback_info info)
@@ -2790,7 +3009,7 @@ protected: //private data members
 napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 {
     if (!env) return NULL; //Node cleanup mode?
-    DebugInOut("Limit_napi");
+//    DebugInOut("Limit_napi");
 
     ShmData* shmptr; //not used
     napi_value argv[1+1], This; //allow 1 extra arg to check for extras
@@ -2806,10 +3025,11 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 //    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
 //    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
 //    Napi::String str = Napi::String::New(env, )
-    Uint32 color; //= BLACK;
-    napi_value num_arg;
-    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
-    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 colo failed");
+//    napi_value num_arg;
+//    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+//    !NAPI_OK(napi_get_value_uint32(env, num_arg, &color), "Get uint32 color failed");
+    napi_thingy arg(env, argv[0]);
+    Uint32 color = arg.as_uint32(true); //= BLACK;
 //    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
 //actual work done here; surrounding code is overhead :(
     color = limit<ShmData::BRIGHTEST>(color); //83% //= 3 * 212, //0xD4D4D4, //limit R+G+B value; helps reduce power usage; 212/255 ~= 83% gives 50 mA per node instead of 60 mA
@@ -2817,6 +3037,131 @@ napi_value Limit_NAPI(napi_env env, napi_callback_info info)
 //    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
 //    return retval;
     return napi_thingy(env, color, napi_thingy::Uint32{});
+}
+
+
+//C++ debug() shim:
+napi_value Debug_NAPI(napi_env env, napi_callback_info info)
+{
+    if (!env) return NULL; //Node cleanup mode?
+//    DebugInOut("Debug_napi");
+
+    ShmData* shmptr; //not used
+    napi_value argv[3+1], This; //allow 1 extra arg to check for extras
+    size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+    if (argc != 3) NAPI_exc("expected 3 args, got " << argc);
+//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+//    return gp.debug(level, __srcline, util.format.apply(utils, args));
+    napi_thingy argval(env);
+    argval = argv[0];
+    int32_t level = argval.as_int32(true);
+    argval = argv[1];
+    std::string srcline = argval.as_str(true);
+    argval = argv[2];
+    std::string buf = argval.as_str(true);
+//    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+//actual work done here; surrounding code is overhead :(
+//    napi_value retval;
+//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
+//no:    if (level > detail()) return; //caller (should have) already checked
+    int retval = logprintf(level, srcline.c_str(), buf.c_str());
+//    return retval;
+    return napi_thingy(env, retval, napi_thingy::Int32{});
+}
+
+
+//get debug log entries:
+napi_value ReadDebug_NAPI(napi_env env, napi_callback_info info)
+{
+    if (!env) return NULL; //Node cleanup mode?
+//    DebugInOut("ReadDebug_napi");
+
+    ShmData* shmptr; //not used
+    napi_value argv[0+1], This; //allow 1 extra arg to check for extras
+    size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+    if (argc /*> 1*/) NAPI_exc("expected 0 args, got " << argc);
+//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+//    return gp.debug(level, __srcline, util.format.apply(utils, args));
+//    napi_thingy argval(env);
+//    argval = argv[0];
+//    int32_t maxents = argc? argval.as_int32(true): 0;
+//    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+//actual work done here; surrounding code is overhead :(
+//    napi_value retval;
+//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
+    std::string retval = LogInfo::read_log_static(); //maxents);
+//    return retval;
+    return napi_thingy(env, retval); //, napi_thingy::Int32{});
+}
+
+
+//C++ detail() shim:
+//int detail(const char* key) { return detail(key, 0, DetailLevel::NO_CHANGE); }
+//int detail(const substr& key, const substr& level) //const char* key, size_t keylen, const char* new_level)
+napi_value Detail_NAPI(napi_env env, napi_callback_info info)
+{
+    if (!env) return NULL; //Node cleanup mode?
+    DebugInOut("Detail_napi");
+
+    ShmData* shmptr; //not used
+    napi_value argv[2+1], This; //allow 1 extra arg to check for extras
+    size_t argc = SIZEOF(argv);
+//    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, NULL, NULL), "Arg parse failed");
+    !NAPI_OK(napi_get_cb_info(env, info, &argc, argv, &This, (void**)&shmptr), "Get cb info failed");
+    if ((argc < 1) || (argc > 2)) NAPI_exc("expected 1 - 2 args, got " << argc);
+//    aoptr->isvalid(env, SRCLINE); //doesn't matter here, but check anyway
+//    if (argc < 1) 
+//    napi_status napi_typeof(napi_env env, napi_value value, napi_valuetype* result)
+//    char str[1024];
+//    size_t str_len;
+//    status = napi_get_value_string_utf8(env, argv[0], (char *) &str, 1024, &str_len);
+//    if (status != napi_ok) { napi_throw_error(env, "EINVAL", "Expected string"); return NULL; }
+//    Napi::String str = Napi::String::New(env, )
+//    return gp.debug(level, __srcline, util.format.apply(utils, args));
+    napi_thingy argval(env);
+//    switch (argc)
+//    {
+//        case 0: //disallow default; JS filename won't be mine so caller must specify
+//            return napi_thingy(env, detail(), napi_thingy::Int32{});
+//        case 1:
+//        case 2:
+//        case 3:
+//        default:
+//            NAPI_exc("expected 1 - 2 args, got " << argc);
+//    }
+    argval = argv[0];
+    std::string key = argval.as_str(true);
+//    int level = DetailLevel::NO_CHANGE;
+    int retval;
+    if (argc == 1) retval = detail(key.c_str());
+    else { argval = argv[1]; std::string level = argval.as_str(true); retval = detail(substr(key.c_str()), substr(level.c_str())); }
+//    !NAPI_OK(napi_coerce_to_number(env, argv[0], &num_arg), "Get arg as num failed");
+//    using LIMIT = limit<pct(50/60)>; //limit brightness to 83% (50 mA/pixel instead of 60 mA); gives 15A/300 pixels, which is a good safety factor for 20A power supplies
+//actual work done here; surrounding code is overhead :(
+//    napi_value retval;
+//    !NAPI_OK(napi_create_uint32(env, color, &retval), "Cre retval failed");
+//    return retval;
+    return napi_thingy(env, retval, napi_thingy::Int32{});
 }
 
 
@@ -3114,6 +3459,7 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
     std::unique_ptr<ShmData> shmdata(ShmData::my(shmalloc_debug(sizeof(ShmData), ShmData::FramebufQuent::SHMKEY, SRCLINE))); // ) ShmData(env, SRCLINE)); //(GpuPortData*)malloc(sizeof(*addon_data));
     ShmData* shmptr = shmdata.get();
     bool isnew = (shmnattch(shmptr) == 1);
+//printf("ModuleInit: shmptr %p, isnew? %d, valid? %d @%s\n", shmptr, isnew, shmptr->isvalid(), SRCLINE); fflush(stdout);
     debug(5, "ModuleInit: shmptr %p, #attach %d, valid? %d, isnew? %d", shmptr, shmnattch(shmptr), shmptr->isvalid(), isnew);
     if (isnew) new (shmptr) ShmData; //placement "new" to call ctor; CAUTION: first time only
     if (/*(shmdata.get() != shmptr) ||*/ !shmptr->isvalid()) NAPI_exc((isnew? "alloc": "reattch") << " shmdata " << shmptr << " failed");
@@ -3130,6 +3476,9 @@ napi_value GpuModuleInit(napi_env env, napi_value exports)
 //kludge: use lambas in lieu of C++ named member init:
 //(named args easier to maintain than long param lists)
     add_method("limit", Limit_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
+    add_method("debug", Debug_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
+    add_method("read_debug", ReadDebug_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
+    add_method("detail", Detail_NAPI, shmptr)(props.emplace_back()); //(*pptr++);
 //    add_method("open", ShmData::Open_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
 //    add_method("close", ShmData::Close_NAPI, shmptr)(methods.emplace_back()); //(*pptr++);
 #if 0 //broken in slave process

@@ -44,6 +44,16 @@
 #endif
 
 
+//kludge: "!this" no worky with g++ on RPi
+#ifndef isnull
+ #ifdef __ARMEL__ //RPi //__arm__
+  #define isnull(ptr)  ((ptr) < reinterpret_cast<decltype(ptr)>(2)) //kludge: "!this" no worky with g++ on RPi; this !< 1 and != 0, but is < 2 so use that
+ #else //PC
+  #define isnull(ptr)  !(ptr)
+ #endif
+#endif
+
+
 ///////////////////////////////////////////////////////////////////////////////
 ////
 /// check for host:
@@ -118,7 +128,7 @@ bool isRPi()
     double frame_time(SrcLine srcline = 0) const { isvalid(srcline); return (double)htotal * vtotal / dot_clock / 1000; } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
     double fps(SrcLine srcline = 0) const { return (double)1 / frame_time(srcline); } //(vinfo.xres + hblank) * (vinfo.yres + vblank) / vinfo.pixclock;
 //check for null ptr (can happen with dynamically allocated memory):
-    void isvalid(SrcLine srcline = 0) const { if (!this) exc_hard("can't get screen config" << ATLINE(srcline)); }
+    void isvalid(SrcLine srcline = 0) const { if (isnull(this)) exc_hard("can't get screen config" << ATLINE(srcline)); }
 //operators:
     STATIC friend std::ostream& operator<<(std::ostream& ostrm, const ScreenConfig& that) CONST
     {
@@ -418,7 +428,7 @@ const ScreenConfig* getScreenConfig(int which = 0, SrcLine srcline = 0) //Screen
     if (!read_config(which, &cached, srcline))
     {
         cached.screen = -1; //invalidate cache
-        exc("video[%d] config not found" << ATLINE(srcline), which);
+        error("video[%d] config not found" << ATLINE(srcline), which);
 //        cached.dot_clock = 0;
         return NULL;
     }
