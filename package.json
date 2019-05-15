@@ -33,6 +33,7 @@
     "x-build": "node-gyp rebuild --verbose",
     "x-clean": "node-gyp clean",
     "showenv": "node -p \"process.env\"",
+    "clitest": "g++ src/clitest.cpp -g -O3 -std=c++14 -fPIC -pthread -fno-omit-frame-pointer -fno-rtti -Wall -Wextra  -Wno-unused-parameter -w -Wall -pedantic -Wvariadic-macros -fexceptions `sdl2-config --cflags` `sdl2-config --libs`  -lX11 -lXxf86vm",
     "test": "node-gyp rebuild --verbose -j 4  && node ./"
   },
   "old-dependencies": {
