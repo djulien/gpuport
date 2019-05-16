@@ -185,17 +185,17 @@ public:
 
   operator EnumT() const { return enum_; }
 private:
-  // Note - the value is declared as a union mainly for as a debugging aid. If 
+  // Note - the value is declared as a union mainly for as a debugging aid. If
   // the union is undesired and you have other methods of debugging, change it
   // to either of EnumT and do a cast for the constructor that accepts BaseEnumT.
   union
-  { 
+  {
     EnumT enum_;
     BaseEnumT baseEnum_;
   };
 };
 enum Fruit { Orange, Mango, Banana };
-enum NewFruits { Apple, Pear }; 
+enum NewFruits { Apple, Pear };
 typedef InheritEnum< NewFruit, Fruit > MyFruit;
 #endif
 
@@ -2393,7 +2393,7 @@ void sdl_api_test()
             if (false) VOID SDL_Delay(0.25 sec);
             if (SDL_QuitRequested()) break; //Ctrl+C or window close enqueued
         }
-    
+
     VOID SDL_DestroyTexture(sdlTexture);
     VOID SDL_DestroyRenderer(sdlRenderer);
     VOID SDL_DestroyWindow(sdlWindow);
@@ -2536,9 +2536,9 @@ void gl_test()
 //NOTE: default = double-buffered OpenGL contexts
 //    glClearColor(0, 0, 0, 1);
 //    glClear(GL_COLOR_BUFFER_BIT);
-/* <Extra drawing fuctions here> */ 
+/* <Extra drawing fuctions here> */
 
-/* Swap our buffer to display the current contents of buffer on screen */ 
+/* Swap our buffer to display the current contents of buffer on screen */
 //    SDL_GL_SwapWindow(window);
 
     for (;;)
@@ -2577,6 +2577,8 @@ void gl_test()
 //int main(int argc, const char* argv[])
 void unit_test(ARGS& args)
 {
+    debug(0, FMT("75%% 256 = 0x%x") << dim(0.75, 256) << FMT(", 25%% 256 0x%x") << dim(0.25, 256));
+    debug(0, FMT("75%% white = 0x%x") << dimARGB(0.75, WHITE) << FMT(", 25%% white 0x%x") << dimARGB(0.25, WHITE));
     debug(0, *ScreenInfo(SRCLINE));
 
 //    timer_test();

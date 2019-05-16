@@ -140,6 +140,7 @@ no: #incl commas
 #include <chrono> //now(), duration<>
 //#include <sstream> //std::stringstream
 //#include <unistd.h> //getpid()
+#include <thread> //std::this_thread, std::thread
 
 //#include "str-helpers.h" //"ostrfmt.h" //FMT()
 
@@ -186,7 +187,7 @@ inline elapsed_t Elapsed()
 
 void sleep_msec(int msec)
 {
-    if (msec > 0) std::this_thread::sleep_for(std::chrono::milliseconds(msec))); //CAUTION: blocking; should only be used on bkg threads
+    if (msec > 0) std::this_thread::sleep_for(std::chrono::milliseconds(msec)); //CAUTION: blocking; should only be used on bkg threads
 }
 
 
@@ -198,7 +199,7 @@ double elapsed_msec()
     static auto started = std::chrono::high_resolution_clock::now(); //std::chrono::system_clock::now();
 //    std::cout << "f(42) = " << fibonacci(42) << '\n';
 //    auto end = std::chrono::system_clock::now();
-//     std::chrono::duration<double> elapsed_seconds = end-start;    
+//     std::chrono::duration<double> elapsed_seconds = end-start;
 //    long sec = std::chrono::system_clock::now() - started;
 #if 0
     static bool first = true;
@@ -304,6 +305,7 @@ std::string timestamp(bool undecorated = false)
 //#include <condition_variable>
 #include <vector> //std::vector<>
 #include <mutex> //std:mutex<>, std::unique_lock<>
+#include <thread> //std::this_thread, std::thread
 
 //#include "str-helpers.h" //PreallocVector<>
 
@@ -743,6 +745,9 @@ void first_time()
 #include <string>
 #include <stdio.h>
 
+#define SHOULD_THIS_BE_TRUE  true //TODO: verify
+
+
 //abstract base class (interface):
 class LogFile
 {
@@ -774,7 +779,7 @@ protected: //helpers
 //        LOCKTYPE lock(m_mutex);
 //        if (!clear) { printf(CYAN_MSG "flush nonshm log" ENDCOLOR_NEWLINE); fflush(stdout); }
 //HERE(33);
-        const std::string& display = read();
+        const std::string& display = read(SHOULD_THIS_BE_TRUE);
 //HERE(34);
         if (!display.length()) return;
         printf(CYAN_MSG "drain mem log %p:\n%s" ENDCOLOR_NEWLINE, this, display.c_str());
@@ -864,18 +869,21 @@ public: //methods
 #undef m_log
 };
 //CAUTION: must be created < and destroyed > all logging calls
-static LocalMemLog nonshm_log; //must be outside of LogInfo to outlive LogInfo instances
+static LocalMemLog nonshm_log; //must be outside of LogInfo to out-live LogInfo instances
 //#endif
 
 
 //circular log file:
 //for use with shared memory
+//writes are lockless; don't want to slow down workers
+//blocking reads; okay to slow down log viewer
+template <int SIZE = 0x4000> //16K will hold ~200 entries of 80 char
 class CircularLog: public LogFile //, public debug_string
 {
     std::atomic<size_t> m_head; //, m_tail /*= 0*/;
     size_t m_tail; //read protected by mutex/cvar; doesn't need to be atomic
 //    std::atomic<int>& m_retries;
-    char m_storage[0x4000]; //= ""; //16K will hold ~200 entries of 80 char
+    char m_storage[SIZE]; //0x4000]; //= ""; //16K will hold ~200 entries of 80 char
 public: //ctor/dtor
 //    CircularLog(): m_head(0), m_tail(0), m_retries(0)
 //    CircularLog(std::atomic<int>& retries): m_retries(retries)
@@ -938,7 +946,7 @@ public: //methods
             size_t svtail = m_tail;
             int loglen = m_head - svtail; //CAUTION: atomic read on head allows new log entries to come in; tail assumed safe (only one reader)
             if (loglen < 0) exc_throw("log wrapped: " << (loglen + svtail) << " <- " << svtail); //loglen += sizeof(pool); //wrapped
-            
+
             size_t newtail = svtail + loglen;
             loglen %= sizeof(m_storage); //can't exceed buf size
             svtail %= sizeof(m_storage);
@@ -1167,7 +1175,7 @@ public: //logging methods
     } stats;
 //    std::atomic<size_t> head, tail /*= 0*/;
 //    char pool[0x4000] = ""; //16K will hold ~200 entries of 80 char
-    CircularLog m_shmlog; //(stats.re_reads);
+    CircularLog<> m_shmlog; //(stats.re_reads);
 #if 0 //CAUTION: must be inited before and destroyed after all member data
     static std::mutex& nonshm_mutex()
     {
@@ -1219,9 +1227,9 @@ public: //logging methods
 //        if (/*!isclosing()*/ this) first_time();
 //    if (level > MAX_DEBUG_LEVEL) return 0; //caller doesn't want this much detail
 //printf("logprintf(%d, '%s', '%s', ...)\n", level, NVL(srcline, SRCLINE), fmt);
-        const char* msg_color = 
-            (level <= DetailLevel::ERROR_LEVEL)? RED_MSG: 
-            (level <= DetailLevel::WARN_LEVEL)? YELLOW_MSG: 
+        const char* msg_color =
+            (level <= DetailLevel::ERROR_LEVEL)? RED_MSG:
+            (level <= DetailLevel::WARN_LEVEL)? YELLOW_MSG:
             BLUE_MSG;
         const size_t msg_colorlen = strlen(msg_color);
 //pre-fmt basic msg contents:
@@ -1571,13 +1579,13 @@ public: //ctors/dtors
 //        static bool m_isclosing = true;
 //        return m_isclosing;
 //    }
-    explicit LogInfo(): /*head(0), tail(0),*/ epoch(Now()), m_shmlog(stats.re_reads) //kludge: avoid atomic<> "deleted function" errors
+    explicit LogInfo(): /*head(0), tail(0),*/ epoch(Now()) //, m_shmlog(stats.re_reads) //kludge: avoid atomic<> "deleted function" errors
     {
 //        isclosing() = false;
 //        epoch.store(Now());
 //        head.store(0);
 //        tail.store(0);
-        std::string xfr = nonshm_log.read();
+        std::string xfr = nonshm_log.read(SHOULD_THIS_BE_TRUE);
 //TODO: check whether to keep each debug() item; for now, just all or nothing
         if (detail()) m_shmlog.write(xfr.c_str(), xfr.length(), xfr.length()); //xfr local to shm so caller can still get it; TODO: why is 3rd arg needed?
         debug(0, GREEN_MSG "LogInfo ctor, xfr len %u", xfr.length());
@@ -1586,7 +1594,7 @@ public: //ctors/dtors
     ~LogInfo()
     {
 //        debug(0, RED_MSG "LogInfo dtor"); //isclosing() = true;
-        std::string xfr = m_shmlog.read();
+        std::string xfr = m_shmlog.read(SHOULD_THIS_BE_TRUE);
         char buf[40];
 //        nonshm_log.writex(&buf[0], (size_t)snprintf(buf, sizeof(buf), "LogInfo dtor xfr len %u\n", xfr.length())); //isclosing() = true;
         snprintf(buf, sizeof(buf), "LogInfo dtor xfr len %u\n", xfr.length()); //isclosing() = true;
@@ -1805,7 +1813,7 @@ HERE(3);
 //    const char* tsbuf = timestamp(), endts = strchr(tsbuf, ' ');
 //    if (*tsbuf == '[') ++tsbuf;
 //    if (!endts) endts = tsbuf + strlen(tsbuf);
-//TODO: combine with env/command line options, write to file, etc 
+//TODO: combine with env/command line options, write to file, etc
 //    char msghdr[20];
 //    snprintf(msghdr, sizeof(msghdr), "[%s $%d]", timestamp(true).c_str(), thrinx());
 
@@ -2139,7 +2147,7 @@ std::string my_timestamp(bool undecorated = false)
 //    const char* tsbuf = timestamp(), endts = strchr(tsbuf, ' ');
 //    if (*tsbuf == '[') ++tsbuf;
 //    if (!endts) endts = tsbuf + strlen(tsbuf);
-//TODO: combine with env/command line options, write to file, etc 
+//TODO: combine with env/command line options, write to file, etc
 //    char msghdr[20];
 //    snprintf(msghdr, sizeof(msghdr), "[%s $%d]", timestamp(true).c_str(), thrinx());
 
